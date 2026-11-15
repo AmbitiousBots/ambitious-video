@@ -1,0 +1,7 @@
+[tools]
+java = "temurin-21.0.13+9.0.LTS"
+python = "3.13.18"
+
+[env]
+TLA2TOOLS_URL = "https://raw.githubusercontent.com/tlaplus/vscode-tlaplus/96ad1f0b73619c56909928f4e1c2d7437060b8b3/tools/tla2tools.jar"
+TLA2TOOLS_SHA256 = "c953c663948041f6b198935952233aacc09bef81784c929acb26eae07bedc72c"
