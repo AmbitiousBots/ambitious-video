@@ -3,3 +3,8 @@ Copyright 2026 Ambitious Corporation
 
 This product includes software developed by Ambitious Corporation
 (https://ambitiousbots.com).
+
+This product includes ambitious_kit from ambitious-kit, tag kit-v0.1.1,
+licensed under the Apache License, Version 2.0.
+
+This product bundles PyYAML, licensed under the MIT License.

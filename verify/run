@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+unset XAI_API_KEY
+if [ -z "${PY:-}" ] && [ -x .venv/bin/python ]; then
+  PY=".venv/bin/python"
+fi
+PY="${PY:-python3}"
+export PYTHONPATH="src:vendor${PYTHONPATH:+:$PYTHONPATH}"
+
+echo "== copy, lint, types, tests =="
+"$PY" scripts/check_copy.py
+"$PY" scripts/check_comments.py src
+"$PY" scripts/check_comments.py test
+"$PY" -m ruff check src test
+"$PY" -m mypy --strict src
+"$PY" -m pytest -q
+
+echo "== build and contract =="
+"$PY" scripts/build.py
+"$PY" -m ambitious_kit.contract dist/ambitious-video.pyz
+
+HOME="$(mktemp -d)"
+WORK="$(mktemp -d)"
+cleanup() { rm -rf "$HOME" "$WORK"; }
+trap cleanup EXIT
+mkdir -p "$WORK/assets"
+cp examples/minimal.yaml "$WORK/minimal.yaml"
+cp examples/assets/still.png "$WORK/assets/still.png"
+export AMBITIOUS_HOME="$HOME"
+
+echo "== fresh selfcheck, render, verify, estimate =="
+"$PY" dist/ambitious-video.pyz selfcheck --now 2026-01-01T00:00:00Z --seed 1
+"$PY" dist/ambitious-video.pyz render --in "$WORK/minimal.yaml" --now 2026-01-01T00:00:00Z --seed 1 >"$WORK/render.json"
+"$PY" - "$WORK/render.json" "$WORK/job.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], encoding="utf-8"))
+if not body["ok"]:
+    raise SystemExit(body)
+json.dump({"jobId": body["data"]["jobId"]}, open(sys.argv[2], "w", encoding="utf-8"))
+print(body["data"]["jobId"], body["data"]["durationSec"], body["data"]["costUsd"])
+PY
+"$PY" dist/ambitious-video.pyz verify --in "$WORK/job.json" --now 2026-01-01T00:00:00Z --seed 1
+"$PY" dist/ambitious-video.pyz estimate --in examples/ambitious-marketing.yaml --now 2026-01-01T00:00:00Z --seed 1
+echo "verify/run: ok"

@@ -48,7 +48,16 @@ JOB_TRANSITIONS: Final[Mapping[JobState, frozenset[JobState]]] = MappingProxyTyp
 
 AssetKind = Literal["image", "video", "audio", "voiceover", "screen_recording"]
 
-ErrorCode = Literal["E_UNKNOWN_STEP", "E_JOB_STATE"]
+ErrorCode = Literal[
+    "E_UNKNOWN_STEP",
+    "E_JOB_STATE",
+    "E_OVERLAP",
+    "E_MEDIA",
+    "E_RANGE",
+    "E_TOOL",
+    "E_SPEECH",
+    "E_VERIFY",
+]
 
 
 @dataclass(frozen=True, slots=True)

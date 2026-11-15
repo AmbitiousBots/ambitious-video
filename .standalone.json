@@ -1,0 +1,12 @@
+{
+  "allow": [
+    {
+      "pattern": "/workspace/ambitious",
+      "reason": "The documented default of AMBITIOUS_HOME. The module contract defines it, and this repository names it as the directory that holds the database."
+    },
+    {
+      "pattern": "/home/box/agent-data",
+      "reason": "The private data directory named by the module contract. Every module must refuse paths under it."
+    }
+  ]
+}

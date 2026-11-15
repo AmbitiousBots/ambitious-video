@@ -76,7 +76,7 @@ The three extra checks have no file in `broken/`, because the shared runner only
 
 ## Which code this constrains
 
-The module's commands do not exist yet. When they are written:
+The commands live in `src/ambitious_video/cli/engine.py`. The moves and the idempotent ledger are `domain/jobs.py`, `domain/schedule.py` and `db/store.py`. The lock is `db/lock.py`.
 
 | Code | Constrained by |
 |---|---|
@@ -89,7 +89,7 @@ The module's commands do not exist yet. When they are written:
 
 ## What is not covered
 
-- The model checks the design, not the Python. Tests must tie the code to it: a property test that drives the job functions with generated orders of claim, step, fail, crash, recover, retry and verify, and checks the same four rules.
+- The model checks the design, not the Python. Tests tie the code to it: `test/domain/test_schedule.py` is the property test that drives the job functions with generated orders of claim, step, fail, crash, recover, retry and verify, and checks the same four rules.
 - Money spent at the provider. If a render dies after a paid call returns and before its ledger line is written, the next attempt calls the provider again. The ledger still holds one line, so the ledger can be lower than the provider's bill by that one call. Closing this needs the provider to accept an idempotency key, which is outside this module.
 - More than two jobs, renders or paid steps, and more than three attempts.
 - The content of a render: what `verify` checks, the ffmpeg graph and the script are not modeled. `verify` is a step that passes or rejects.
