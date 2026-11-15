@@ -34,7 +34,7 @@ bash spec/check.sh && python3 scripts/check_schemas.py
 
 ## Covered code
 
-Last confirmed in step with the code at commit `b4a8dbb68098424432edbd1001404a027ae47cdc`. `domain/schedule.py` is the executable form of the model, `db/store.py` persists the same allowed moves and idempotent ledger lines, and `cli/engine.py` is the render and verify path. The lock is `db/lock.py`.
+Last confirmed in step with the code at commit `db9f60754fc597e1d564a0aff4fd47d3b31f9a4a`. `domain/schedule.py` is the executable form of the model, `db/store.py` persists the same allowed moves and idempotent ledger lines, and `cli/engine.py` is the render and verify path. The lock is `db/lock.py`.
 
 | Model part | Code it describes |
 |---|---|
@@ -50,7 +50,7 @@ Last confirmed in step with the code at commit `b4a8dbb68098424432edbd1001404a02
 | `VerifyPasses`, `VerifyRejects` | the `verify` command |
 | `schemas/video-script.v1.json` | `Script` and the types it is made of, `ClipType`, `ActionKind`, `Transition`, `VoiceProvider`, `ScriptRule`, `TRACK_ID_PATTERN`, `HEX_COLOR_PATTERN` in `types.py` |
 
-Run `git log b4a8dbb68098424432edbd1001404a027ae47cdc..HEAD -- src spec schemas examples scripts`. If it lists commits, read them against the table before you trust a pass. Move the commit above forward only after you have confirmed that every row still describes the code at the new commit.
+Run `git log db9f60754fc597e1d564a0aff4fd47d3b31f9a4a..HEAD -- src spec schemas examples scripts`. If it lists commits, read them against the table before you trust a pass. Move the commit above forward only after you have confirmed that every row still describes the code at the new commit.
 
 One step in the model is one database transaction in the code. A render in the model holds its job from `Claim` until it finishes, fails or dies, and `Recover` acts only when no render holds the job; the code needs something the operating system releases when a process dies, such as a file lock, for that to be true. If a step is split across transactions, if a second command starts to change a job's state or write ledger lines, or if the idempotency key starts to depend on the attempt, the model no longer describes the code; change the model before relying on a pass.
 
