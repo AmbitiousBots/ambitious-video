@@ -1,0 +1,9 @@
+schemaVersion: 1
+output: {path: out/example.mp4, width: 1280, height: 720, fps: 30}
+tracks:
+- id: main
+  clips:
+  - {type: title_card, duration: 3.0, text: Hello}
+- id: Voice
+  clips:
+  - {type: voiceover, at: 0.5, duration: 2.0, text: A line of narration.}

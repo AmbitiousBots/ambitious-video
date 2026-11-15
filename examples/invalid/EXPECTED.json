@@ -1,0 +1,184 @@
+{
+  "unknown-clip-type.yaml": {
+    "keyword": "enum",
+    "at": "/tracks/0/clips/0/type"
+  },
+  "clip-without-type.yaml": {
+    "keyword": "required",
+    "at": "/tracks/0/clips/0"
+  },
+  "title-card-without-text.yaml": {
+    "keyword": "required",
+    "at": "/tracks/0/clips/0"
+  },
+  "title-card-duration-zero.yaml": {
+    "keyword": "exclusiveMinimum",
+    "at": "/tracks/0/clips/0/duration"
+  },
+  "title-card-with-image-option.yaml": {
+    "keyword": "additionalProperties",
+    "at": "/tracks/0/clips/0"
+  },
+  "screen-recording-of-a-local-file.yaml": {
+    "keyword": "pattern",
+    "at": "/tracks/0/clips/0/url"
+  },
+  "screen-recording-without-duration.yaml": {
+    "keyword": "required",
+    "at": "/tracks/0/clips/0"
+  },
+  "action-with-two-kinds.yaml": {
+    "keyword": "maxProperties",
+    "at": "/tracks/0/clips/0/actions/0"
+  },
+  "action-of-unknown-kind.yaml": {
+    "keyword": "additionalProperties",
+    "at": "/tracks/0/clips/0/actions/0"
+  },
+  "action-wait-zero.yaml": {
+    "keyword": "exclusiveMinimum",
+    "at": "/tracks/0/clips/0/actions/0/wait"
+  },
+  "video-path-absolute.yaml": {
+    "keyword": "pattern",
+    "at": "/tracks/0/clips/0/path"
+  },
+  "video-in-negative.yaml": {
+    "keyword": "minimum",
+    "at": "/tracks/0/clips/0/in"
+  },
+  "image-without-duration.yaml": {
+    "keyword": "required",
+    "at": "/tracks/0/clips/0"
+  },
+  "image-path-steps-out.yaml": {
+    "keyword": "pattern",
+    "at": "/tracks/0/clips/0/path"
+  },
+  "image-kenburns-zooms-out-past-the-frame.yaml": {
+    "keyword": "minimum",
+    "at": "/tracks/0/clips/0/kenburns/from"
+  },
+  "voiceover-at-negative.yaml": {
+    "keyword": "minimum",
+    "at": "/tracks/1/clips/0/at"
+  },
+  "voiceover-with-empty-text.yaml": {
+    "keyword": "minLength",
+    "at": "/tracks/1/clips/0/text"
+  },
+  "audio-gain-too-loud.yaml": {
+    "keyword": "maximum",
+    "at": "/tracks/1/clips/0/gain_db"
+  },
+  "audio-without-at.yaml": {
+    "keyword": "required",
+    "at": "/tracks/1/clips/0"
+  },
+  "track-with-clips-and-from.yaml": {
+    "keyword": "oneOf",
+    "at": "/tracks/2"
+  },
+  "track-without-clips-or-from.yaml": {
+    "keyword": "oneOf",
+    "at": "/tracks/1"
+  },
+  "track-with-no-clips.yaml": {
+    "keyword": "minItems",
+    "at": "/tracks/1/clips"
+  },
+  "track-id-with-capitals.yaml": {
+    "keyword": "pattern",
+    "at": "/tracks/1/id"
+  },
+  "track-option-unknown.yaml": {
+    "keyword": "additionalProperties",
+    "at": "/tracks/1"
+  },
+  "no-tracks.yaml": {
+    "keyword": "minItems",
+    "at": "/tracks"
+  },
+  "tracks-missing.yaml": {
+    "keyword": "required",
+    "at": ""
+  },
+  "schema-version-two.yaml": {
+    "keyword": "const",
+    "at": "/schemaVersion"
+  },
+  "schema-version-missing.yaml": {
+    "keyword": "required",
+    "at": ""
+  },
+  "top-level-option-unknown.yaml": {
+    "keyword": "additionalProperties",
+    "at": ""
+  },
+  "output-without-fps.yaml": {
+    "keyword": "required",
+    "at": "/output"
+  },
+  "output-width-odd.yaml": {
+    "keyword": "multipleOf",
+    "at": "/output/width"
+  },
+  "output-fps-zero.yaml": {
+    "keyword": "minimum",
+    "at": "/output/fps"
+  },
+  "output-path-steps-out.yaml": {
+    "keyword": "pattern",
+    "at": "/output/path"
+  },
+  "output-path-absolute.yaml": {
+    "keyword": "pattern",
+    "at": "/output/path"
+  },
+  "brand-color-not-hex.yaml": {
+    "keyword": "pattern",
+    "at": "/brand/colors/fg"
+  },
+  "brand-colors-incomplete.yaml": {
+    "keyword": "required",
+    "at": "/brand/colors"
+  },
+  "voice-provider-unknown.yaml": {
+    "keyword": "enum",
+    "at": "/voice/provider"
+  },
+  "voice-with-a-key.yaml": {
+    "keyword": "additionalProperties",
+    "at": "/voice"
+  },
+  "cut-transition-unknown.yaml": {
+    "keyword": "enum",
+    "at": "/cuts/0/transition"
+  },
+  "cut-duration-zero.yaml": {
+    "keyword": "exclusiveMinimum",
+    "at": "/cuts/0/duration"
+  },
+  "cut-without-at.yaml": {
+    "keyword": "required",
+    "at": "/cuts/0"
+  },
+  "track-id-used-twice.yaml": {
+    "rule": "track-ids-unique"
+  },
+  "captions-from-a-missing-track.yaml": {
+    "rule": "captions-from-a-voiceover-track"
+  },
+  "captions-from-a-track-without-voiceover.yaml": {
+    "rule": "captions-from-a-voiceover-track"
+  },
+  "duck-under-its-own-track.yaml": {
+    "rule": "duck-under-another-track"
+  },
+  "duck-under-a-missing-track.yaml": {
+    "rule": "duck-under-another-track"
+  },
+  "video-out-before-in.yaml": {
+    "rule": "video-out-after-in"
+  }
+}

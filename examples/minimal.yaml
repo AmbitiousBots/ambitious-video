@@ -1,0 +1,13 @@
+schemaVersion: 1
+output: { path: out/minimal.mp4, width: 1280, height: 720, fps: 30 }
+tracks:
+  - id: main
+    clips:
+      - { type: title_card, duration: 3.0, text: "Hello", subtitle: "A video written as data" }
+      - { type: image, path: assets/still.png, duration: 4.0, kenburns: { from: 1.0, to: 1.1 } }
+  - id: voice
+    clips:
+      - { type: voiceover, at: 0.5, duration: 2.0, text: "This line is shown as a caption." }
+      - { type: voiceover, at: 3.5, duration: 3.0, text: "No voice is set, so nothing is spoken and no key is needed." }
+  - id: captions
+    from: voice
