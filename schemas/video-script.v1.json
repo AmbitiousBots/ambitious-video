@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AmbitiousBots/ambitious-video/blob/main/schemas/video-script.v1.json",
+  "title": "Video script, version 1",
+  "description": "A video described as data: what to show and say, on which track, and when. Written as YAML or JSON.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "output", "tracks"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "output": { "$ref": "#/$defs/output" },
+    "brand": { "$ref": "#/$defs/brand" },
+    "voice": { "$ref": "#/$defs/voice" },
+    "tracks": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/$defs/track" } },
+    "cuts": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/cut" } }
+  },
+  "$defs": {
+    "trackId": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+    "relativePath": {
+      "description": "A path below the folder that holds the script. It cannot start with / and cannot step out with a .. part.",
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "webAddress": { "type": "string", "maxLength": 2048, "pattern": "^https?://[^\\s]+$" },
+    "hexColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+    "startSeconds": { "type": "number", "minimum": 0 },
+    "lengthSeconds": { "type": "number", "exclusiveMinimum": 0 },
+    "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "width", "height", "fps"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "width": { "type": "integer", "minimum": 16, "maximum": 7680, "multipleOf": 2 },
+        "height": { "type": "integer", "minimum": 16, "maximum": 4320, "multipleOf": 2 },
+        "fps": { "type": "integer", "minimum": 1, "maximum": 120 }
+      }
+    },
+    "brand": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "font": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "colors": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bg", "fg", "accent"],
+          "properties": {
+            "bg": { "$ref": "#/$defs/hexColor" },
+            "fg": { "$ref": "#/$defs/hexColor" },
+            "accent": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "logo": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "voice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "voice"],
+      "properties": {
+        "provider": { "enum": ["xai"] },
+        "voice": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/trackId" },
+        "clips": { "type": "array", "minItems": 1, "maxItems": 512, "items": { "$ref": "#/$defs/clip" } },
+        "from": { "$ref": "#/$defs/trackId" }
+      },
+      "oneOf": [{ "required": ["clips"] }, { "required": ["from"] }]
+    },
+    "clip": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["title_card", "screen_recording", "video", "image", "voiceover", "audio"] }
+      },
+      "allOf": [
+        { "if": { "required": ["type"], "properties": { "type": { "const": "title_card" } } }, "then": { "$ref": "#/$defs/titleCard" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "screen_recording" } } }, "then": { "$ref": "#/$defs/screenRecording" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "video" } } }, "then": { "$ref": "#/$defs/video" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "image" } } }, "then": { "$ref": "#/$defs/image" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "voiceover" } } }, "then": { "$ref": "#/$defs/voiceover" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "audio" } } }, "then": { "$ref": "#/$defs/audio" } }
+      ]
+    },
+    "titleCard": {
+      "additionalProperties": false,
+      "required": ["duration", "text"],
+      "properties": {
+        "type": true,
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "text": { "$ref": "#/$defs/text" },
+        "subtitle": { "$ref": "#/$defs/text" }
+      }
+    },
+    "screenRecording": {
+      "additionalProperties": false,
+      "required": ["url", "duration"],
+      "properties": {
+        "type": true,
+        "url": { "$ref": "#/$defs/webAddress" },
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "actions": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/action" } }
+      }
+    },
+    "action": {
+      "description": "One thing done on the page while it is recorded. Exactly one of click, wait or scroll.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "click": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "wait": { "$ref": "#/$defs/lengthSeconds" },
+        "scroll": { "type": "integer" }
+      }
+    },
+    "video": {
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "type": true,
+        "path": { "$ref": "#/$defs/relativePath" },
+        "in": { "$ref": "#/$defs/startSeconds" },
+        "out": { "$ref": "#/$defs/lengthSeconds" }
+      }
+    },
+    "image": {
+      "additionalProperties": false,
+      "required": ["path", "duration"],
+      "properties": {
+        "type": true,
+        "path": { "$ref": "#/$defs/relativePath" },
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "kenburns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": {
+            "from": { "type": "number", "minimum": 1, "maximum": 4 },
+            "to": { "type": "number", "minimum": 1, "maximum": 4 }
+          }
+        }
+      }
+    },
+    "voiceover": {
+      "additionalProperties": false,
+      "required": ["at", "text"],
+      "properties": {
+        "type": true,
+        "at": { "$ref": "#/$defs/startSeconds" },
+        "text": { "$ref": "#/$defs/text" },
+        "duration": { "$ref": "#/$defs/lengthSeconds" }
+      }
+    },
+    "audio": {
+      "additionalProperties": false,
+      "required": ["path", "at"],
+      "properties": {
+        "type": true,
+        "path": { "$ref": "#/$defs/relativePath" },
+        "at": { "$ref": "#/$defs/startSeconds" },
+        "gain_db": { "type": "number", "minimum": -60, "maximum": 12 },
+        "duck_under": { "$ref": "#/$defs/trackId" }
+      }
+    },
+    "cut": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "transition", "duration"],
+      "properties": {
+        "at": { "$ref": "#/$defs/startSeconds" },
+        "transition": { "enum": ["crossfade"] },
+        "duration": { "$ref": "#/$defs/lengthSeconds" }
+      }
+    }
+  }
+}

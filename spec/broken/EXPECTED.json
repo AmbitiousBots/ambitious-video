@@ -1,0 +1,22 @@
+{
+  "AppendWithoutIdemKey": {
+    "invariant": "NoDoubleCharge",
+    "because": "A paid step adds its ledger line without looking for its idempotency key, so a retried job is charged for the same step again."
+  },
+  "IdemKeyWithoutStep": {
+    "invariant": "RenderedIsFullyCharged",
+    "because": "The idempotency key names the job but not the step, so the second paid step of a job looks already charged and its cost is never recorded."
+  },
+  "VerifyWithoutStateCheck": {
+    "invariant": "VerifiedImpliesRendered",
+    "because": "Verify accepts any job that has an output from an earlier attempt, so a job is marked verified on a stale output while its retry has not rendered."
+  },
+  "ClaimWithoutStateCheck": {
+    "invariant": "OneActiveRenderPerJob",
+    "because": "A render claims a job without checking that it is waiting, so two renders work on the same job at once."
+  },
+  "RecoverWithoutLockCheck": {
+    "invariant": "OneActiveRenderPerJob",
+    "because": "Recovery marks a rendering job failed without checking that its render has stopped, so the job leaves the rendering state while a render is still working on it."
+  }
+}

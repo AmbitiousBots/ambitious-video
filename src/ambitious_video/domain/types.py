@@ -1,0 +1,285 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from decimal import Decimal
+from types import MappingProxyType
+from typing import Final, Literal, NewType
+
+JobId = NewType("JobId", str)
+TrackId = NewType("TrackId", str)
+Sha256Hex = NewType("Sha256Hex", str)
+IdemKey = NewType("IdemKey", str)
+RelativePath = NewType("RelativePath", str)
+WebAddress = NewType("WebAddress", str)
+HexColor = NewType("HexColor", str)
+Timestamp = NewType("Timestamp", str)
+Usd = NewType("Usd", Decimal)
+
+SCHEMA_VERSION: Final = 1
+
+TRACK_ID_PATTERN: Final = "^[a-z][a-z0-9_-]{0,31}$"
+HEX_COLOR_PATTERN: Final = "^#[0-9A-Fa-f]{6}$"
+
+ClipType = Literal["title_card", "screen_recording", "video", "image", "voiceover", "audio"]
+ActionKind = Literal["click", "wait", "scroll"]
+Transition = Literal["crossfade"]
+VoiceProvider = Literal["xai"]
+
+ScriptRule = Literal[
+    "track-ids-unique",
+    "captions-from-a-voiceover-track",
+    "duck-under-another-track",
+    "video-out-after-in",
+]
+
+JobState = Literal["queued", "rendering", "rendered", "verified", "failed", "retried"]
+
+JOB_TRANSITIONS: Final[Mapping[JobState, frozenset[JobState]]] = MappingProxyType(
+    {
+        "queued": frozenset({"rendering"}),
+        "rendering": frozenset({"rendered", "failed"}),
+        "rendered": frozenset({"verified", "failed"}),
+        "verified": frozenset(),
+        "failed": frozenset({"retried"}),
+        "retried": frozenset({"rendering"}),
+    }
+)
+
+AssetKind = Literal["image", "video", "audio", "voiceover", "screen_recording"]
+
+ErrorCode = Literal["E_UNKNOWN_STEP", "E_JOB_STATE"]
+
+
+@dataclass(frozen=True, slots=True)
+class Ok[T]:
+    value: T
+
+
+@dataclass(frozen=True, slots=True)
+class Err[E]:
+    error: E
+
+
+type Result[T, E] = Ok[T] | Err[E]
+
+
+@dataclass(frozen=True, slots=True)
+class Output:
+    path: RelativePath
+    width: int
+    height: int
+    fps: int
+
+
+@dataclass(frozen=True, slots=True)
+class BrandColors:
+    bg: HexColor
+    fg: HexColor
+    accent: HexColor
+
+
+@dataclass(frozen=True, slots=True)
+class Brand:
+    font: str | None
+    colors: BrandColors | None
+    logo: RelativePath | None
+
+
+@dataclass(frozen=True, slots=True)
+class Voice:
+    provider: VoiceProvider
+    voice: str
+
+
+@dataclass(frozen=True, slots=True)
+class Click:
+    selector: str
+
+
+@dataclass(frozen=True, slots=True)
+class Wait:
+    seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class Scroll:
+    pixels: int
+
+
+type Action = Click | Wait | Scroll
+
+
+@dataclass(frozen=True, slots=True)
+class TitleCard:
+    duration: float
+    text: str
+    subtitle: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenRecording:
+    url: WebAddress
+    duration: float
+    actions: tuple[Action, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VideoClip:
+    path: RelativePath
+    start: float | None
+    end: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class KenBurns:
+    zoom_from: float
+    zoom_to: float
+
+
+@dataclass(frozen=True, slots=True)
+class ImageClip:
+    path: RelativePath
+    duration: float
+    kenburns: KenBurns | None
+
+
+@dataclass(frozen=True, slots=True)
+class Voiceover:
+    at: float
+    text: str
+    duration: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class AudioClip:
+    path: RelativePath
+    at: float
+    gain_db: float | None
+    duck_under: TrackId | None
+
+
+type Clip = TitleCard | ScreenRecording | VideoClip | ImageClip | Voiceover | AudioClip
+
+
+@dataclass(frozen=True, slots=True)
+class ClipTrack:
+    id: TrackId
+    clips: tuple[Clip, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CaptionsTrack:
+    id: TrackId
+    source: TrackId
+
+
+type Track = ClipTrack | CaptionsTrack
+
+
+@dataclass(frozen=True, slots=True)
+class Cut:
+    at: float
+    transition: Transition
+    duration: float
+
+
+@dataclass(frozen=True, slots=True)
+class Script:
+    output: Output
+    brand: Brand | None
+    voice: Voice | None
+    tracks: tuple[Track, ...]
+    cuts: tuple[Cut, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaProblem:
+    at: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class RuleProblem:
+    rule: ScriptRule
+    at: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class UnknownStep:
+    at: str
+    step: str
+
+
+type ScriptProblem = SchemaProblem | RuleProblem | UnknownStep
+
+
+@dataclass(frozen=True, slots=True)
+class WaitingJob:
+    id: JobId
+    script_sha256: Sha256Hex
+    created_at: Timestamp
+    output_path: RelativePath
+    state: Literal["queued", "retried"]
+
+
+@dataclass(frozen=True, slots=True)
+class RenderingJob:
+    id: JobId
+    script_sha256: Sha256Hex
+    created_at: Timestamp
+    output_path: RelativePath
+    state: Literal["rendering"] = "rendering"
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedJob:
+    id: JobId
+    script_sha256: Sha256Hex
+    created_at: Timestamp
+    output_path: RelativePath
+    finished_at: Timestamp
+    output_sha256: Sha256Hex
+    state: Literal["rendered", "verified"]
+
+
+@dataclass(frozen=True, slots=True)
+class FailedJob:
+    id: JobId
+    script_sha256: Sha256Hex
+    created_at: Timestamp
+    output_path: RelativePath
+    finished_at: Timestamp
+    state: Literal["failed"] = "failed"
+
+
+type Job = WaitingJob | RenderingJob | RenderedJob | FailedJob
+
+
+@dataclass(frozen=True, slots=True)
+class TransitionRefused:
+    job_id: JobId
+    state: JobState
+    wanted: JobState
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerLine:
+    job_id: JobId
+    step_index: int
+    step: ClipType
+    units: Decimal
+    usd: Usd
+    idem_key: IdemKey
+
+
+@dataclass(frozen=True, slots=True)
+class Asset:
+    sha256: Sha256Hex
+    path: RelativePath
+    kind: AssetKind
+
+
+def idem_key(job_id: JobId, step_index: int, step_sha256: Sha256Hex) -> IdemKey:
+    return IdemKey(f"{job_id}:{step_index}:{step_sha256}")

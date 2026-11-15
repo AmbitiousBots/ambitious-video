@@ -1,0 +1,6 @@
+schemaVersion: 1
+output: {path: out/example.mp4, width: 1280, height: 720, fps: 30}
+tracks:
+- id: main
+  clips:
+  - {type: image, path: assets/../../still.png, duration: 4.0}
