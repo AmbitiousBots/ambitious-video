@@ -43,10 +43,12 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 
 | Where | What |
 |---|---|
-| `schemas/video-script.v1.json` | The script format. [schemas/README.md](schemas/README.md) explains it. |
-| `examples/` | `minimal.yaml` needs no key. `ambitious-marketing.yaml` is a short video about Ambitious. `examples/invalid/` must be rejected. |
+| `schemas/video-script.v1.json` | The video script format. [schemas/README.md](schemas/README.md) explains it. |
+| `examples/` | Two scripts as data: `minimal.yaml` needs no key, and `ambitious-marketing.yaml` is a short video about Ambitious. `examples/invalid/` holds scripts that must be rejected. |
 | `src/ambitious_video/steps/` | One module per clip type. Each `compile` is pure. Register a new type in `steps/__init__.py`. |
-| `spec/` | A TLA+ model: a retry never charges twice, a verified video was rendered, one render per job. |
+| `spec/` | A TLA+ model of a render job: a retry never charges twice, a verified video was rendered, one render per job. [spec/README.md](spec/README.md) explains it. |
+| `src/ambitious_video/domain/types.py` | The types the commands share: the script, jobs and their states, the cost ledger and assets. |
+| `verify/formal/SKILL.md` | For coding agents: when and how to rerun the checks, and how to read a failure. |
 | `pricing.json` | The dry-run price table, inside the package. |
 
 Build `dist/ambitious-video-0.1.0.pyz` with `python scripts/build.py`. It runs on Python 3.13 with Pillow and ffmpeg installed. PyYAML is bundled. The check from a fresh tree:
