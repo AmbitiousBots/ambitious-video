@@ -34,7 +34,7 @@ bash spec/check.sh && python3 scripts/check_schemas.py
 
 ## Covered code
 
-Last confirmed in step with the code at commit `0ae513826ee4af300650c0e25ed8980e828bed61`. At that commit the module's commands do not exist yet; the model describes the design in `spec/README.md` and the types in `src/ambitious_video/domain/types.py`.
+Last confirmed in step with the code at commit `0ae513826ee4af300650c0e25ed8980e828bed61`. The commands now exist. `domain/schedule.py` is the executable form of the model, `db/store.py` persists the same allowed moves and idempotent ledger lines, and `cli/engine.py` is the render and verify path. The lock is `db/lock.py`.
 
 | Model part | Code it describes |
 |---|---|

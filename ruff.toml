@@ -1,0 +1,39 @@
+target-version = "py313"
+line-length = 120
+extend-exclude = ["vendor", ".venv", "dist"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "ANN", "T20", "TID", "ERA", "PGH003", "PGH004", "RUF100"]
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"datetime.datetime.utcnow".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"datetime.datetime.today".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"datetime.date.today".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"time.time".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"time.time_ns".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"time.monotonic".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"random".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
+"secrets".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
+"uuid.uuid4".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
+"os.urandom".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
+"time.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
+"threading.Timer".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
+"sched".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
+"asyncio.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
+"urllib.request".msg = "Network is only allowed in the ai and install packages. Move the call into ai and pass its result into domain as data."
+"http.client".msg = "Network is only allowed in the ai and install packages. Move the call into ai and pass its result into domain as data."
+"socket".msg = "Network is only allowed in the ai and install packages. Move the call into ai and pass its result into domain as data."
+"ssl".msg = "Network is only allowed in the ai and install packages. Move the call into ai and pass its result into domain as data."
+"sqlite3".msg = "sqlite3 is only allowed in the db package. Move the query into db and return plain data."
+"typing.cast".msg = "cast overrules the type checker. Parse the value at the boundary or narrow it with isinstance."
+"typing.Any".msg = "Any switches the type checker off. Use object and parse it at the boundary, or name the real type."
+
+[lint.per-file-ignores]
+"**/cli/**" = ["T20", "TID251"]
+"**/ai/**" = ["TID251"]
+"**/install/**" = ["TID251"]
+"**/db/**" = ["TID251"]

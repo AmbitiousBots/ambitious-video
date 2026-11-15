@@ -1,0 +1,13 @@
+{
+  "features": [
+    "selfcheck reports the runtime, the binary, the database and the tools",
+    "validate accepts the minimal script and rejects an unknown step",
+    "plan names each step, the ffmpeg graph and the assets",
+    "estimate prices a script from pricing.json without calling a provider",
+    "render writes a video for a script that needs no key",
+    "the same script, assets and seed render the same frames",
+    "verify checks duration, resolution, audio and title frames",
+    "a voice script without a key fails with E_NO_KEY",
+    "jobs and ledger read the database without changing it"
+  ]
+}
