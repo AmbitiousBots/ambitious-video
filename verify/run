@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+unset XAI_API_KEY
 if [ -z "${PY:-}" ] && [ -x .venv/bin/python ]; then
   PY=".venv/bin/python"
 fi

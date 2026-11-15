@@ -30,14 +30,21 @@ def speak(text: str, voice: str, key: str) -> bytes:
             "Content-Type": "application/json",
         },
     )
+    status: int | None = None
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             body = response.read()
     except urllib.error.HTTPError as error:
-        detail = error.read()
-        if key.encode() in detail:
-            detail = b""
-        raise SpeechError(error.code) from None
-    if not isinstance(body, bytes):
-        raise SpeechError(0)
-    return body
+        status = error.code
+        try:
+            error.read()
+        except Exception:
+            pass
+    except Exception:
+        status = 0
+    if status is None and isinstance(body, bytes):
+        return body
+    code = 0 if status is None else status
+    del request
+    del key
+    raise SpeechError(code)

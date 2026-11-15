@@ -30,7 +30,7 @@ From the repo root:
 bash spec/check.sh && python3 scripts/check_schemas.py
 ```
 
-`spec/check.sh` needs [mise](https://mise.jdx.dev) and `curl`. It installs the Java and Python pinned in `.mise.toml`, downloads `tla2tools.jar` from the address pinned there into `~/.cache/ambitious/` and refuses it unless its SHA-256 matches the pin. It runs the models (must pass) and every variant in `spec/broken/` (each must break the rule named in `spec/broken/EXPECTED.json`). It takes a few seconds and ends with a line that starts `OK:`. `scripts/check_schemas.py` installs its two pinned packages into `.venv/` on first run and ends with `check_schemas: ok`.
+`spec/check.sh` needs [mise](https://mise.jdx.dev) and `curl`. It installs the Java and Python pinned in `.mise.toml`, downloads `tla2tools.jar` from the address pinned there into `~/.cache/ambitious/` and refuses it unless its SHA-256 matches the pin. It runs the models (must pass) and every variant in `spec/broken/` (each must break the rule named in `spec/broken/EXPECTED.json`). It takes a few seconds and ends with a line that starts `OK:`. `scripts/check_schemas.py` installs the pinned packages in `scripts/dev-requirements.txt` into `.venv/` on first run and ends with `check_schemas: ok`.
 
 ## Covered code
 
