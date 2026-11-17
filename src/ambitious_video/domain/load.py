@@ -221,6 +221,16 @@ def _voice(bag: _Bag, value: object) -> Voice | None:
     return Voice("xai", name)
 
 
+def _cache(bag: _Bag, value: object) -> RelativePath | None:
+    raw = _object(bag, value, "/cache")
+    if raw is None:
+        return None
+    _keys(bag, raw, {"dir"}, "/cache")
+    if not _need(bag, raw, ("dir",), "/cache"):
+        return None
+    return _path(bag, raw.get("dir"), "/cache/dir")
+
+
 def _action(bag: _Bag, value: object, at: str) -> Action | None:
     raw = _object(bag, value, at)
     if raw is None:
@@ -424,7 +434,7 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
     document = _object(bag, raw, "")
     if document is None:
         return None, tuple(bag.items)
-    _keys(bag, document, {"schemaVersion", "output", "brand", "voice", "tracks", "cuts"}, "")
+    _keys(bag, document, {"schemaVersion", "output", "brand", "voice", "cache", "tracks", "cuts"}, "")
     if "schemaVersion" not in document:
         bag.schema("", "Field schemaVersion is required.")
     elif document.get("schemaVersion") != 1:
@@ -438,6 +448,7 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
     output = _output(bag, document["output"])
     brand = _brand(bag, document["brand"]) if "brand" in document else None
     voice = _voice(bag, document["voice"]) if "voice" in document else None
+    cache_dir = _cache(bag, document["cache"]) if "cache" in document else None
     listed = _list(bag, document["tracks"], "/tracks", low=1, high=16)
     tracks: list[Track] = []
     if listed is not None:
@@ -457,7 +468,7 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
                 cuts = [item for item in built_cuts if item is not None]
     if bag.items or output is None:
         return None, tuple(bag.items)
-    script = Script(output, brand, voice, tuple(tracks), tuple(cuts))
+    script = Script(output, brand, voice, tuple(tracks), tuple(cuts), cache_dir)
     _rules(bag, script)
     if bag.items:
         return None, tuple(bag.items)

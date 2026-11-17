@@ -19,6 +19,7 @@ ALLOWED: dict[str, str] = {
     "ambitious-video": "The project and binary name, used in output paths and temporary folder names.",
     "AMBITIOUS_HOME": "The environment variable the module contract defines for the data directory.",
     "ambitious_kit": "The vendored kit package this module imports its command runner from.",
+    "ambitious_home": "The vendored kit function that reads AMBITIOUS_HOME; the default cache folder is found with it.",
     "/workspace/ambitious": "The default of AMBITIOUS_HOME that the module contract pins.",
     ".cache/ambitious": "The cache folder where spec/check.sh keeps the pinned model checker download.",
     "https://github.com/AmbitiousBots/ambitious-video/security/advisories/new": (

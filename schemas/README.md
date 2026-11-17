@@ -7,6 +7,7 @@ schemaVersion: 1
 output: { path: out/demo.mp4, width: 1920, height: 1080, fps: 30, encode: web }
 brand: { font: assets/font.ttf, colors: { bg: "#0B0B0B", fg: "#FFFFFF", accent: "#3B82F6" }, logo: assets/logo.png }
 voice: { provider: xai, voice: default }
+cache: { dir: .video-cache }
 tracks:
   - id: main
     clips:
@@ -28,6 +29,7 @@ cuts: [{ at: 11.0, transition: crossfade, duration: 0.4 }]
 - **`output`**: where the video is written, its size in pixels (even numbers, as common video encoders need) and its frames per second. `encode` (optional) is `web` or `lossless`. `web`, the default, is H.264 with `yuv420p` pixels, which browsers and common players show. `lossless` is exact RGB, for comparing a video pixel by pixel; many browsers cannot show it.
 - **`brand`** (optional): a font file, three colors as `#RRGGBB`, and a logo file. Nothing about a business is built in: without `brand.colors`, title cards are drawn in neutral colors (background `#111111`, text `#FFFFFF`, accent `#336699`), text is set in the drawing library's built-in font, and no logo is shown. `font` must be the path of a font file, such as `fonts/name.ttf`. A font name such as `Sans` is not enough, because fonts installed on one computer are not on another and are never searched. A logo with transparency keeps it: the background shows through.
 - **`voice`** (optional): the provider and voice that speak `voiceover` clips. Speaking needs the provider's key in the environment when the video is rendered; a key never goes in a script, and the schema rejects one. Without `voice`, nothing is spoken and no key is needed; `voiceover` clips still give captions their words and timing. Leave `voice` unset unless spoken voiceover is wanted and the key is set.
+- **`cache`** (optional): `cache: { dir: <folder> }` names the folder, below the script's folder, where results of paid steps are kept so that the same step is not paid for twice. Without it the cache is `$AMBITIOUS_HOME/video/cache`; `--cache <dir>` on the command line overrides both. It does not change the plan or any step key.
 - **`tracks`**: each track has an `id` and either `clips` or `from`. A track with `from: <track id>` draws captions from the `voiceover` clips of that track: each clip is shown during its own time, and a clip with more than one sentence shows one sentence at a time, each for a share of the clip that matches its length in characters. A sentence ends at `.`, `!` or `?` followed by a space. A script with no `from` track draws no captions.
 - **Clips.** Six types. An unknown `type` is rejected.
 

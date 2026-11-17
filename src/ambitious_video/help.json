@@ -1,16 +1,18 @@
 {
   "help": {
-    "usage": "ambitious-video <command> [--in file] [--db path] [--now ISO8601] [--seed int] [--json]",
+    "usage": "ambitious-video <command> [--in file] [--db path] [--cache dir] [--now ISO8601] [--seed int] [--json]",
     "summary": "Renders a video from a script written as YAML or JSON. Every command prints one JSON envelope on stdout and nothing else.",
     "commands": [
       { "name": "guide", "summary": "Print an example script to copy, and the steps to render it." },
       { "name": "validate", "summary": "Check a script and the files it names. Reads a script." },
-      { "name": "plan", "summary": "List the steps, the captions and the assets of a script. Reads a script." },
+      { "name": "plan", "summary": "List the steps with their step keys, the captions and the assets of a script. Reads a script." },
       { "name": "estimate", "summary": "Price a script without calling a provider. Reads a script." },
       { "name": "render", "summary": "Render a script to a video file. Reads a script, or { \"jobId\": \"...\" } to retry a job." },
       { "name": "verify", "summary": "Check the video of a rendered job. Reads { \"jobId\": \"...\" }." },
       { "name": "jobs", "summary": "List the render jobs in the database." },
       { "name": "ledger", "summary": "List the cost lines in the database." },
+      { "name": "cache list", "summary": "List the entries of the step cache." },
+      { "name": "cache prune", "summary": "Remove cache entries last used more than --older-than <days> ago." },
       { "name": "selfcheck", "summary": "Report the runtime, the database and the tools, with warnings for a missing tool." },
       { "name": "commands", "summary": "List every command with its access and whether it reads input." },
       { "name": "help", "summary": "Print this help. The flag --help does the same." },
@@ -19,6 +21,8 @@
     "flags": [
       { "flag": "--in file", "meaning": "Read the script or other input from this file instead of stdin." },
       { "flag": "--db path", "meaning": "Use this SQLite file instead of $AMBITIOUS_HOME/video/video.sqlite." },
+      { "flag": "--cache dir", "meaning": "For render, cache list and cache prune: use this step cache folder instead of $AMBITIOUS_HOME/video/cache." },
+      { "flag": "--older-than days", "meaning": "For cache prune: remove entries last used more than this many whole days ago, 0 to 36500." },
       { "flag": "--now ISO8601", "meaning": "Use this time instead of the clock, for example 2026-01-01T00:00:00Z." },
       { "flag": "--seed int", "meaning": "Use this seed for anything random, such as a job id." },
       { "flag": "--json", "meaning": "Accepted for compatibility. Output is always JSON." },

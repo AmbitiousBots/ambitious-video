@@ -18,6 +18,10 @@ class Hold:
         self.held = True
         return True
 
+    def lock(self) -> None:
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        self.held = True
+
     def close(self) -> None:
         if self.held:
             fcntl.flock(self._fd, fcntl.LOCK_UN)

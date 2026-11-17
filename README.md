@@ -4,18 +4,20 @@ The video module is a generic renderer driven by a declarative video script (a J
 
 The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
-Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`, or from stdin with `--in -`, and prints one JSON envelope. `--help` and `--version` print the usage and the version as envelope data and exit 0. With `--in <file>` stdin is never read, and ffmpeg and ffprobe never see it, so a caller that leaves stdin open (a tool runner, for example) does not make a command hang. Without `--in`, a script piped on stdin is still read: the command waits at most two seconds for the first byte, and once any byte has arrived it reads to the end of stdin, so a slow writer never has its script cut short. A program that generates a script should send it with `--in -`, which waits for the end of stdin however long the first byte takes; on Windows the two-second wait is not available for pipes, so `--in -` is the only way to send a script on stdin there. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
+Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`, or from stdin with `--in -`, and prints one JSON envelope. `--help` and `--version` print the usage and the version as envelope data and exit 0. With `--in <file>` stdin is never read, and ffmpeg and ffprobe never see it, so a caller that leaves stdin open (a tool runner, for example) does not make a command hang. Without `--in`, a script piped on stdin is still read: the command waits at most two seconds for the first byte, and once any byte has arrived it reads to the end of stdin, so a slow writer never has its script cut short. A program that generates a script should send it with `--in -`, which waits for the end of stdin however long the first byte takes; on Windows the two-second wait is not available for pipes, so `--in -` is the only way to send a script on stdin there. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` and the step cache is `$AMBITIOUS_HOME/video/cache` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
 
 | Command | Access | What it returns |
 |---|---|---|
 | `guide` | none | A short example script to copy from `data.example.script`, and the steps to render it. |
 | `validate` | none | Whether the script is usable, its duration, and any problems. |
-| `plan` | none | The ordered steps, an ffmpeg graph, the caption segments, the encoding, and the assets the script names. |
+| `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, and `planSha256`. |
 | `estimate` | none | A dry-run price from `pricing.json`. No provider is called. |
-| `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. |
+| `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. |
 | `verify` | write | Checks duration, frame count, resolution, audio, encoding, and title and cut frames of a rendered job. |
 | `jobs` | read | The jobs in the database. |
-| `ledger` | read | The cost lines. A line's idempotency key does not include the attempt, so a retry does not add a second line. |
+| `ledger` | read | The cost lines, exactly one per provider call. A line's idempotency key is the step key (`<stepKey>#2`, `#3`, ... when a removed result had to be called for again), so a retry or a new job with the same inputs does not add a line. |
+| `cache list` | read | The entries of the step cache: step key, folder, provider, size, when it was made and last used. |
+| `cache prune` | write | Removes entries last used more than `--older-than <days>` ago. Nothing is ever removed without this command. |
 | `selfcheck` | write | Runtime, binary checksum, database integrity, and ffmpeg, Pillow, and Playwright, with a line in `data.warnings` for each missing tool. |
 | `commands` | none | Every command, including this one. |
 | `help` | none | The usage, the commands and the flags. `--help` anywhere on the command line does the same. |
@@ -36,7 +38,17 @@ Leave `voice` unset unless you want spoken voiceover and have set the provider k
 
 ## What a render does
 
-`render` of a script whose `voice` is set needs `XAI_API_KEY` for that call. The key is not stored. Without `voice`, voiceover clips are captions only and no key is needed. Speech is priced at the public text-to-speech rate in `pricing.json` (15 USD per 1 million characters). A voice named `default` uses the provider's default voice. The spoken language is detected.
+`render` of a script whose `voice` is set needs `XAI_API_KEY` only when a line has to be spoken that is not in the step cache yet. The key is read from the environment for that call and is not stored. Without `voice`, voiceover clips are captions only and no key is needed. Speech is priced at the public text-to-speech rate in `pricing.json` (15 USD per 1 million characters). A voice named `default` uses the provider's default voice. The spoken language is detected.
+
+## Plans, step keys and the step cache
+
+`plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. `render` returns the same `planSha256`.
+
+Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the words and the voice), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. For a provider that takes a seed, `provider_seed` derives it from `--seed` and the step key. Speech takes none, so `--seed` does not change a speech key, and no provider that takes a seed ships yet.
+
+The result of a paid step is kept in `<cache dir>/<stepKey>/` (`output.bin` and a `meta.json` with its hash) and listed in the `step_cache` table. Before a paid call, `render` looks there. A hit calls nothing, needs no key, and adds no ledger line; a miss calls the provider once, stores the result and adds one ledger line whose idempotency key is the step key. When the chosen cache folder has no result but another cache folder this database has used does, the verified result is copied in instead: no call, no key and no line. Renders that use one database take turns on a step key, also when they run at the same time with different cache folders, so the second one copies the result of the first. A second job with the same words and voice therefore costs nothing, and two renders with every paid step cached write the same file on the same machine and toolchain. `render` lists each paid step with `cached` and the `usd` this call was charged, and `costUsd` is their sum.
+
+The cache folder is `$AMBITIOUS_HOME/video/cache`. A script can name another with `cache: { dir: <folder below the script> }`, and `--cache <dir>` on `render`, `cache list` and `cache prune` overrides both. Entries are never removed automatically. `cache prune --older-than 90` removes the entries last used more than 90 days ago; an entry that a running render holds is left alone, and `--older-than` takes whole days from 0 to 36500. The ledger holds one line per provider call, and a step key is called again only if its result was removed: by `cache prune`, or by deleting its folder by hand. That next call is paid for and gets its own line, with the idempotency key `<stepKey>#2` (then `#3`, and so on), so the ledger total stays equal to what `render` reported as `costUsd`. An entry whose file no longer matches its recorded hash is refused with `E_CACHE`.
 
 A picture is scaled to cover the output size. A video clip of another size is scaled to fit inside the output size and centered on the brand background color, so every clip fills its scheduled time whatever the size of its source. A logo keeps its transparency: the background shows through it.
 
@@ -73,6 +85,7 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `E_TOOL` | 1 | ffmpeg, ffprobe, Pillow or Playwright is missing, or ffmpeg failed while rendering. | Install the missing tool and run the command again. |
 | `E_SPEECH` | 1 | The speech service rejected the call. | Check the voice name and the key. |
 | `E_VERIFY` | 1 | A rendered file failed a check. There is one error for each failed check, and its message says what differs: the duration or the frame count against the script's, how the video is stored against `output.encode`, a frame that is missing or that differs, or a file that is not a video. The job moves to `failed`. | Read `data.checks`: each check has `ok`, and `expected` and `actual` where they apply. |
+| `E_CACHE` | 1 | A step cache entry does not match its recorded hash. | Delete the folder named in `data.stepKey` and render again. |
 
 ## Layout
 
@@ -82,7 +95,9 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `examples/` | Three scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, and `all-clip-types.yaml` uses every clip type and a voice. `examples/invalid/` holds scripts that must be rejected. |
 | `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has a `brand.yaml`, a `script.yaml` and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
 | `src/ambitious_video/steps/` | One module per clip type. Each `compile` is pure. Register a new type in `steps/__init__.py`. |
-| `spec/` | A TLA+ model of a render job: a retry never charges twice, a verified video was rendered, one render per job. [spec/README.md](spec/README.md) explains it. |
+| `spec/` | A TLA+ model of a render job: a retry never charges twice, the ledger holds one line per provider call, a step key is called again only if its result was removed, a verified video was rendered, one render per job. [spec/README.md](spec/README.md) explains it. |
+| `src/ambitious_video/domain/plan.py` | Canonical JSON, `step_key` and `planSha256`. |
+| `src/ambitious_video/db/step_cache.py` | The step cache: the folders and the `step_cache` table. |
 | `src/ambitious_video/domain/types.py` | The types the commands share: the script, jobs and their states, the cost ledger and assets. |
 | `verify/formal/SKILL.md` | For coding agents: when and how to rerun the checks, and how to read a failure. |
 | `pricing.json` | The dry-run price table, inside the package. |

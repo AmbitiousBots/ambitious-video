@@ -207,6 +207,14 @@ def insert_ledger(
     return _whole(_tuple(before), 0) != _whole(_tuple(after), 0)
 
 
+def count_calls(db: sqlite3.Connection, step_key: str) -> int:
+    found = db.execute(
+        _sql("SELECT count(*) FROM ledger ", "WHERE idem_key = ? OR idem_key GLOB ?"),
+        (step_key, step_key + "#*"),
+    ).fetchone()
+    return _whole(_tuple(found), 0)
+
+
 @dataclass(frozen=True, slots=True)
 class LedgerRow:
     job_id: str

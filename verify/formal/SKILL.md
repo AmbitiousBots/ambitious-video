@@ -1,6 +1,6 @@
 ---
 name: verify-formal-video
-description: "Check the video module's render job rules (a retry never charges twice, a verified job was rendered, one render per job) against the TLA+ model, and the video script schema against its examples. Use when a change touches the render, verify, jobs or ledger commands, how a job changes state, how a ledger line is written, how a script is read, or any file in spec/, schemas/, examples/ or src/ambitious_video/domain/."
+description: "Check the video module's render job rules (a retry never charges twice, one ledger line per provider call, a step key is called again only if its result was removed, a verified job was rendered, one render per job) against the TLA+ model, and the video script schema against its examples. Use when a change touches the render, verify, jobs, ledger or cache commands, how a job changes state, how a ledger line is written, how a step key is built, how the step cache is read or written, how a script is read, or any file in spec/, schemas/, examples/ or src/ambitious_video/domain/."
 ---
 
 # Formal verification for the video module
@@ -9,16 +9,17 @@ description: "Check the video module's render job rules (a retry never charges t
 
 | Rule | In plain words | Harm if it breaks |
 |---|---|---|
-| `NoDoubleCharge` | The ledger never holds two lines for the same step of the same job, however often the job is retried. | The recorded cost of a video is too high. |
-| `RenderedIsFullyCharged` | A rendered or verified job has exactly one ledger line for each paid step. | A cost goes missing from the ledger. |
+| `NoDoubleCharge` | The ledger never holds more lines for a step key than provider calls were made for it, however often a job is retried and however many jobs need that step. | The recorded cost is too high. |
+| `CalledAgainOnlyAfterRemoval` | The provider is called once for a step key, across retries and jobs, and once more only each time its stored result was removed. | The owner pays again for a stored result. |
+| `RenderedIsFullyCharged` | Once a job is rendered or verified, every paid step has exactly one ledger line per provider call. | A cost goes missing from the ledger. |
 | `VerifiedImpliesRendered` | A verified job was rendered to the end on its latest attempt. | A video is reported as checked when the checked file is stale or unfinished. |
 | `OneActiveRenderPerJob` | At most one render works on a job, and only while the job is `rendering`. | Two renders write one output file. |
 
 The same run checks that no job can get stuck, that every job ends `verified` or `failed` when steps that can happen do happen (`EveryJobSettles`), and that a job only moves along the declared arrows (`OnlyDeclaredMoves`).
 
-Tool: TLA+ with the TLC model checker, because the question is whether any order of claims, paid steps, failures, crashes, recoveries, retries and verifications can reach a bad state. Tests only try the orders someone thought of.
+Tool: TLA+ with the TLC model checker, because the question is whether any order of claims, paid steps, removed results, failures, crashes, recoveries, retries and verifications can reach a bad state. Tests only try the orders someone thought of.
 
-Bounds: two jobs, two renders at the same time, two paid steps per job, three attempts per job; no limit on the number of steps. `spec/README.md` lists what is left out, including money spent at the provider when a render dies between a paid call and its ledger line.
+Bounds: two jobs that need the same two step keys, two renders at the same time, three attempts per job, one removal per step key; no limit on the number of steps. `spec/README.md` lists what is left out, including money spent at the provider when a render dies between a paid call and storing its result, and a result copied from another cache folder.
 
 The same command also checks `schemas/video-script.v1.json`: the examples are accepted, every invalid example is rejected for the reason written next to it, and the schema, the model and `src/ambitious_video/domain/types.py` name the same clip types, rules, job states and moves.
 
@@ -34,15 +35,18 @@ bash spec/check.sh && python3 scripts/check_schemas.py
 
 ## Covered code
 
-Last confirmed in step with the code at commit `db9f60754fc597e1d564a0aff4fd47d3b31f9a4a`. `domain/schedule.py` is the executable form of the model, `db/store.py` persists the same allowed moves and idempotent ledger lines, and `cli/engine.py` is the render and verify path. The lock is `db/lock.py`.
+Last confirmed in step with the code at commit `db9f60754fc597e1d564a0aff4fd47d3b31f9a4a`. `domain/schedule.py` is the executable form of the model, `db/store.py` persists the same allowed moves and idempotent ledger lines, `domain/plan.py` builds step keys, `db/step_cache.py` is the step cache, and `cli/engine.py` is the render and verify path. The lock is `db/lock.py`.
 
 | Model part | Code it describes |
 |---|---|
 | `States`, `Moves` | `JobState` and `JOB_TRANSITIONS` in `src/ambitious_video/domain/types.py`; the `state` column of the `jobs` table |
-| `IdemKey`, `idemKeys` | `idem_key` in `types.py`; the `idem_key` column of the `ledger` table and its `UNIQUE` constraint |
-| `ledgerLines` | the number of rows in `ledger` for one job and step (`LedgerLine`) |
+| `StepKeys` | `step_key` in `domain/plan.py`: a hash of what a paid step asks for, with no job, attempt, clock or path in it |
+| `IdemKey`, `idemKeys` | `idem_key` in `types.py` (the step key and the number of the call: `<step key>`, then `<step key>#2`); the `idem_key` column of the `ledger` table and its `UNIQUE` constraint |
+| `ledgerLines` | the number of rows in `ledger` for one step key (`LedgerLine`) |
+| `cached`, `calls` | the folders `<cache dir>/<step key>/` and the `step_cache` table; the provider calls made for a step key |
+| `Remove`, `removals` | `cache prune`, which takes the step key's file lock and skips an entry a render holds, and a cache folder deleted by hand |
 | `Claim` | the start of the `render` command: one transaction that reads the job's state and writes `rendering` |
-| `RunPaidStep` | one paid step of a render and the transaction that adds its ledger line |
+| `RunPaidStep` | one paid step of a render, under two file locks named after the step key (one beside the database, then one in the cache folder): look in the cache, call the provider only on a miss, store the result, and add the line of that call in one transaction with the count of the lines the step key already has |
 | `Finish` | the end of `render`: one transaction that records the output and writes `rendered` |
 | `RenderFails`, `Crash` | a render that stops on an error, and a render process that dies |
 | `Recover` | marking a job `failed` when it is `rendering` and no render holds it |
@@ -52,7 +56,7 @@ Last confirmed in step with the code at commit `db9f60754fc597e1d564a0aff4fd47d3
 
 Run `git log db9f60754fc597e1d564a0aff4fd47d3b31f9a4a..HEAD -- src spec schemas examples scripts`. If it lists commits, read them against the table before you trust a pass. Move the commit above forward only after you have confirmed that every row still describes the code at the new commit.
 
-One step in the model is one database transaction in the code. A render in the model holds its job from `Claim` until it finishes, fails or dies, and `Recover` acts only when no render holds the job; the code needs something the operating system releases when a process dies, such as a file lock, for that to be true. If a step is split across transactions, if a second command starts to change a job's state or write ledger lines, or if the idempotency key starts to depend on the attempt, the model no longer describes the code; change the model before relying on a pass.
+One step in the model is one database transaction in the code. A render in the model holds its job from `Claim` until it finishes, fails or dies, and `Recover` acts only when no render holds the job; the code needs something the operating system releases when a process dies, such as a file lock, for that to be true. If a step is split across transactions, if a second command starts to change a job's state or write ledger lines, if a paid step stops holding its step key's lock from the cache look-up to the stored result, if the idempotency key starts to depend on the job or the attempt or stops naming the call, the model no longer describes the code; change the model before relying on a pass.
 
 ## Reading a result
 
@@ -65,34 +69,41 @@ Error: Invariant NoDoubleCharge is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
 ...
-State 4: <RenderFails("renderer1") line 59, col 5 to line 62, col 74 of module AppendWithoutIdemKey>
-/\ idemKeys = {<<"job1", 1>>}
-/\ state = [job1 |-> "failed", job2 |-> "queued"]
-/\ rendering = [renderer1 |-> "idle", renderer2 |-> "idle"]
+State 4: <RunPaidStep("renderer1",1) line 48, col 5 to line 56, col 73 of module AppendWithoutIdemKey>
+/\ idemKeys = {<<1, 1>>}
+/\ state = [job1 |-> "rendering", job2 |-> "rendering"]
+/\ rendering = [renderer1 |-> "job1", renderer2 |-> "job2"]
 /\ done = [renderer1 |-> {1}, renderer2 |-> {}]
-/\ ledgerLines = [job1 |-> <<1, 0>>, job2 |-> <<0, 0>>]
+/\ ledgerLines = <<1, 0>>
+/\ cached = {1}
 /\ attempt = [job1 |-> 1, job2 |-> 1]
+/\ calls = <<1, 0>>
+/\ removals = <<0, 0>>
 /\ renderedAttempt = [job1 |-> 0, job2 |-> 0]
-...
-State 7: <RunPaidStep("renderer1",1) line 41, col 5 to line 47, col 63 of module AppendWithoutIdemKey>
-/\ idemKeys = {<<"job1", 1>>}
-/\ state = [job1 |-> "rendering", job2 |-> "queued"]
-/\ rendering = [renderer1 |-> "job1", renderer2 |-> "idle"]
-/\ done = [renderer1 |-> {1}, renderer2 |-> {}]
-/\ ledgerLines = [job1 |-> <<2, 0>>, job2 |-> <<0, 0>>]
-/\ attempt = [job1 |-> 2, job2 |-> 1]
+
+State 5: <RunPaidStep("renderer2",1) line 48, col 5 to line 56, col 73 of module AppendWithoutIdemKey>
+/\ idemKeys = {<<1, 1>>}
+/\ state = [job1 |-> "rendering", job2 |-> "rendering"]
+/\ rendering = [renderer1 |-> "job1", renderer2 |-> "job2"]
+/\ done = [renderer1 |-> {1}, renderer2 |-> {1}]
+/\ ledgerLines = <<2, 0>>
+/\ cached = {1}
+/\ attempt = [job1 |-> 1, job2 |-> 1]
+/\ calls = <<1, 0>>
+/\ removals = <<0, 0>>
 /\ renderedAttempt = [job1 |-> 0, job2 |-> 0]
 ```
 
-Read the step names down the list and write the path as one line per step before deciding anything. Here: a render takes job1; it runs paid step 1 and the ledger gets a line; the render fails; the job is retried; a render takes it again; it runs paid step 1 again and the ledger gets a second line for the same step.
+Read the step names down the list and write the path as one line per step before deciding anything. Here: a render takes job1; another render takes job2; the first runs the paid step with step key 1, calls the provider and the ledger gets a line; the second needs the same step key, finds it in the cache and calls nothing, but the ledger gets a second line, for a call that was never made.
 
 To tell a path in the module's words:
 
 - `state` is each job's state.
 - `rendering` is the job each render process is working on, or `idle`. A job named here is held by that render.
-- `done` is the paid steps each render has run in its current attempt.
-- `idemKeys` is the idempotency keys in the ledger, each a job and a step.
-- `ledgerLines` is the number of ledger lines for each job, one number per paid step. A `2` is a double charge; a `0` on a rendered job is a missing charge.
+- `done` is the step keys each render has dealt with in its current attempt.
+- `idemKeys` is the idempotency keys in the ledger, each a step key and the number of the call.
+- `cached` is the step keys with a stored result, `calls` the number of provider calls for each step key and `removals` the number of times its result was removed. A number in `calls` that is more than one above `removals` is a stored result paid for again.
+- `ledgerLines` is the number of ledger lines, one number per step key. A number above `calls` is a double charge; a number below `calls` when a job is rendered is a missing charge.
 - `attempt` is the number of the job's current attempt, and `renderedAttempt` the attempt whose render last finished (`0` for none). A verified job where the two differ was verified on a stale output.
 
 Other failures look different. `Error: Deadlock reached.` means a job is stuck: read the last state for a job that is not settled and has no step left. `Error: Temporal properties were violated.` means `EveryJobSettles` broke: TLC prints a path that ends in a loop, and some job never settles on it. `Error: Action property OnlyDeclaredMoves is violated.` means the last step moved a job along an arrow that `Moves` does not have.

@@ -27,6 +27,14 @@ from ambitious_video.install.tools import tool_report, tool_warnings
 
 VERSION = "0.1.0"
 SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
+CACHE_DIR: ContextVar[Path | None] = ContextVar("cache_dir", default=None)
+OLDER_THAN: ContextVar[str | None] = ContextVar("older_than", default=None)
+KIT_VALUE_FLAGS = ("--in", "--db", "--now", "--seed")
+MAX_PRUNE_DAYS = 36500
+OWN_FLAGS = {
+    "--cache": ("render", "cache list", "cache prune"),
+    "--older-than": ("cache prune",),
+}
 STDIN_WAIT_SECONDS = 2.0
 
 
@@ -56,6 +64,41 @@ def _directory(argv: tuple[str, ...] | list[str]) -> Path:
     if found is None:
         return Path.cwd()
     return Path(found).resolve().parent
+
+
+def _groups(argv: list[str]) -> list[tuple[str, list[str], str]]:
+    groups: list[tuple[str, list[str], str]] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        index += 1
+        if not token.startswith("--"):
+            groups.append(("", [token], token))
+            continue
+        name, equals, value = token.partition("=")
+        tokens = [token]
+        takes_value = name in KIT_VALUE_FLAGS or name in OWN_FLAGS
+        if takes_value and equals == "" and index < len(argv) and not argv[index].startswith("--"):
+            value = argv[index]
+            tokens.append(value)
+            index += 1
+        groups.append((name, tokens, value))
+    return groups
+
+
+def _own_flags(argv: list[str]) -> tuple[list[str], dict[str, str]]:
+    groups = _groups(argv)
+    command = " ".join(value for name, _tokens, value in groups if name == "")
+    kept: list[str] = []
+    taken: dict[str, str] = {}
+    for name, tokens, value in groups:
+        if name not in OWN_FLAGS:
+            kept.extend(tokens)
+        elif command in OWN_FLAGS[name] and value != "" and name not in taken:
+            taken[name] = value
+        else:
+            kept.append(name)
+    return kept, taken
 
 
 def _input_source(argv: list[str]) -> tuple[list[str], str]:
@@ -181,8 +224,11 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
                 _rate(),
                 context.env,
                 engine.default_speaker,
+                CACHE_DIR.get(),
             )
-        return engine.render_again(context.db, job_id, body, context.now, _rate(), context.env, engine.default_speaker)
+        return engine.render_again(
+            context.db, job_id, body, context.now, _rate(), context.env, engine.default_speaker, CACHE_DIR.get()
+        )
 
     return _guard(run)
 
@@ -197,6 +243,22 @@ def jobs(context: DbContext[None]) -> JsonObject:
 
 def ledger(context: DbContext[None]) -> JsonObject:
     return engine.ledger_data(context.db)
+
+
+def cache_list(context: DbContext[None]) -> JsonObject:
+    return engine.cache_list(context.db, CACHE_DIR.get())
+
+
+def cache_prune(context: DbContext[None]) -> JsonObject:
+    asked = OLDER_THAN.get()
+    valid = asked is not None and asked.isascii() and asked.isdigit() and len(asked) <= 6
+    if asked is None or not valid or int(asked) > MAX_PRUNE_DAYS:
+        raise failure(
+            "E_USAGE",
+            "cache prune needs --older-than <days>.",
+            "Give whole days, 0 to 36500, such as 90.",
+        )
+    return engine.cache_prune(context.db, CACHE_DIR.get(), int(asked), context.now)
 
 
 def show_guide(_context: Context[None]) -> JsonObject:
@@ -241,10 +303,15 @@ def main() -> int:
 
     runner.json.loads = _loads  # type: ignore[attr-defined] # YAML scripts use the JSON loader
     runner.selfcheck = _patched_selfcheck(runner.selfcheck)  # type: ignore[attr-defined,arg-type] # tools sit beside the kit report
-    sys.argv[1:] = guide.builtin_command(sys.argv[1:])
-    sys.argv[1:], source = _input_source(sys.argv[1:])
+    original = sys.argv
+    kept, own = _own_flags(guide.builtin_command(sys.argv[1:]))
+    kept, source = _input_source(kept)
     runner._read_stdin = _stdin_reader(source)
-    token = SCRIPT_DIR.set(_directory(sys.argv[1:]))
+    token = SCRIPT_DIR.set(_directory(kept))
+    chosen = own.get("--cache")
+    cache_token = CACHE_DIR.set(None if chosen is None else Path(chosen))
+    days_token = OLDER_THAN.set(own.get("--older-than"))
+    sys.argv = [original[0], *kept]
     try:
         return run_cli(
             ModuleSpec(
@@ -260,6 +327,8 @@ def main() -> int:
                     "verify": write_command(verify, _verify_input),
                     "jobs": read_command(jobs, no_input),
                     "ledger": read_command(ledger, no_input),
+                    "cache list": read_command(cache_list, no_input),
+                    "cache prune": write_command(cache_prune, no_input),
                     "guide": pure_command(show_guide, no_input),
                     "help": pure_command(show_help, no_input),
                     "version": pure_command(show_version, no_input),
@@ -267,6 +336,9 @@ def main() -> int:
             )
         )
     finally:
+        sys.argv = original
+        OLDER_THAN.reset(days_token)
+        CACHE_DIR.reset(cache_token)
         SCRIPT_DIR.reset(token)
 
 

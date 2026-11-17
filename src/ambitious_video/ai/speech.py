@@ -4,6 +4,13 @@ import json
 import urllib.error
 import urllib.request
 
+from ambitious_kit.domain.envelope import JsonValue
+
+PROVIDER = "xai"
+MODEL = "tts"
+ADAPTER_VERSION = 1
+KEY_ENV = "XAI_API_KEY"
+
 
 class SpeechError(Exception):
     def __init__(self, status: int) -> None:
@@ -11,16 +18,18 @@ class SpeechError(Exception):
         self.status = status
 
 
-def speak(text: str, voice: str, key: str) -> bytes:
+def request_params(text: str, voice: str) -> dict[str, JsonValue]:
     voice_id = "eve" if voice == "default" else voice
-    payload = json.dumps(
-        {
-            "text": text,
-            "voice_id": voice_id,
-            "language": "auto",
-            "output_format": {"codec": "mp3"},
-        }
-    ).encode()
+    return {
+        "text": text,
+        "voice_id": voice_id,
+        "language": "auto",
+        "output_format": {"codec": "mp3"},
+    }
+
+
+def speak(text: str, voice: str, key: str) -> bytes:
+    payload = json.dumps(request_params(text, voice)).encode()
     request = urllib.request.Request(
         "https://api.x.ai/v1/tts",
         data=payload,

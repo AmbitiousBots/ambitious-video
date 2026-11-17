@@ -43,6 +43,25 @@ PY
 "$PY" dist/ambitious-video.pyz verify --in "$WORK/job.json" --now 2026-01-01T00:00:00Z --seed 1
 "$PY" dist/ambitious-video.pyz estimate --in examples/all-clip-types.yaml --now 2026-01-01T00:00:00Z --seed 1
 
+echo "== plan is the same bytes on another day, and the cache commands answer =="
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/minimal.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/minimal.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/plan-b.json"
+"$PY" dist/ambitious-video.pyz cache list --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cache-list.json"
+"$PY" dist/ambitious-video.pyz cache prune --older-than 90 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cache-prune.json"
+"$PY" - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+one, two = (json.loads((work / name).read_text(encoding="utf-8")) for name in ("plan-a.json", "plan-b.json"))
+if not one["ok"] or one["data"] != two["data"] or len(one["data"]["planSha256"]) != 64:
+    raise SystemExit("plan changed with the clock")
+listed = json.loads((work / "cache-list.json").read_text(encoding="utf-8"))
+pruned = json.loads((work / "cache-prune.json").read_text(encoding="utf-8"))
+if not listed["ok"] or listed["data"]["entries"] != [] or not pruned["ok"] or pruned["data"]["removed"] != []:
+    raise SystemExit("the cache of a free render must be empty")
+print("planSha256", one["data"]["planSha256"], "cache entries", listed["data"]["count"])
+PY
+
 echo "== sample projects: validate and plan, no key =="
 for sample in examples/samples/*/; do
   "$PY" dist/ambitious-video.pyz validate --in "${sample}script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/sample.json"
