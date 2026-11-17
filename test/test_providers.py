@@ -27,6 +27,7 @@ from ambitious_video.db.store import list_ledger
 from ambitious_video.domain.money import UNITS, Price
 from ambitious_video.domain.types import PaidClip, Speech
 from ambitious_video.providers.base import Provider, ProviderError, RunResult
+from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken, parse_prices, price_of, price_table
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
 
@@ -345,7 +346,7 @@ def test_lip_sync_is_priced_per_output_frame() -> None:
 
 def test_every_registered_provider_has_a_price_for_each_model() -> None:
     listed = providers.registered()
-    assert [item.id for item in listed] == ["xai-image", "xai-speech", "xai-video"]
+    assert [item.id for item in listed] == ["elevenlabs-speech", "xai-image", "xai-speech", "xai-video"]
     for item in listed:
         assert item.kind in {"scene", "speech", "lipsync"} and item.secret.isupper() and item.adapter_version >= 1
         for model in item.models:
@@ -389,7 +390,8 @@ def test_the_registry_refuses_a_second_adapter_with_the_same_id(fake_speech: Tes
     assert found is fake_speech and providers.find("no-such-provider") is None
     with pytest.raises(ValueError):
         providers.register(TestSpeech())
-    assert [item.id for item in providers.registered()] == ["test-speech", "xai-image", "xai-speech", "xai-video"]
+    shipped = ["elevenlabs-speech", "xai-image", "xai-speech", "xai-video"]
+    assert [item.id for item in providers.registered()] == sorted(["test-speech", *shipped])
     providers.unregister("test-speech")
     assert providers.find("test-speech") is None
 
@@ -527,5 +529,125 @@ def test_a_network_error_drops_the_key(tmp_path: Path, monkeypatch: pytest.Monke
     adapter = XaiSpeech()
     with pytest.raises(ProviderError) as caught:
         adapter.run(adapter.params(CLIP), {}, SECRET, tmp_path / "out.bin")
+    assert caught.value.status == 0 and caught.value.__cause__ is None and caught.value.__context__ is None
+    assert SECRET not in _locals_of(caught.value)
+
+
+class _Voices(BaseHTTPRequestHandler):
+    seen: list[tuple[str, dict[str, str], bytes]] = []
+    status = 200
+
+    def do_POST(self) -> None:
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        type(self).seen.append((self.path, {name.lower(): value for name, value in self.headers.items()}, body))
+        self.send_response(type(self).status)
+        if type(self).status == 307:
+            self.send_header("Location", "/elsewhere")
+        self.end_headers()
+        self.wfile.write(b"spoken bytes" if type(self).status == 200 else body)
+
+    def log_message(self, *_args: object) -> None:
+        return None
+
+
+@pytest.fixture
+def local_voices() -> Iterator[ElevenLabsSpeech]:
+    _Voices.seen = []
+    _Voices.status = 200
+    server = HTTPServer(("127.0.0.1", 0), _Voices)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = f"http://127.0.0.1:{server.server_port}/v1/text-to-speech"
+    try:
+        yield ElevenLabsSpeech(ElevenLabsSpeechConfig(endpoint=endpoint, timeout_seconds=5))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+OWN_VOICE = "Zk3QpV7mXy1LrT9aBc2D"
+LINE = Speech(0.0, "Hello there.", None, "elevenlabs-speech", "eleven-v4", OWN_VOICE)
+
+
+def test_elevenlabs_speech_sends_the_words_to_the_owners_voice_with_the_key_in_a_header(
+    tmp_path: Path, local_voices: ElevenLabsSpeech
+) -> None:
+    params = local_voices.params(LINE)
+    assert params == {
+        "model": "eleven-v4",
+        "model_id": "eleven_v4",
+        "text": "Hello there.",
+        "voice_id": OWN_VOICE,
+        "output_format": "mp3_44100_128",
+    }
+    result = local_voices.run(params, {}, SECRET, tmp_path / "out.bin")
+    assert result.path == tmp_path / "out.bin" and result.path.read_bytes() == b"spoken bytes"
+    ((path, headers, body),) = _Voices.seen
+    assert path == f"/v1/text-to-speech/{OWN_VOICE}?output_format=mp3_44100_128"
+    assert headers["xi-api-key"] == SECRET and "authorization" not in headers
+    assert headers["content-type"] == "application/json"
+    assert json.loads(body) == {"text": "Hello there.", "model_id": "eleven_v4"}
+    assert SECRET.encode() not in body and SECRET not in path
+
+
+def test_elevenlabs_speech_is_priced_per_character_and_has_no_voice_of_its_own() -> None:
+    adapter = ElevenLabsSpeech()
+    assert (adapter.kind, adapter.id) == ("speech", "elevenlabs-speech")
+    assert adapter.models == ("eleven-v4", "eleven-flash") and adapter.secret == "ELEVENLABS_API_KEY"
+    assert adapter.seedable is False and adapter.config.endpoint == "https://api.elevenlabs.io/v1/text-to-speech"
+    for voice in (OWN_VOICE, "another-voice-id"):
+        clip = Speech(0.0, "Hi", None, "elevenlabs-speech", "eleven-flash", voice)
+        assert adapter.params(clip)["voice_id"] == voice
+    flash = adapter.params(Speech(0.0, "Hi", None, "elevenlabs-speech", "eleven-flash", OWN_VOICE))
+    assert flash["model_id"] == "eleven_flash_v2_5" and flash != adapter.params(LINE)
+    assert [adapter.price(model).unit for model in adapter.models] == ["character", "character"]
+    assert adapter.quote(adapter.params(LINE), Decimal(1000)) == Decimal("0.08")
+    assert adapter.quote(flash, Decimal(1000)) == Decimal("0.04")
+    assert adapter.price("eleven-v4").source_url == "https://elevenlabs.io/pricing/api"
+
+
+def test_elevenlabs_speech_is_estimated_per_character_of_each_line(tmp_path: Path, no_network: None) -> None:
+    script, folder = _project(tmp_path, "elevenlabs-speech", "eleven-flash")
+    estimate = engine.estimate_data(script, folder, {"AMBITIOUS_HOME": str(tmp_path / "home")})
+    lines = _paid(estimate)
+    assert lines and all(line["provider"] == "elevenlabs-speech" and line["unit"] == "character" for line in lines)
+    for line in lines:
+        assert Decimal(str(line["usd"])) == Decimal(str(line["units"])) * Decimal("0.00004")
+    assert [entry["env"] for entry in estimate["secretsNeeded"]] == ["ELEVENLABS_API_KEY"]
+
+
+def test_a_voice_id_stays_one_part_of_the_address(tmp_path: Path, local_voices: ElevenLabsSpeech) -> None:
+    odd = Speech(0.0, "Hi", None, "elevenlabs-speech", "eleven-v4", "../v1/voices?x=1#y z")
+    local_voices.run(local_voices.params(odd), {}, SECRET, tmp_path / "out.bin")
+    ((path, _headers, _body),) = _Voices.seen
+    assert path == "/v1/text-to-speech/..%2Fv1%2Fvoices%3Fx%3D1%23y%20z?output_format=mp3_44100_128"
+
+
+@pytest.mark.parametrize("status", [401, 307])
+def test_a_refused_or_redirected_elevenlabs_call_drops_the_key(
+    status: int, tmp_path: Path, local_voices: ElevenLabsSpeech
+) -> None:
+    _Voices.status = status
+    out = tmp_path / "out.bin"
+    with pytest.raises(ProviderError) as caught:
+        local_voices.run(local_voices.params(LINE), {}, SECRET, out)
+    assert (caught.value.provider, caught.value.status) == ("elevenlabs-speech", status)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+    assert SECRET not in _locals_of(caught.value) and not out.exists()
+    assert len(_Voices.seen) == 1
+    failure = engine.provider_failure(caught.value)
+    assert [error.code for error in failure.errors] == ["E_PROVIDER"]
+    assert failure.data == {"provider": "elevenlabs-speech", "status": status}
+    assert SECRET not in json.dumps([[error.message, error.hint] for error in failure.errors])
+
+
+def test_an_elevenlabs_network_error_drops_the_key(tmp_path: Path) -> None:
+    closed = HTTPServer(("127.0.0.1", 0), _Voices)
+    endpoint = f"http://127.0.0.1:{closed.server_port}/v1/text-to-speech"
+    closed.server_close()
+    adapter = ElevenLabsSpeech(ElevenLabsSpeechConfig(endpoint=endpoint, timeout_seconds=2))
+    with pytest.raises(ProviderError) as caught:
+        adapter.run(adapter.params(LINE), {}, SECRET, tmp_path / "out.bin")
     assert caught.value.status == 0 and caught.value.__cause__ is None and caught.value.__context__ is None
     assert SECRET not in _locals_of(caught.value)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-unset XAI_API_KEY
+unset XAI_API_KEY ELEVENLABS_API_KEY
 if [ -z "${PY:-}" ] && [ -x .venv/bin/python ]; then
   PY=".venv/bin/python"
 fi
@@ -105,6 +105,45 @@ if render["ok"] or [error["code"] for error in render["errors"]] != ["E_NO_KEY"]
 if (work / "out" / "spoken.mp4").exists():
     raise SystemExit("a refused render must write nothing")
 print("secretsNeeded", wanted[0]["env"], wanted[0]["usd"])
+PY
+
+echo "== two providers: only the key that is not set is asked for =="
+cat >"$WORK/two-keys.yaml" <<'YAML'
+schemaVersion: 2
+disclosure: "AI-generated scenes"
+output: { path: out/two-keys.mp4, width: 320, height: 180, fps: 10 }
+tracks:
+  - id: main
+    clips:
+      - type: generated_scene
+        provider: xai-image
+        model: grok-imagine-image
+        prompt: "A tidy shop front on a quiet street, no people, no text"
+        duration: 2
+        fallback: { type: title_card, text: "Spoken or shown" }
+  - id: voice
+    clips:
+      - { type: speech, at: 0.2, duration: 1.5, text: "A line for a voice.", provider: elevenlabs-speech, model: eleven-v4, voice: an-owner-voice-id }
+  - id: captions
+    from: voice
+YAML
+"$PY" dist/ambitious-video.pyz validate --in "$WORK/two-keys.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >/dev/null
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/two-keys.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/two-keys-none.json"
+XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz estimate --in "$WORK/two-keys.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/two-keys-one.json"
+"$PY" - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+none, one = (json.loads((work / f"two-keys-{name}.json").read_text(encoding="utf-8")) for name in ("none", "one"))
+speech = {"env": "ELEVENLABS_API_KEY", "provider": "elevenlabs-speech", "steps": [1], "usd": "0.001520"}
+scene = {"env": "XAI_API_KEY", "provider": "xai-image", "steps": [0], "usd": "0.020000"}
+if not none["ok"] or none["data"]["secretsNeeded"] != [speech, scene]:
+    raise SystemExit("with no key set, both variables must be listed, each with its own steps")
+if not one["ok"] or one["data"]["secretsNeeded"] != [speech] or one["data"]["usd"] != "0.021520":
+    raise SystemExit("with one key set, only the other variable must be listed, for the speech step alone")
+if "not-a-real-key" in json.dumps([none, one]):
+    raise SystemExit("an estimate must never hold a key value")
+print("secretsNeeded", speech["env"], speech["usd"], "of", one["data"]["usd"])
 PY
 
 echo "== --offline: fallbacks, 0.000000, the same plan and the same file twice =="

@@ -25,11 +25,11 @@ node scripts/check-standalone.mjs
 bash spec/check.sh && python3 scripts/check_schemas.py
 ```
 
-`verify/run` renders `examples/minimal.yaml`, the script that `guide` prints, and each sample project from its starter template, which need no API key. After changing a starter template in `templates/`, copy it to `src/ambitious_video/templates/` and run `expand` again for the samples that use it; the checks fail until both are done. Do not point a check at a paid speech call. `verify/run` removes `XAI_API_KEY` from the environment for that run.
+`verify/run` renders `examples/minimal.yaml`, the script that `guide` prints, and each sample project from its starter template, which need no API key. After changing a starter template in `templates/`, copy it to `src/ambitious_video/templates/` and run `expand` again for the samples that use it; the checks fail until both are done. Do not point a check at a paid speech call. `verify/run` removes `XAI_API_KEY` and `ELEVENLABS_API_KEY` from the environment for that run.
 
 ## Secrets
 
-Never put an API key in a file, a commit, an issue, a pull request, or a log. A paid step reads its provider's key from the environment (`XAI_API_KEY` for `xai-speech`) for that one call. The key is not stored and is not printed: `test/test_secrets_offline.py` renders with a made-up key value and then searches the database, the cache, the output and everything printed for it. A new provider or command must keep that test passing. Tests never call a provider: they use a fake HTTP server on 127.0.0.1 or a stubbed `urlopen`.
+Never put an API key in a file, a commit, an issue, a pull request, or a log. A paid step reads its provider's key from the environment (`XAI_API_KEY` for `xai-speech`, `ELEVENLABS_API_KEY` for `elevenlabs-speech`) for that one call. The key is not stored and is not printed: `test/test_secrets_offline.py` renders with a made-up key value and then searches the database, the cache, the output and everything printed for it. A new provider or command must keep that test passing. Tests never call a provider: they use a fake HTTP server on 127.0.0.1 or a stubbed `urlopen`.
 
 ## Pull requests
 

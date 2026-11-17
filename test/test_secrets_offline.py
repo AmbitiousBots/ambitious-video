@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import array
+import base64
 import io
 import json
 import logging
@@ -23,6 +24,7 @@ import pytest
 import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
 from ambitious_kit.domain.envelope import Failure, JsonObject
+from PIL import Image
 
 from ambitious_video import providers
 from ambitious_video.cli import engine, main
@@ -32,8 +34,11 @@ from ambitious_video.domain.load import load_script
 from ambitious_video.domain.money import Price
 from ambitious_video.domain.plan import plan_sha
 from ambitious_video.domain.types import ClipTrack, PaidClip, Speech, Voiceover
-from ambitious_video.providers.base import RunResult
+from ambitious_video.providers.base import Provider, RunResult
+from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
+from ambitious_video.providers.xai_image import XaiImage, XaiImageConfig
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
+from ambitious_video.providers.xai_video import XaiVideo, XaiVideoConfig
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "examples" / "samples"
@@ -181,78 +186,242 @@ def _everything_written(base: Path) -> bytes:
     return b"\n".join(path.read_bytes() for path in sorted(base.rglob("*")) if path.is_file())
 
 
+OWN_VOICE = "Zk3QpV7mXy1LrT9aBc2D"
+PER_CHARACTER = Decimal("0.00008")
+
+
+class _Calls(BaseHTTPRequestHandler):
+    seen: list[tuple[str, str, dict[str, str], bytes]] = []
+    video = b""
+    picture = b""
+
+    def _answer(self, body: bytes) -> None:
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _note(self, method: str, body: bytes) -> None:
+        headers = {name.lower(): value for name, value in self.headers.items()}
+        type(self).seen.append((method, self.path, headers, body))
+
+    def do_POST(self) -> None:
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        self._note("POST", body)
+        if self.path.startswith("/v1/text-to-speech/"):
+            self._answer(_tone(json.loads(body)["text"]))
+        elif self.path == "/v1/images/generations":
+            encoded = base64.b64encode(type(self).picture).decode()
+            self._answer(json.dumps({"data": [{"b64_json": encoded}]}).encode())
+        else:
+            self._answer(json.dumps({"request_id": f"req-{len(type(self).seen)}"}).encode())
+
+    def do_GET(self) -> None:
+        self._note("GET", b"")
+        if self.path.startswith("/files/"):
+            self._answer(type(self).video)
+            return
+        address = f"http://127.0.0.1:{self.server.server_address[1]}/files/made.mp4"
+        self._answer(json.dumps({"status": "done", "video": {"url": address, "duration": 4}}).encode())
+
+    def log_message(self, *_args: object) -> None:
+        return None
+
+
+class _XaiCalls(_Calls):
+    seen: list[tuple[str, str, dict[str, str], bytes]] = []
+
+
+class _VoiceCalls(_Calls):
+    seen: list[tuple[str, str, dict[str, str], bytes]] = []
+
+
+def _made_video(folder: Path) -> bytes:
+    path = folder / "made.mp4"
+    source = "color=c=red:size=64x36:rate=5:duration=4"
+    command = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-pix_fmt", "yuv420p", str(path)]
+    subprocess.run(command, stdin=subprocess.DEVNULL, check=True)
+    made = path.read_bytes()
+    path.unlink()
+    return made
+
+
+def _made_picture() -> bytes:
+    held = io.BytesIO()
+    Image.new("RGB", (64, 36), (20, 160, 60)).save(held, format="PNG")
+    return held.getvalue()
+
+
+@pytest.fixture
+def xai_and_elevenlabs(tmp_path: Path) -> Iterator[tuple[type[_Calls], type[_Calls]]]:
+    _XaiCalls.seen = []
+    _XaiCalls.video = _made_video(tmp_path)
+    _XaiCalls.picture = _made_picture()
+    _VoiceCalls.seen = []
+    servers = [HTTPServer(("127.0.0.1", 0), kind) for kind in (_XaiCalls, _VoiceCalls)]
+    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in servers]
+    for thread in threads:
+        thread.start()
+    xai, voices = (f"http://127.0.0.1:{server.server_port}" for server in servers)
+    local: tuple[Provider, ...] = (
+        XaiVideo(
+            XaiVideoConfig(
+                submit_url=xai + "/v1/videos/generations",
+                status_url=xai + "/v1/videos/",
+                download_schemes=("http",),
+                timeout_seconds=5,
+                poll_seconds=0.02,
+                wait_seconds=5,
+            )
+        ),
+        XaiImage(XaiImageConfig(endpoint=xai + "/v1/images/generations", timeout_seconds=5)),
+        ElevenLabsSpeech(ElevenLabsSpeechConfig(endpoint=voices + "/v1/text-to-speech", timeout_seconds=5)),
+    )
+    shipped = [providers.find(adapter.id) for adapter in local]
+    for adapter in local:
+        providers.unregister(adapter.id)
+        providers.register(adapter)
+    try:
+        yield _XaiCalls, _VoiceCalls
+    finally:
+        for adapter, kept in zip(local, shipped, strict=True):
+            providers.unregister(adapter.id)
+            assert kept is not None
+            providers.register(kept)
+        for server, thread in zip(servers, threads, strict=True):
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
+def _spoken_with_scenes(dest: Path) -> tuple[dict[str, object], Path]:
+    script, folder = _sample(dest, "example-bookshop", ())
+    made = (("xai-video", "grok-imagine-video"), ("xai-image", "grok-imagine-image"))
+    for track in script["tracks"]:
+        clips = track.get("clips", [])
+        stills = [index for index, clip in enumerate(clips) if clip["type"] == "image"]
+        for index, (provider, model) in zip(stills, made, strict=False):
+            clips[index] = {
+                "type": "generated_scene",
+                "provider": provider,
+                "model": model,
+                "prompt": "A quiet shelf of books in morning light, no people, no text",
+                "duration": 4,
+                "fallback": {"type": "image", "path": clips[index]["path"]},
+            }
+        for clip in clips:
+            if clip["type"] == "voiceover":
+                spoken = {"type": "speech", "provider": "elevenlabs-speech", "model": "eleven-v4", "voice": OWN_VOICE}
+                clip.update(spoken)
+    return script, folder
+
+
+def _lines_of(estimate: Mapping[str, object], *names: str) -> list[dict[str, object]]:
+    return [line for line in _rows(estimate, "breakdown") if line.get("provider") in names]
+
+
 def test_only_the_missing_key_of_an_uncached_step_is_asked_for(
-    tmp_path: Path, two_providers: tuple[KeyedSpeech, KeyedSpeech], no_network: None
+    tmp_path: Path, xai_and_elevenlabs: tuple[type[_Calls], type[_Calls]]
 ) -> None:
-    scenes, voice = two_providers
-    script, folder = _sample(tmp_path, "example-bookshop", (scenes.id, voice.id))
+    xai, voices = xai_and_elevenlabs
+    script, folder = _spoken_with_scenes(tmp_path)
     home = tmp_path / "home"
     bare = {"AMBITIOUS_HOME": str(home)}
-    one_key = {**bare, scenes.secret: SENTINEL}
-    both_keys = {**one_key, voice.secret: OTHER_SENTINEL}
+    one_key = {**bare, "XAI_API_KEY": SENTINEL}
+    both_keys = {**one_key, "ELEVENLABS_API_KEY": OTHER_SENTINEL}
 
     estimate = engine.estimate_data(script, folder, one_key)
     plan = engine.plan_view(script, folder, one_key)
-    lines = {
-        name: [line for line in _rows(estimate, "breakdown") if line.get("provider") == name]
-        for name in (scenes.id, voice.id)
-    }
-    assert len(lines[scenes.id]) > 1 and len(lines[voice.id]) > 1
-    wanted = _entry(voice.secret, voice.id, lines[voice.id])
+    speech = _lines_of(estimate, "elevenlabs-speech")
+    scenes = _lines_of(estimate, "xai-video", "xai-image")
+    assert len(speech) == 5 and [line["provider"] for line in scenes] == ["xai-video", "xai-image"]
+    for line in speech:
+        assert (line["step"], line["model"], line["unit"]) == ("speech", "eleven-v4", "character")
+        assert Decimal(str(line["usd"])) == Decimal(str(line["units"])) * PER_CHARACTER
+    wanted = _entry("ELEVENLABS_API_KEY", "elevenlabs-speech", speech)
     assert estimate["secretsNeeded"] == [wanted] == plan["secretsNeeded"]
-    assert wanted["steps"] == [step["index"] for step in _steps_of(plan, voice.id)]
+    assert wanted["steps"] == [step["index"] for step in _steps_of(plan, "elevenlabs-speech")]
+    assert all(step["type"] == "speech" for step in _steps_of(plan, "elevenlabs-speech"))
     assert Decimal(str(wanted["usd"])) > 0 and set(wanted) == {"env", "provider", "steps", "usd"}
 
     neither = engine.estimate_data(script, folder, bare)["secretsNeeded"]
-    assert neither == [_entry(scenes.secret, scenes.id, lines[scenes.id]), wanted]
+    assert neither == [wanted, _entry("XAI_API_KEY", "xai-image, xai-video", scenes)]
     assert sum(Decimal(str(entry["usd"])) for entry in neither) == Decimal(str(estimate["usd"]))
     assert engine.estimate_data(script, folder, both_keys)["secretsNeeded"] == []
-    assert engine.estimate_data(script, folder, {**both_keys, voice.secret: ""})["secretsNeeded"] == [wanted]
+    assert engine.estimate_data(script, folder, {**both_keys, "ELEVENLABS_API_KEY": ""})["secretsNeeded"] == [wanted]
 
     db = _open(home)
     try:
         with pytest.raises(Failure) as refused:
             _render(db, script, folder, "job-zero", FIRST, one_key)
         assert [error.code for error in refused.value.errors] == ["E_NO_KEY"]
-        assert voice.secret in refused.value.errors[0].hint and "--offline" in refused.value.errors[0].hint
+        hint = refused.value.errors[0].hint
+        assert "ELEVENLABS_API_KEY" in hint and "XAI_API_KEY" not in hint and "--offline" in hint
         assert refused.value.data == {"missing": [wanted]}
-        assert scenes.calls == [] and voice.calls == [] and list_ledger(db) == ()
+        assert xai.seen == [] and voices.seen == [] and list_ledger(db) == ()
         assert db.execute("SELECT count(*) FROM jobs").fetchone() == (0,)
+        assert db.execute("SELECT count(*) FROM provider_requests").fetchone() == (0,)
         assert not (home / "video" / "cache").exists()
 
         with pytest.raises(Failure) as refused_twice:
             _render(db, script, folder, "job-zero", FIRST, bare)
         assert [error.code for error in refused_twice.value.errors] == ["E_NO_KEY", "E_NO_KEY"]
         assert refused_twice.value.data == {"missing": neither}
-        assert scenes.calls == [] and voice.calls == []
+        assert xai.seen == [] and voices.seen == []
 
         first = _render(db, script, folder, "job-one", FIRST, both_keys)
-        assert len(scenes.calls) == len(lines[scenes.id]) and len(voice.calls) == len(lines[voice.id])
         assert first["costUsd"] == estimate["usd"]
+        assert len(voices.seen) == len(speech) and len(list_ledger(db)) == len(speech) + len(scenes)
+        for method, path, headers, body in voices.seen:
+            assert (method, path) == ("POST", f"/v1/text-to-speech/{OWN_VOICE}?output_format=mp3_44100_128")
+            assert headers["xi-api-key"] == OTHER_SENTINEL and "authorization" not in headers
+            assert json.loads(body)["model_id"] == "eleven_v4" and SENTINEL.encode() not in body
+        posted = [path for method, path, _headers, _body in xai.seen if method == "POST"]
+        assert sorted(posted) == ["/v1/images/generations", "/v1/videos/generations"]
+        keyed = [headers for _method, path, headers, _body in xai.seen if path.startswith("/v1/")]
+        assert all(headers["authorization"] == "Bearer " + SENTINEL for headers in keyed)
+        assert not any("xi-api-key" in headers or OTHER_SENTINEL in str(headers) for *_, headers, _body in xai.seen)
 
-        after = engine.estimate_data(script, folder, bare)
+        after = engine.estimate_data(script, folder, one_key)
         assert after["secretsNeeded"] == [] and after["usd"] == "0.000000"
         assert engine.plan_view(script, folder, bare)["secretsNeeded"] == []
-        calls = (len(scenes.calls), len(voice.calls))
+        calls = (len(xai.seen), len(voices.seen))
         second = _render(db, script, folder, "job-two", LATER, bare)
-        assert second["costUsd"] == "0.000000" and (len(scenes.calls), len(voice.calls)) == calls
+        assert second["costUsd"] == "0.000000" and (len(xai.seen), len(voices.seen)) == calls
+
+        repainted = json.loads(json.dumps(script))
+        scene = next(
+            clip
+            for track in repainted["tracks"]
+            for clip in track.get("clips", [])
+            if clip.get("provider") == "xai-image"
+        )
+        scene["prompt"] = scene["prompt"] + ", seen from the door"
+        assert engine.estimate_data(repainted, folder, one_key)["secretsNeeded"] == []
+        only_xai = engine.estimate_data(repainted, folder, bare)["secretsNeeded"]
+        assert [(entry["env"], entry["provider"]) for entry in only_xai] == [("XAI_API_KEY", "xai-image")]
 
         changed = json.loads(json.dumps(script))
         target = next(
-            clip for track in changed["tracks"] for clip in track.get("clips", []) if clip.get("provider") == voice.id
+            clip
+            for track in changed["tracks"]
+            for clip in track.get("clips", [])
+            if clip.get("provider") == "elevenlabs-speech"
         )
         target["text"] = target["text"] + " Changed."
-        partly = engine.estimate_data(changed, folder, bare)
+        partly = engine.estimate_data(changed, folder, one_key)
         (owed,) = [line for line in _rows(partly, "breakdown") if line.get("cached") is False]
-        assert partly["secretsNeeded"] == [_entry(voice.secret, voice.id, [owed])]
+        assert partly["secretsNeeded"] == [_entry("ELEVENLABS_API_KEY", "elevenlabs-speech", [owed])]
+        assert Decimal(str(owed["usd"])) == len(target["text"]) * PER_CHARACTER
         with pytest.raises(Failure) as refused_again:
             _render(db, changed, folder, "job-three", LATER, one_key)
         assert refused_again.value.data == {"missing": partly["secretsNeeded"]}
-        assert (len(scenes.calls), len(voice.calls)) == calls
+        assert (len(xai.seen), len(voices.seen)) == calls
+        dumped = "\n".join(db.iterdump())
     finally:
         db.close()
-    shown = json.dumps([estimate, plan, neither, first, after, second, partly, refused.value.data])
-    assert SENTINEL not in shown and OTHER_SENTINEL not in shown
+    shown = json.dumps([estimate, plan, neither, first, after, second, partly, only_xai, refused.value.data])
+    for held in (shown, dumped, str(refused.value.errors), str(refused_again.value.errors)):
+        assert SENTINEL not in held and OTHER_SENTINEL not in held
     written = _everything_written(tmp_path)
     assert SENTINEL.encode() not in written and OTHER_SENTINEL.encode() not in written
 
