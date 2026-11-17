@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXED = ["--now", "2026-01-01T00:00:00Z", "--seed", "1"]
 BG = (32, 64, 96)
 OPEN_STDIN_LIMIT_SECONDS = 60
+SLOW_WRITER_PAUSE_SECONDS = 3.0
 
 
 def environment(home: Path) -> dict[str, str]:
@@ -273,3 +274,38 @@ def test_a_script_on_stdin_is_still_read(tmp_path: Path, flags: list[str]) -> No
     payload = envelope(result.stdout, result.returncode)
     assert payload["exit"] == 0, payload
     assert payload["data"] == {"ok": True, "durationSec": 1, "problems": []}
+
+
+@pytest.mark.parametrize("name", ["validate", "render"])
+def test_a_slow_writer_on_stdin_is_read_to_the_end(tmp_path: Path, name: str) -> None:
+    from ambitious_video.cli.main import STDIN_WAIT_SECONDS
+
+    assert SLOW_WRITER_PAUSE_SECONDS > STDIN_WAIT_SECONDS
+    cards = [f'{{ type: title_card, duration: 2.0, text: "{word}" }}' for word in ["One", "Two", "Three"]]
+    lines = script_of("slow.mp4", cards).splitlines(keepends=True)
+    proc = subprocess.Popen(
+        command([name]),
+        cwd=tmp_path,
+        env=environment(tmp_path / "home"),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    try:
+        proc.stdin.write("".join(lines[:-2]))
+        proc.stdin.flush()
+        with pytest.raises(subprocess.TimeoutExpired):
+            proc.wait(timeout=SLOW_WRITER_PAUSE_SECONDS)
+        proc.stdin.write("".join(lines[-2:]))
+        proc.stdin.close()
+        code = proc.wait(timeout=OPEN_STDIN_LIMIT_SECONDS)
+        payload = envelope(proc.stdout.read(), code)
+    finally:
+        proc.kill()
+        proc.stdout.close()
+        proc.wait()
+    assert payload["exit"] == 0, payload
+    data = payload["data"]
+    assert isinstance(data, dict)
+    assert data["durationSec"] == 6

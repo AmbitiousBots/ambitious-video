@@ -381,12 +381,12 @@ def _samples(timeline: Timeline) -> tuple[tuple[str, int], ...]:
     return tuple(chosen)
 
 
-def _grab(video: str, index: int, dest: Path) -> None:
+def _grab(video: str, index: int, dest: Path, counted: int) -> None:
     import subprocess
 
     if shutil.which("ffmpeg") is None:
         raise NeedTool("ffmpeg")
-    subprocess.run(
+    result = subprocess.run(
         [
             "ffmpeg",
             "-nostdin",
@@ -407,6 +407,8 @@ def _grab(video: str, index: int, dest: Path) -> None:
         text=True,
         check=False,
     )
+    if result.returncode != 0 and index < counted:
+        raise NeedTool("ffmpeg")
 
 
 def _seconds_text(value: float) -> str:
@@ -422,6 +424,8 @@ def _why(check: Mapping[str, object]) -> str:
     expected, actual = check.get("expected"), check.get("actual")
     if name == "duration" and isinstance(expected, float) and isinstance(actual, float):
         return say("The video lasts ", _seconds_text(actual), " s, not ", _seconds_text(expected), " s.")
+    if name == "frames" and actual == -1:
+        return "The video frames could not be counted."
     if name == "frames":
         return say("The video has ", str(actual), " frames, not ", str(expected), ".")
     if name == "resolution":
@@ -466,7 +470,7 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
             for name, index in _samples(timeline):
                 painted = frame_at(timeline, index, canvas).tobytes()
                 shot = work / (name + ".png")
-                _grab(str(output), index, shot)
+                _grab(str(output), index, shot, counted)
                 from ambitious_video.media.film import pixels
 
                 found = shot.is_file()

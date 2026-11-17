@@ -79,11 +79,10 @@ def _input_source(argv: list[str]) -> tuple[list[str], str]:
 def _waiting_bytes(descriptor: int) -> bytes:
     if stat.S_ISREG(os.fstat(descriptor).st_mode):
         return sys.stdin.buffer.read()
+    if not select.select([descriptor], [], [], STDIN_WAIT_SECONDS)[0]:
+        return b""
     held = bytearray()
-    while select.select([descriptor], [], [], STDIN_WAIT_SECONDS)[0]:
-        chunk = os.read(descriptor, 65536)
-        if chunk == b"":
-            break
+    while chunk := os.read(descriptor, 65536):
         held += chunk
     return bytes(held)
 

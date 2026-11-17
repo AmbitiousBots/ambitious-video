@@ -83,7 +83,7 @@ def wrap(draw: PilDraw, text: str, font: PilFont, width: int) -> tuple[str, ...]
 
 def open_logo(canvas: Canvas, path: str) -> PilImage:
     image_module, _draw, _font = pil()
-    key = "logo:" + path
+    key = "\0logo\0" + path
     found = canvas.pictures.get(key)
     if found is not None:
         return found

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -52,13 +53,27 @@ def kept(path: Path) -> bool:
     return path.is_file() and path != SCAN_ITSELF and not SKIPPED_PARTS & set(path.relative_to(ROOT).parts)
 
 
+def tracked() -> set[Path] | None:
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    names = [name for name in listed.stdout.split("\0") if name != ""]
+    if listed.returncode != 0 or not names:
+        return None
+    return {ROOT / name for name in names}
+
+
 def scanned_files() -> list[Path]:
     found: set[Path] = set()
     for top in SCANNED:
         found.update(path for path in (ROOT / top).rglob("*") if kept(path))
     found.update(path for path in ROOT.iterdir() if kept(path))
     found.update(path for path in ROOT.rglob("*") if path.suffix in DOCUMENT_SUFFIXES and kept(path))
-    return sorted(found)
+    in_repository = tracked()
+    return sorted(found if in_repository is None else found & in_repository)
 
 
 def readable(path: Path) -> str:
