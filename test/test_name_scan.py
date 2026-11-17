@@ -22,6 +22,10 @@ ALLOWED: dict[str, str] = {
     "ambitious_home": "The vendored kit function that reads AMBITIOUS_HOME; the default cache folder is found with it.",
     "/workspace/ambitious": "The default of AMBITIOUS_HOME that the module contract pins.",
     ".cache/ambitious": "The cache folder where spec/check.sh keeps the pinned model checker download.",
+    "Ambitious Corporation": (
+        "The holder of this project's Apache-2.0 copyright. It is named in the copyright line of NOTICE, "
+        "and in CONTRIBUTING.md where that line is explained, and nowhere else."
+    ),
     "https://github.com/AmbitiousBots/ambitious-video/security/advisories/new": (
         "The private security report form. A GitHub issue template contact link must be an absolute address, "
         "so this one address stays, and only in .github/ISSUE_TEMPLATE/config.yml."
@@ -122,11 +126,19 @@ def test_the_security_form_is_named_in_one_file_only() -> None:
     assert holders == [".github/ISSUE_TEMPLATE/config.yml"]
 
 
+def test_the_copyright_holder_is_named_in_the_notice_only() -> None:
+    holders = [
+        path.relative_to(ROOT).as_posix() for path in scanned_files() if "Ambitious Corporation" in readable(path)
+    ]
+    assert holders == ["CONTRIBUTING.md", "NOTICE"]
+
+
 def test_the_documents_name_no_company_as_author() -> None:
     notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "The ambitious-video contributors" in notice
-    assert "Corporation" not in notice and "Corporation" not in readme
+    assert "Copyright 2026 Ambitious Corporation" in notice
+    assert "The ambitious-video contributors" not in notice
+    assert "Corporation" not in readme
     assert "the project contributors" in readme
     assert "Apache License" in (ROOT / "LICENSE").read_text(encoding="utf-8")
 
@@ -144,7 +156,6 @@ def test_the_documents_name_no_company_as_author() -> None:
         "HAL",
         "the hal-9 unit",
         "Part of Ambitious",
-        "Copyright 2026 Ambitious Corporation",
         "github.com/AmbitiousBots/ambitious-video",
         "the ambitious-kit repository",
         "Made for you by a robot",
@@ -165,6 +176,7 @@ def test_the_scan_refuses(text: str) -> None:
         "a dashboard, a shall, a halt and a chalk line",
         "Example Plumbing Co.",
         "Copyright 2026 The ambitious-video contributors",
+        "Copyright 2026 Ambitious Corporation",
         "keeps it in ~/.cache/ambitious/",
     ],
 )
