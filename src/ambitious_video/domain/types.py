@@ -16,16 +16,18 @@ HexColor = NewType("HexColor", str)
 Timestamp = NewType("Timestamp", str)
 Usd = NewType("Usd", Decimal)
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 TRACK_ID_PATTERN: Final = "^[a-z][a-z0-9_-]{0,31}$"
 HEX_COLOR_PATTERN: Final = "^#[0-9A-Fa-f]{6}$"
+PROVIDER_ID_PATTERN: Final = "^[a-z][a-z0-9-]{0,31}$"
+MODEL_ID_PATTERN: Final = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 
-ClipType = Literal["title_card", "screen_recording", "video", "image", "voiceover", "audio"]
+ClipType = Literal["title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio"]
 ActionKind = Literal["click", "wait", "scroll"]
 Transition = Literal["crossfade"]
-VoiceProvider = Literal["xai"]
 EncodeMode = Literal["web", "lossless"]
+ProviderKind = Literal["scene", "speech", "lipsync"]
 
 ScriptRule = Literal[
     "track-ids-unique",
@@ -56,7 +58,7 @@ ErrorCode = Literal[
     "E_MEDIA",
     "E_RANGE",
     "E_TOOL",
-    "E_SPEECH",
+    "E_PROVIDER",
     "E_VERIFY",
     "E_CACHE",
 ]
@@ -96,12 +98,6 @@ class Brand:
     font: str | None
     colors: BrandColors | None
     logo: RelativePath | None
-
-
-@dataclass(frozen=True, slots=True)
-class Voice:
-    provider: VoiceProvider
-    voice: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +160,16 @@ class Voiceover:
 
 
 @dataclass(frozen=True, slots=True)
+class Speech:
+    at: float
+    text: str
+    duration: float | None
+    provider: str
+    model: str
+    voice: str
+
+
+@dataclass(frozen=True, slots=True)
 class AudioClip:
     path: RelativePath
     at: float
@@ -171,7 +177,8 @@ class AudioClip:
     duck_under: TrackId | None
 
 
-type Clip = TitleCard | ScreenRecording | VideoClip | ImageClip | Voiceover | AudioClip
+type Clip = TitleCard | ScreenRecording | VideoClip | ImageClip | Voiceover | Speech | AudioClip
+PaidClip = Speech
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +207,6 @@ class Cut:
 class Script:
     output: Output
     brand: Brand | None
-    voice: Voice | None
     tracks: tuple[Track, ...]
     cuts: tuple[Cut, ...]
     cache_dir: RelativePath | None = None

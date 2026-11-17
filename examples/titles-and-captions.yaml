@@ -1,10 +1,10 @@
 # Two title cards, captions and one crossfade.
 # This script needs no media files and no API key.
 #
-# Leave `voice` unset unless you want spoken voiceover and have set the
-# provider key in the environment. Without `voice`, each voiceover line is
-# shown as a caption and nothing is spoken.
-schemaVersion: 1
+# A `voiceover` line is shown as a caption and nothing is spoken. To have a
+# line spoken, make it a `speech` clip that names a provider, a model and a
+# voice, and set that provider's key in the environment.
+schemaVersion: 2
 output: { path: out/titles-and-captions.mp4, width: 1280, height: 720, fps: 30 }
 tracks:
   - id: main

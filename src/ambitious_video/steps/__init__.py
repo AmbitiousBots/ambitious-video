@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from ambitious_video.domain.clips import kind_of
-from ambitious_video.domain.types import AudioClip, Clip, ImageClip, ScreenRecording, TitleCard, VideoClip, Voiceover
-from ambitious_video.steps import audio, image, screen_recording, title_card, video, voiceover
+from ambitious_video.domain.types import (
+    AudioClip,
+    Clip,
+    ImageClip,
+    ScreenRecording,
+    Speech,
+    TitleCard,
+    VideoClip,
+    Voiceover,
+)
+from ambitious_video.steps import audio, image, screen_recording, speech, title_card, video, voiceover
 from ambitious_video.steps.common import Canvas
 
 COMPILE = {
@@ -11,6 +20,7 @@ COMPILE = {
     "video": video.compile,
     "image": image.compile,
     "voiceover": voiceover.compile,
+    "speech": speech.compile,
     "audio": audio.compile,
 }
 
@@ -26,6 +36,8 @@ def compile_clip(clip: Clip) -> dict[str, object]:
         return image.compile(clip, None)
     if isinstance(clip, Voiceover):
         return voiceover.compile(clip, None)
+    if isinstance(clip, Speech):
+        return speech.compile(clip, None)
     if isinstance(clip, AudioClip):
         return audio.compile(clip, None)
     raise TypeError(kind_of(clip))

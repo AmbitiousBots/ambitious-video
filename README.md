@@ -1,6 +1,6 @@
 # ambitious-video
 
-The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, voiceover, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
+The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, speech, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
 
 The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
@@ -11,7 +11,7 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`,
 | `guide` | none | A short example script to copy from `data.example.script`, and the steps to render it. |
 | `validate` | none | Whether the script is usable, its duration, and any problems. |
 | `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, and `planSha256`. |
-| `estimate` | none | A dry-run price from `pricing.json`. No provider is called. |
+| `estimate` | none | A dry-run price from `pricing.json`. No provider is called. Each paid line names its provider, model, units, price and price source; a step already in the step cache is priced at 0. |
 | `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. |
 | `verify` | write | Checks duration, frame count, resolution, audio, encoding, and title and cut frames of a rendered job. |
 | `jobs` | read | The jobs in the database. |
@@ -34,17 +34,59 @@ ambitious-video estimate --in video.yaml      # 0, because nothing is spoken
 ambitious-video render --in video.yaml        # writes out/titles-and-captions.mp4 next to video.yaml
 ```
 
-Leave `voice` unset unless you want spoken voiceover and have set the provider key in the environment.
+A `voiceover` clip is a caption only. Use a `speech` clip, described below, only when you want a line spoken and have set the provider key in the environment.
 
 ## What a render does
 
-`render` of a script whose `voice` is set needs `XAI_API_KEY` only when a line has to be spoken that is not in the step cache yet. The key is read from the environment for that call and is not stored. Without `voice`, voiceover clips are captions only and no key is needed. Speech is priced at the public text-to-speech rate in `pricing.json` (15 USD per 1 million characters). A voice named `default` uses the provider's default voice. The spoken language is detected.
+## Paid steps and providers
+
+A paid step is a clip that names a provider and one of its models. The only paid step so far is `speech`: a line spoken by a text-to-speech provider.
+
+```yaml
+- { type: speech, at: 0.5, text: "Narration line", provider: xai-speech, model: tts, voice: eve }
+```
+
+The provider, the model and the voice are always written in the script. Nothing picks one for you at render time and no voice is built in. A `voiceover` clip is the free form of the same line: it gives captions their words and timing, nothing is spoken and no key is needed.
+
+Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for `xai-speech`), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged; `data.env` names the variable to set.
+
+| Provider id | Step | Models | Key | Unit |
+|---|---|---|---|---|
+| `xai-speech` | `speech` | `tts` | `XAI_API_KEY` | character |
+
+`pricing.json` holds one entry per provider and model: `unit`, `usdPerUnit`, `sourceUrl` (the provider's public price page) and `checkedAt` (the day that page was read). These are list prices, not measured spend; check the source before relying on them. The table also holds prices for providers that have no adapter yet (video, image, another speech provider and lip-sync, the last priced per output frame); a script cannot use those until their adapters exist.
+
+`estimate` prices a script from that table without calling anyone. A paid line looks like this:
+
+```json
+{ "step": "speech", "index": 8, "units": "40", "usd": "0.000600", "provider": "xai-speech", "model": "tts",
+  "unit": "character", "usdPerUnit": "0.000015", "sourceUrl": "https://docs.x.ai/docs/models",
+  "checkedAt": "2026-11-16", "stepKey": "...", "cached": false }
+```
+
+A step whose result is already in the step cache has `"cached": true` and `"usd": "0.000000"`, and `usd` at the top is the sum of what a render would still be charged. `--cache <dir>` tells `estimate` which cache to look in, as it does for `render`. `estimate` reads only that folder and not the database, so a result that `render` would copy from another cache folder is still shown at its price: a render can cost less than the estimate, never more.
+
+### Adding a provider
+
+A provider is one module in `src/ambitious_video/providers/` with a class that follows `Provider` in `providers/base.py`, registered in `providers/__init__.py`:
+
+| Member | What it is |
+|---|---|
+| `kind` | `speech`, `scene` or `lipsync`: the step it can do. |
+| `id`, `models` | The names a script uses in `provider` and `model`. |
+| `secret` | The name of the environment variable that holds the key. |
+| `seedable`, `adapter_version` | Whether the provider takes a seed, and a number to raise when the adapter's output changes, so old cache entries are not reused. |
+| `params(step)` | Pure. The canonical parameters that are sent; they are hashed into the step key. |
+| `price(model)`, `quote(params, units)` | The price entry and the price of that many units, from `pricing.json` only. |
+| `run(params, inputs, secret, out)` | The call. Writes the result to `out`. Uses only the standard library, and must not keep, log or raise the key. |
+
+The commands find providers only through that registry, so an adapter needs no change to `plan`, `estimate`, the step cache or `render`. `test/test_providers.py` registers one inside a test and runs it through all four. A script that names a provider id, a model or a kind of step the registry does not have is refused by `validate`.
 
 ## Plans, step keys and the step cache
 
 `plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. `render` returns the same `planSha256`.
 
-Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the words and the voice), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. For a provider that takes a seed, `provider_seed` derives it from `--seed` and the step key. Speech takes none, so `--seed` does not change a speech key, and no provider that takes a seed ships yet.
+Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the model, the words, the voice and the adapter's language and format settings), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. For a provider that takes a seed, `provider_seed` derives it from `--seed` and the step key. Speech takes none, so `--seed` does not change a speech key, and no provider that takes a seed ships yet.
 
 The result of a paid step is kept in `<cache dir>/<stepKey>/` (`output.bin` and a `meta.json` with its hash) and listed in the `step_cache` table. Before a paid call, `render` looks there. A hit calls nothing, needs no key, and adds no ledger line; a miss calls the provider once, stores the result and adds one ledger line whose idempotency key is the step key. When the chosen cache folder has no result but another cache folder this database has used does, the verified result is copied in instead: no call, no key and no line. Renders that use one database take turns on a step key, also when they run at the same time with different cache folders, so the second one copies the result of the first. A second job with the same words and voice therefore costs nothing, and two renders with every paid step cached write the same file on the same machine and toolchain. `render` lists each paid step with `cached` and the `usd` this call was charged, and `costUsd` is their sum.
 
@@ -52,7 +94,7 @@ The cache folder is `$AMBITIOUS_HOME/video/cache`. A script can name another wit
 
 A picture is scaled to cover the output size. A video clip of another size is scaled to fit inside the output size and centered on the brand background color, so every clip fills its scheduled time whatever the size of its source. A logo keeps its transparency: the background shows through it.
 
-Captions are drawn only by a track with `from: <id of a track with voiceover clips>`. Each voiceover clip is shown during its own time and not before or after. A clip with more than one sentence shows one sentence at a time, each for a share of the clip that matches its length in characters. A script with no such track draws no captions. `plan` lists the segments in `data.captions`.
+Captions are drawn only by a track with `from: <id of a track with voiceover or speech clips>`. Each such clip is shown during its own time and not before or after. A clip with more than one sentence shows one sentence at a time, each for a share of the clip that matches its length in characters. A script with no such track draws no captions. `plan` lists the segments in `data.captions`.
 
 `brand.font` is the path of a font file next to the script, such as `fonts/name.ttf`, and is used for title cards and captions. Fonts installed on the computer are never searched, so the same script draws the same frames on every computer. `validate` and `render` fail with `E_MEDIA` when `brand.font` is a font name, a path outside the script folder, a missing file, or a file that is not a font. Without `brand.font`, the font built into Pillow is used.
 
@@ -77,13 +119,13 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 
 | Code | Exit | Meaning | Typical hint |
 |---|---|---|---|
-| `E_UNKNOWN_STEP` | 1 | A clip `type` is not one of the six known steps. | Use one of the types in the script schema. |
+| `E_UNKNOWN_STEP` | 1 | A clip `type` is not one of the seven known steps. | Use one of the types in the script schema. |
 | `E_JOB_STATE` | 1 | The job is not in a state that allows the requested move. | Read `jobs` and retry only a failed or abandoned job. |
 | `E_OVERLAP` | 1 | Two clips on one track overlap. | Move a clip or shorten it. |
 | `E_MEDIA` | 1 | A file is missing, `in` / `out` falls outside it, or `brand.font` is not a font file next to the script. | Put the file next to the script, or fix the times. |
 | `E_RANGE` | 1 | A cut is not on a clip boundary, or the video is longer than 1800 seconds. | Place the cut where one clip ends and the next begins. |
 | `E_TOOL` | 1 | ffmpeg, ffprobe, Pillow or Playwright is missing, or ffmpeg failed while rendering. | Install the missing tool and run the command again. |
-| `E_SPEECH` | 1 | The speech service rejected the call. | Check the voice name and the key. |
+| `E_PROVIDER` | 1 | A provider rejected the call. `data.provider` names it and `data.status` is the HTTP status (0 when there was no answer). | Check the model, the voice and the key. |
 | `E_VERIFY` | 1 | A rendered file failed a check. There is one error for each failed check, and its message says what differs: the duration or the frame count against the script's, how the video is stored against `output.encode`, a frame that is missing or that differs, or a file that is not a video. The job moves to `failed`. | Read `data.checks`: each check has `ok`, and `expected` and `actual` where they apply. |
 | `E_CACHE` | 1 | A step cache entry does not match its recorded hash. | Delete the folder named in `data.stepKey` and render again. |
 
@@ -91,16 +133,17 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 
 | Where | What |
 |---|---|
-| `schemas/video-script.v1.json` | The video script format. [schemas/README.md](schemas/README.md) explains it. |
-| `examples/` | Three scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, and `all-clip-types.yaml` uses every clip type and a voice. `examples/invalid/` holds scripts that must be rejected. |
+| `schemas/video-script.v2.json` | The video script format. [schemas/README.md](schemas/README.md) explains it. |
+| `examples/` | Three scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, and `all-clip-types.yaml` uses every clip type, including paid `speech`. `examples/invalid/` holds scripts that must be rejected. |
 | `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has a `brand.yaml`, a `script.yaml` and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
 | `src/ambitious_video/steps/` | One module per clip type. Each `compile` is pure. Register a new type in `steps/__init__.py`. |
+| `src/ambitious_video/providers/` | The `Provider` protocol, the registry, the price table reader, and one module per provider adapter. |
 | `spec/` | A TLA+ model of a render job: a retry never charges twice, the ledger holds one line per provider call, a step key is called again only if its result was removed, a verified video was rendered, one render per job. [spec/README.md](spec/README.md) explains it. |
 | `src/ambitious_video/domain/plan.py` | Canonical JSON, `step_key` and `planSha256`. |
 | `src/ambitious_video/db/step_cache.py` | The step cache: the folders and the `step_cache` table. |
 | `src/ambitious_video/domain/types.py` | The types the commands share: the script, jobs and their states, the cost ledger and assets. |
 | `verify/formal/SKILL.md` | For coding agents: when and how to rerun the checks, and how to read a failure. |
-| `pricing.json` | The dry-run price table, inside the package. |
+| `pricing.json` | The price table, inside the package: one entry per provider and model, with its source and the day it was checked. |
 | `guide.yaml`, `help.json` | What `guide` and `help` print, inside the package. `guide.yaml` is a copy of `examples/titles-and-captions.yaml`, and a test keeps the two the same. |
 
 Build `dist/ambitious-video-0.1.0.pyz` with `python scripts/build.py`. It runs on Python 3.13 with Pillow and ffmpeg installed. PyYAML is bundled. The check from a fresh tree:

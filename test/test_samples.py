@@ -33,7 +33,7 @@ def _yaml(path: Path) -> dict[str, object]:
 
 
 def _schema() -> dict[str, object]:
-    loaded = json.loads((ROOT / "schemas" / "video-script.v1.json").read_text(encoding="utf-8"))
+    loaded = json.loads((ROOT / "schemas" / "video-script.v2.json").read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return loaded
 
@@ -66,8 +66,10 @@ def test_the_four_samples_are_present() -> None:
 def test_sample_script_matches_the_schema(slug: str) -> None:
     script = _yaml(SAMPLES / slug / "script.yaml")
     jsonschema.Draft202012Validator(_schema()).validate(script)
-    assert script["schemaVersion"] == 1
-    assert "voice" not in script
+    assert script["schemaVersion"] == 2
+    tracks = script["tracks"]
+    assert isinstance(tracks, list)
+    assert all(clip["type"] != "speech" for track in tracks for clip in track.get("clips", []))
 
 
 @pytest.mark.parametrize("slug", SLUGS)
@@ -96,7 +98,7 @@ def test_sample_brand_file_matches_its_script(slug: str) -> None:
     assert script["brand"] == brand
     assert "font" not in brand
     assert brand["logo"] == "assets/logo.png"
-    whole = {"schemaVersion": 1, "output": script["output"], "tracks": script["tracks"], "brand": brand}
+    whole = {"schemaVersion": 2, "output": script["output"], "tracks": script["tracks"], "brand": brand}
     loaded, problems = load_script(whole)
     assert loaded is not None and problems == ()
 

@@ -100,7 +100,7 @@ def script_of(output: str, clips: list[str], logo: str | None = None, encode: st
     brand = '  colors: { bg: "#204060", fg: "#ffffff", accent: "#ff8800" }'
     stored = "" if encode is None else f", encode: {encode}"
     lines = [
-        "schemaVersion: 1",
+        "schemaVersion: 2",
         f"output: {{ path: {output}, width: 320, height: 180, fps: 10{stored} }}",
         "brand:",
         brand,

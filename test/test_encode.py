@@ -12,7 +12,7 @@ from ambitious_video.media.film import MEAN_LIMIT, distance
 
 SCRIPT = "\n".join(
     [
-        "schemaVersion: 1",
+        "schemaVersion: 2",
         "output: { path: NAME.mp4, width: 320, height: 180, fps: 10ENCODE }",
         "tracks:",
         "  - id: main",
@@ -32,7 +32,7 @@ SCRIPT = "\n".join(
 
 GRAIN = "\n".join(
     [
-        "schemaVersion: 1",
+        "schemaVersion: 2",
         "output: { path: grain.mp4, width: 320, height: 180, fps: 10 }",
         "tracks:",
         "  - id: main",

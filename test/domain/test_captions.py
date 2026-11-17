@@ -16,7 +16,7 @@ def timeline_of(text: str) -> Timeline:
 
 
 SCRIPT = """
-schemaVersion: 1
+schemaVersion: 2
 output: { path: out.mp4, width: 320, height: 180, fps: 10 }
 tracks:
   - id: main

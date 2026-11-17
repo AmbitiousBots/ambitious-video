@@ -14,7 +14,7 @@ from ambitious_video.media.film import canvas_for, frame_at
 from ambitious_video.steps.common import readable_font
 
 HEAD = """
-schemaVersion: 1
+schemaVersion: 2
 output: { path: out.mp4, width: 320, height: 180, fps: 10 }
 """
 MAIN = """

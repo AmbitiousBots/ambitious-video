@@ -103,7 +103,7 @@
     "keyword": "required",
     "at": ""
   },
-  "schema-version-two.yaml": {
+  "schema-version-one.yaml": {
     "keyword": "const",
     "at": "/schemaVersion"
   },
@@ -147,13 +147,29 @@
     "keyword": "required",
     "at": "/brand/colors"
   },
-  "voice-provider-unknown.yaml": {
-    "keyword": "enum",
-    "at": "/voice/provider"
-  },
-  "voice-with-a-key.yaml": {
+  "top-level-voice-block.yaml": {
     "keyword": "additionalProperties",
-    "at": "/voice"
+    "at": ""
+  },
+  "speech-without-provider.yaml": {
+    "keyword": "required",
+    "at": "/tracks/1/clips/0"
+  },
+  "speech-without-model.yaml": {
+    "keyword": "required",
+    "at": "/tracks/1/clips/0"
+  },
+  "speech-without-voice.yaml": {
+    "keyword": "required",
+    "at": "/tracks/1/clips/0"
+  },
+  "speech-provider-with-capitals.yaml": {
+    "keyword": "pattern",
+    "at": "/tracks/1/clips/0/provider"
+  },
+  "speech-with-a-key.yaml": {
+    "keyword": "additionalProperties",
+    "at": "/tracks/1/clips/0"
   },
   "cut-transition-unknown.yaml": {
     "keyword": "enum",

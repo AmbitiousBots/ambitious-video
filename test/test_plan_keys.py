@@ -24,7 +24,7 @@ PROJECTS = {
     "example-bookshop": EXAMPLES / "samples" / "example-bookshop" / "script.yaml",
 }
 NAMES = sorted(PROJECTS)
-VOICE = {"provider": "xai", "voice": "default"}
+SPOKEN = {"type": "speech", "provider": "xai-speech", "model": "tts", "voice": "eve"}
 
 
 def _script(path: Path) -> dict[str, object]:
@@ -64,7 +64,12 @@ def _copy(name: str, dest: Path) -> tuple[dict[str, object], Path]:
     else:
         shutil.copytree(source.parent, folder)
     script = _script(source)
-    script["voice"] = dict(VOICE)
+    tracks = script["tracks"]
+    assert isinstance(tracks, list)
+    for track in tracks:
+        for clip in track.get("clips", []):
+            if clip["type"] == "voiceover":
+                clip.update(SPOKEN)
     return script, folder
 
 
@@ -100,7 +105,7 @@ def test_plan_bytes_do_not_depend_on_the_process_or_the_clock(name: str, tmp_pat
     data = json.loads(_data_bytes(first))
     assert data["planSha256"] == plan_sha(data)
     assert len(data["planSha256"]) == 64
-    assert data["scriptSchemaVersion"] == 1
+    assert data["scriptSchemaVersion"] == 2
     assert _data_bytes(first) == canonical(data)
     assert str(ROOT) not in first.replace(str(PROJECTS[name]), "")
     assert "2026-01-01" not in _data_bytes(first) and str(tmp_path) not in first
@@ -119,14 +124,15 @@ def test_plan_in_one_process_is_the_same_twice(name: str) -> None:
 def test_changed_text_changes_only_downstream_step_keys(name: str, tmp_path: Path) -> None:
     script, folder = _copy(name, tmp_path)
     before = _plan(script, folder)
-    line = _first(script, "voiceover")
+    line = _first(script, "speech")
     line["text"] = str(line["text"]) + " Changed."
     after = _plan(script, folder)
     changed = [index for index, (old, new) in enumerate(zip(_keys(before), _keys(after), strict=True)) if old != new]
     steps = after["steps"]
     assert isinstance(steps, list)
     assert len(changed) == 1 and steps[changed[0]]["text"].endswith(" Changed.")
-    assert steps[changed[0]]["paid"] is True and steps[changed[0]]["provider"] == "xai"
+    assert steps[changed[0]]["paid"] is True
+    assert (steps[changed[0]]["provider"], steps[changed[0]]["model"]) == ("xai-speech", "tts")
     assert before["output"] != after["output"]
     assert before["planSha256"] != after["planSha256"]
     assert before["assets"] == after["assets"]
@@ -171,22 +177,25 @@ def test_paid_step_key_names_the_content_not_the_job_or_the_place() -> None:
         return {step["text"]: step["stepKey"] for step in steps if step["paid"]}
 
     line = "The same words, spoken once."
-    base = {"schemaVersion": 1, "voice": dict(VOICE)}
+    base = {"schemaVersion": 2}
     one = {
         **base,
         "output": {"path": "one.mp4", "width": 320, "height": 180, "fps": 10},
-        "tracks": [{"id": "voice", "clips": [{"type": "voiceover", "at": 0, "text": line}]}],
+        "tracks": [{"id": "voice", "clips": [{**SPOKEN, "at": 0, "text": line}]}],
     }
     two = {
         **base,
         "output": {"path": "two.mp4", "width": 640, "height": 360, "fps": 30},
         "tracks": [
             {"id": "main", "clips": [{"type": "title_card", "duration": 9.0, "text": "Other"}]},
-            {"id": "voice", "clips": [{"type": "voiceover", "at": 4.5, "duration": 2.0, "text": line}]},
+            {"id": "voice", "clips": [{**SPOKEN, "at": 4.5, "duration": 2.0, "text": line}]},
         ],
     }
     assert speech_keys(one, ROOT)[line] == speech_keys(two, ROOT / "examples")[line]
-    other_voice = {**one, "voice": {"provider": "xai", "voice": "another"}}
+    other_voice = {
+        **one,
+        "tracks": [{"id": "voice", "clips": [{**SPOKEN, "voice": "another", "at": 0, "text": line}]}],
+    }
     assert speech_keys(one, ROOT)[line] != speech_keys(other_voice, ROOT)[line]
 
 

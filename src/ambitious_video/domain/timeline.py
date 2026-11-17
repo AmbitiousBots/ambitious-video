@@ -15,6 +15,7 @@ from ambitious_video.domain.types import (
     ImageClip,
     RelativePath,
     Script,
+    Speech,
     VideoClip,
     Voiceover,
 )
@@ -108,7 +109,7 @@ def _length(
     at: str,
     faults: list[Fault],
 ) -> int | None:
-    if isinstance(clip, Voiceover):
+    if isinstance(clip, Voiceover | Speech):
         if clip.duration is not None:
             return frames_of(clip.duration, fps, minimum=1)
         return speech_frames(clip.text, fps)
@@ -214,9 +215,9 @@ def _captions(script: Script, spans: list[Span]) -> tuple[Caption, ...]:
     for track in script.tracks:
         if not isinstance(track, CaptionsTrack):
             continue
-        spoken = [span for span in spans if span.track == track.source and isinstance(span.clip, Voiceover)]
+        spoken = [span for span in spans if span.track == track.source and isinstance(span.clip, Voiceover | Speech)]
         for span in sorted(spoken, key=lambda item: (item.start, item.index)):
-            if isinstance(span.clip, Voiceover):
+            if isinstance(span.clip, Voiceover | Speech):
                 found.extend(segments(track.id, span.clip.text, span.start, span.frames))
     return tuple(found)
 

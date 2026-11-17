@@ -21,7 +21,7 @@ Tool: TLA+ with the TLC model checker, because the question is whether any order
 
 Bounds: two jobs that need the same two step keys, two renders at the same time, three attempts per job, one removal per step key; no limit on the number of steps. `spec/README.md` lists what is left out, including money spent at the provider when a render dies between a paid call and storing its result, and a result copied from another cache folder.
 
-The same command also checks `schemas/video-script.v1.json`: the examples are accepted, every invalid example is rejected for the reason written next to it, and the schema, the model and `src/ambitious_video/domain/types.py` name the same clip types, rules, job states and moves.
+The same command also checks `schemas/video-script.v2.json`: the examples are accepted, every invalid example is rejected for the reason written next to it, and the schema, the model and `src/ambitious_video/domain/types.py` name the same clip types, rules, job states and moves.
 
 ## The one command
 
@@ -52,7 +52,7 @@ Last confirmed in step with the code at commit `db9f60754fc597e1d564a0aff4fd47d3
 | `Recover` | marking a job `failed` when it is `rendering` and no render holds it |
 | `Retry` | putting a `failed` job back in line |
 | `VerifyPasses`, `VerifyRejects` | the `verify` command |
-| `schemas/video-script.v1.json` | `Script` and the types it is made of, `ClipType`, `ActionKind`, `Transition`, `VoiceProvider`, `ScriptRule`, `TRACK_ID_PATTERN`, `HEX_COLOR_PATTERN` in `types.py` |
+| `schemas/video-script.v2.json` | `Script` and the types it is made of, `ClipType`, `ActionKind`, `Transition`, `ScriptRule`, `TRACK_ID_PATTERN`, `HEX_COLOR_PATTERN`, `PROVIDER_ID_PATTERN`, `MODEL_ID_PATTERN` in `types.py` |
 
 Run `git log db9f60754fc597e1d564a0aff4fd47d3b31f9a4a..HEAD -- src spec schemas examples scripts`. If it lists commits, read them against the table before you trust a pass. Move the commit above forward only after you have confirmed that every row still describes the code at the new commit.
 
@@ -129,7 +129,8 @@ A `FAIL:` line from `scripts/check_schemas.py` names the file and what to fix.
 - Change `spec/RenderJob.tla` first, then make the same change in each file in `spec/broken/`, keeping only its one changed line. `check.sh` fails if a variant drifts further from the model or uses another configuration.
 - A new rule needs a new broken variant that breaks it, an entry in `spec/broken/EXPECTED.json` and a row in `spec/README.md`. `check.sh` fails if a rule has no variant.
 - A new job state or move goes in `States` and `Moves` in the model and in `JobState` and `JOB_TRANSITIONS` in `types.py` together; `scripts/check_schemas.py` fails when they disagree.
-- A new clip type, action, transition, provider or script rule goes in the schema (or in `RULES` in `scripts/check_schemas.py`) and in `types.py` together, with a valid example that uses it and an invalid example for it in `examples/invalid/` and its `EXPECTED.json`.
+- A new provider is an adapter in `src/ambitious_video/providers/` with a price in `pricing.json`; it needs no schema change, because the schema checks only the shape of a provider id.
+- A new clip type, action, transition or script rule goes in the schema (or in `RULES` in `scripts/check_schemas.py`) and in `types.py` together, with a valid example that uses it and an invalid example for it in `examples/invalid/` and its `EXPECTED.json`.
 - A change that makes a valid script invalid belongs in a new schema file with a new version number.
 - To move to another TLC build, change `TLA2TOOLS_URL` and `TLA2TOOLS_SHA256` in `.mise.toml` together. To move to other versions of the check's packages, change `scripts/dev-requirements.in` and write `scripts/dev-requirements.txt` again as `schemas/README.md` describes.
 - Run the one command, then update the commit in "Covered code".

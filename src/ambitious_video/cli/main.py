@@ -8,7 +8,6 @@ import stat
 import sys
 from collections.abc import Callable
 from contextvars import ContextVar
-from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
@@ -19,11 +18,11 @@ from ambitious_kit.cli.runner import ModuleSpec, run_cli
 from ambitious_kit.db.sqlite import load_migrations
 from ambitious_kit.domain.envelope import JsonObject, failure
 
-from ambitious_video.ai.speech import SpeechError
 from ambitious_video.cli import engine, guide
 from ambitious_video.db.store import count_jobs
 from ambitious_video.domain.need import NeedTool
 from ambitious_video.install.tools import tool_report, tool_warnings
+from ambitious_video.providers.base import ProviderError
 
 VERSION = "0.1.0"
 SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
@@ -32,7 +31,7 @@ OLDER_THAN: ContextVar[str | None] = ContextVar("older_than", default=None)
 KIT_VALUE_FLAGS = ("--in", "--db", "--now", "--seed")
 MAX_PRUNE_DAYS = 36500
 OWN_FLAGS = {
-    "--cache": ("render", "cache list", "cache prune"),
+    "--cache": ("estimate", "render", "cache list", "cache prune"),
     "--older-than": ("cache prune",),
 }
 STDIN_WAIT_SECONDS = 2.0
@@ -146,16 +145,6 @@ def _stdin_reader(source: str) -> Callable[[], str]:
     return read
 
 
-def _rate() -> Decimal:
-    raw = json.loads(files("ambitious_video").joinpath("pricing.json").read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise failure("E_INTERNAL", "The price table is unreadable.", "Reinstall the video module.")
-    value = raw.get("voiceoverPerCharacterUsd")
-    if not isinstance(value, str):
-        raise failure("E_INTERNAL", "The price table is unreadable.", "Reinstall the video module.")
-    return Decimal(value)
-
-
 def _job_id(rng: random.Random, count: int) -> str:
     return "j" + format(rng.randrange(16**8), "08x") + format(count, "08x")
 
@@ -192,8 +181,8 @@ def _guard(action: Callable[[], JsonObject]) -> JsonObject:
         return action()
     except NeedTool as error:
         raise engine.tool_failure(error) from None
-    except SpeechError as error:
-        raise engine.speech_failure(error) from None
+    except ProviderError as error:
+        raise engine.provider_failure(error) from None
 
 
 def validate(context: Context[object]) -> JsonObject:
@@ -205,7 +194,7 @@ def plan(context: Context[object]) -> JsonObject:
 
 
 def estimate(context: Context[object]) -> JsonObject:
-    return engine.estimate_data(context.input, SCRIPT_DIR.get(), _rate())
+    return engine.estimate_data(context.input, SCRIPT_DIR.get(), context.env, CACHE_DIR.get())
 
 
 def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
@@ -221,14 +210,10 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
                 SCRIPT_DIR.get(),
                 _job_id(context.rng, count_jobs(context.db)),
                 context.now,
-                _rate(),
                 context.env,
-                engine.default_speaker,
                 CACHE_DIR.get(),
             )
-        return engine.render_again(
-            context.db, job_id, body, context.now, _rate(), context.env, engine.default_speaker, CACHE_DIR.get()
-        )
+        return engine.render_again(context.db, job_id, body, context.now, context.env, CACHE_DIR.get())
 
     return _guard(run)
 

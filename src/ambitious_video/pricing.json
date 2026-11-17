@@ -1,3 +1,92 @@
 {
-  "voiceoverPerCharacterUsd": "0.000015"
+  "prices": [
+    {
+      "provider": "xai-speech",
+      "model": "tts",
+      "unit": "character",
+      "usdPerUnit": "0.000015",
+      "sourceUrl": "https://docs.x.ai/docs/models",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "xai-video",
+      "model": "grok-imagine-video",
+      "unit": "second",
+      "usdPerUnit": "0.05",
+      "sourceUrl": "https://docs.x.ai/docs/models",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "xai-video",
+      "model": "grok-imagine-video-1.5",
+      "unit": "second",
+      "usdPerUnit": "0.08",
+      "sourceUrl": "https://docs.x.ai/docs/models",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "xai-video",
+      "model": "grok-imagine-video-1.5-lite",
+      "unit": "second",
+      "usdPerUnit": "0.02",
+      "sourceUrl": "https://docs.x.ai/docs/models",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "xai-image",
+      "model": "grok-imagine-image",
+      "unit": "image",
+      "usdPerUnit": "0.02",
+      "sourceUrl": "https://docs.x.ai/docs/models",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "xai-image",
+      "model": "grok-imagine-image-2.0",
+      "unit": "image",
+      "usdPerUnit": "0.04",
+      "sourceUrl": "https://docs.x.ai/docs/models",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "elevenlabs-speech",
+      "model": "eleven-v4",
+      "unit": "character",
+      "usdPerUnit": "0.00008",
+      "sourceUrl": "https://elevenlabs.io/pricing/api",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "elevenlabs-speech",
+      "model": "eleven-flash",
+      "unit": "character",
+      "usdPerUnit": "0.00004",
+      "sourceUrl": "https://elevenlabs.io/pricing/api",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "sync-lipsync",
+      "model": "lipsync-2",
+      "unit": "frame",
+      "usdPerUnit": "0.002",
+      "sourceUrl": "https://sync.so/pricing",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "sync-lipsync",
+      "model": "lipsync-2-pro",
+      "unit": "frame",
+      "usdPerUnit": "0.00332",
+      "sourceUrl": "https://sync.so/pricing",
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "provider": "sync-lipsync",
+      "model": "sync-3",
+      "unit": "frame",
+      "usdPerUnit": "0.00532",
+      "sourceUrl": "https://sync.so/pricing",
+      "checkedAt": "2026-11-16"
+    }
+  ]
 }

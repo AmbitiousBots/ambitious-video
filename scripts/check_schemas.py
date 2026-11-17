@@ -29,7 +29,7 @@ STAMP = VENV / "dev-requirements.sha256"
 RESTARTED = "AMBITIOUS_VIDEO_CHECK_RESTARTED"
 MINIMUM_PYTHON = (3, 13)
 
-SCHEMA = REPO / "schemas" / "video-script.v1.json"
+SCHEMA = REPO / "schemas" / "video-script.v2.json"
 EXAMPLES = REPO / "examples"
 INVALID = EXAMPLES / "invalid"
 EXPECTED = INVALID / "EXPECTED.json"
@@ -97,7 +97,7 @@ def repeats_a_track_id(script: Document) -> bool:
 
 def captions_from_no_voiceover(script: Document) -> bool:
     return any(
-        not any(clip["type"] == "voiceover" for clip in clips_of(script, track["from"]))
+        not any(clip["type"] in ("voiceover", "speech") for clip in clips_of(script, track["from"]))
         for track in script["tracks"]
         if "from" in track
     )
@@ -163,8 +163,9 @@ def schema_matches_types(schema: Document, types: ModuleType) -> list[str]:
     same("clip types with a shape", shaped, clip_types)
     same("recording actions", list(defs["action"]["properties"]), members(types.ActionKind))
     same("cut transitions", defs["cut"]["properties"]["transition"]["enum"], members(types.Transition))
-    same("voice providers", defs["voice"]["properties"]["provider"]["enum"], members(types.VoiceProvider))
     same("output encodings", defs["output"]["properties"]["encode"]["enum"], members(types.EncodeMode))
+    same("pattern of a provider id", defs["providerId"]["pattern"], types.PROVIDER_ID_PATTERN)
+    same("pattern of a model id", defs["modelId"]["pattern"], types.MODEL_ID_PATTERN)
     same("pattern of a track id", defs["trackId"]["pattern"], types.TRACK_ID_PATTERN)
     same("pattern of a color", defs["hexColor"]["pattern"], types.HEX_COLOR_PATTERN)
     same("schema version", schema["properties"]["schemaVersion"]["const"], types.SCHEMA_VERSION)
@@ -304,7 +305,7 @@ def main() -> None:
 
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     if schema.get("$schema") != DRAFT:
-        stop(f"schemas/video-script.v1.json must declare {DRAFT}")
+        stop(f"schemas/video-script.v2.json must declare {DRAFT}")
     jsonschema.Draft202012Validator.check_schema(schema)
     validator = jsonschema.Draft202012Validator(schema)
 
@@ -319,9 +320,9 @@ def main() -> None:
         sys.exit(1)
     report = [
         f"python {sys.version.split()[0]}, jsonschema {version('jsonschema')}, PyYAML {version('PyYAML')}",
-        "ok  schemas/video-script.v1.json is a valid JSON Schema (draft 2020-12)",
+        "ok  schemas/video-script.v2.json is a valid JSON Schema (draft 2020-12)",
         "ok  the schema and src/ambitious_video/domain/types.py agree on clip types, actions, transitions, "
-        "providers, output encodings, patterns and rules",
+        "output encodings, patterns and rules",
         "ok  the job states and moves in spec/RenderJob.tla and types.py agree",
         f"ok  {valid} examples accepted, and together they use every clip type",
         f"ok  {samples} sample projects accepted, each with the brand its brand.yaml names",
