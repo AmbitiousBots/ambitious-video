@@ -53,8 +53,10 @@ def version_data(version: str) -> JsonObject:
     return {"version": version}
 
 
-def guide_data() -> JsonObject:
+def guide_data(starters: list[JsonValue]) -> JsonObject:
     data = _section("guide")
+    templates = data.get("templates")
+    data["templates"] = {**templates, "starters": starters} if isinstance(templates, dict) else {"starters": starters}
     example = data.get("example")
     script = files("ambitious_video").joinpath("guide.yaml").read_text(encoding="utf-8")
     data["example"] = {**example, "script": script} if isinstance(example, dict) else {"script": script}

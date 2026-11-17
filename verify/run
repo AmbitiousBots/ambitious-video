@@ -141,17 +141,71 @@ if ledger["lines"] != []:
 print("offline", one["costUsd"], one["sha256"])
 PY
 
-echo "== sample projects: validate and plan, no key =="
+echo "== samples: template + inputs + brand -> script -> plan -> estimate -> offline render -> verify =="
 for sample in examples/samples/*/; do
-  "$PY" dist/ambitious-video.pyz validate --in "${sample}script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/sample.json"
-  "$PY" dist/ambitious-video.pyz plan --in "${sample}script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >>"$WORK/sample.json"
-  "$PY" - "$WORK/sample.json" "$sample" <<'PY'
+  slug="$(basename "$sample")"
+  at="$WORK/samples/$slug"
+  mkdir -p "$WORK/samples"
+  cp -R "$sample" "$at"
+  rm "$at/script.yaml"
+  "$PY" - "$at" <<'PY'
 import json, sys
-for line in open(sys.argv[1], encoding="utf-8"):
-    body = json.loads(line)
+from pathlib import Path
+import yaml
+folder = Path(sys.argv[1])
+inputs = yaml.safe_load((folder / "inputs.yaml").read_text(encoding="utf-8"))
+small = {"width": 180, "height": 320} if inputs["template"] == "announcement" else {"width": 320, "height": 180}
+inputs["inputs"]["voice"] = "narrator"
+inputs["output"] = {"path": "out/small.mp4", "fps": 10, **small}
+(folder / "small.json").write_text(json.dumps(inputs), encoding="utf-8")
+(folder / "template.txt").write_text(inputs["template"], encoding="utf-8")
+PY
+  template="$(cat "$at/template.txt")"
+  "$PY" dist/ambitious-video.pyz expand --template "$template" --in "$at/inputs.yaml" --out "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/expand-a.json"
+  "$PY" dist/ambitious-video.pyz expand --template "templates/$template.yaml" --in "$at/inputs.yaml" --out "$at/again.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$at/expand-b.json"
+  cmp "$at/script.yaml" "${sample}script.yaml"
+  cmp "$at/script.yaml" "$at/again.yaml"
+  "$PY" dist/ambitious-video.pyz validate --in "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/validate.json"
+  "$PY" dist/ambitious-video.pyz plan --in "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/plan-a.json"
+  "$PY" dist/ambitious-video.pyz plan --in "$at/again.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$at/plan-b.json"
+  "$PY" dist/ambitious-video.pyz estimate --in "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/estimate.json"
+  "$PY" dist/ambitious-video.pyz expand --template "$template" --in "$at/small.json" --out "$at/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-expand.json"
+  "$PY" dist/ambitious-video.pyz estimate --in "$at/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-estimate.json"
+  "$PY" dist/ambitious-video.pyz render --offline --in "$at/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-render.json"
+  "$PY" - "$at" "$template" <<'PY'
+import json, sys
+from pathlib import Path
+at, template = Path(sys.argv[1]), sys.argv[2]
+def read(name):
+    body = json.loads((at / f"{name}.json").read_text(encoding="utf-8"))
     if not body["ok"]:
         raise SystemExit(body)
-print(sys.argv[2], body["data"]["durationSec"], len(body["data"]["steps"]), "steps")
+    return body["data"]
+one, two, plan, again, estimate = (read(name) for name in ("expand-a", "expand-b", "plan-a", "plan-b", "estimate"))
+if one["script"] != two["script"] or one["scriptSha256"] != two["scriptSha256"] or one["template"]["id"] != template:
+    raise SystemExit("the same template and inputs must expand to the same script")
+if plan != again or plan["template"] != {"id": template, "templateVersion": 1}:
+    raise SystemExit("the plan of an expanded script must repeat and name its template")
+if one["script"]["budget"] != {"maxUsd": 5}:
+    raise SystemExit("a script from a starter template must carry its budget of 5")
+if estimate["usd"] != "0.000000" or estimate["secretsNeeded"] != [] or not read("validate")["ok"]:
+    raise SystemExit("a sample without a voice must need no key and cost nothing")
+spoken, render = read("small-estimate"), read("small-render")
+if [entry["env"] for entry in spoken["secretsNeeded"]] != ["XAI_API_KEY"] or not 0 < float(spoken["usd"]) < 5:
+    raise SystemExit("a sample with a voice must name the one key it needs and stay under its budget")
+if render["costUsd"] != "0.000000" or not render["steps"]:
+    raise SystemExit("the offline render of a spoken sample must cost nothing")
+if any(step["fallback"] != "captions" for step in render["steps"]):
+    raise SystemExit("the offline render of a spoken sample must take the captions fallback")
+json.dump({"jobId": render["jobId"]}, open(at / "job.json", "w", encoding="utf-8"))
+print(at.name, "from", template, plan["durationSec"], "s,", len(plan["steps"]), "steps,", plan["planSha256"][:12])
+PY
+  "$PY" dist/ambitious-video.pyz verify --in "$at/job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/verify.json"
+  "$PY" - "$at/verify.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], encoding="utf-8"))
+if not body["ok"] or not body["data"]["passed"]:
+    raise SystemExit(body)
 PY
 done
 

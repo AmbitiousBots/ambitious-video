@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from decimal import Decimal
 
 from ambitious_video.domain.types import (
     HEX_COLOR_PATTERN,
     MODEL_ID_PATTERN,
     PROVIDER_ID_PATTERN,
     SCHEMA_VERSION,
+    TEMPLATE_ID_PATTERN,
+    TEMPLATE_VERSION,
     TRACK_ID_PATTERN,
     Action,
     AudioClip,
@@ -32,6 +35,7 @@ from ambitious_video.domain.types import (
     ScriptRule,
     Scroll,
     Speech,
+    TemplateRef,
     TitleCard,
     Track,
     TrackId,
@@ -48,18 +52,22 @@ TRACK = re.compile(TRACK_ID_PATTERN)
 COLOR = re.compile(HEX_COLOR_PATTERN)
 PROVIDER = re.compile(PROVIDER_ID_PATTERN)
 MODEL = re.compile(MODEL_ID_PATTERN)
+TEMPLATE = re.compile(TEMPLATE_ID_PATTERN)
 CLIP_TYPES = ("title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio")
 SPOKEN = frozenset({"voiceover", "speech"})
 MAX_TEXT = 2000
 MAX_PATH = 1024
 MAX_URL = 2048
+MAX_LABEL = 200
+MAX_BUDGET_USD = 1000000
+TOP_LEVEL = {"schemaVersion", "template", "budget", "disclosure", "output", "brand", "cache", "tracks", "cuts"}
 
 
 def say(*parts: str) -> str:
     return "".join(parts)
 
 
-class _Bag:
+class Bag:
     def __init__(self) -> None:
         self.items: list[ScriptProblem] = []
 
@@ -76,28 +84,28 @@ class _Bag:
         self.add(RuleProblem(rule, at, message))
 
 
-def _object(bag: _Bag, value: object, at: str) -> dict[str, object] | None:
+def as_object(bag: Bag, value: object, at: str) -> dict[str, object] | None:
     if isinstance(value, dict):
         return value
     bag.schema(at, "This value must be an object.")
     return None
 
 
-def _keys(bag: _Bag, value: Mapping[str, object], allowed: set[str], at: str) -> None:
+def only_keys(bag: Bag, value: Mapping[str, object], allowed: set[str], at: str) -> None:
     for key in value:
         if key not in allowed:
-            bag.schema(say(at, "/", key), "This field is not allowed.")
+            bag.schema(say(at, "/", str(key)), "This field is not allowed.")
 
 
-def _need(bag: _Bag, value: Mapping[str, object], names: tuple[str, ...], at: str) -> bool:
+def need(bag: Bag, value: Mapping[str, object], names: tuple[str, ...], at: str) -> bool:
     missing = [name for name in names if name not in value]
     for name in missing:
         bag.schema(at, say("Field ", name, " is required."))
     return not missing
 
 
-def _text(
-    bag: _Bag,
+def as_text(
+    bag: Bag,
     value: object,
     at: str,
     *,
@@ -117,8 +125,8 @@ def _text(
     return value
 
 
-def _number(
-    bag: _Bag,
+def as_number(
+    bag: Bag,
     value: object,
     at: str,
     *,
@@ -146,7 +154,7 @@ def _number(
     return float(value)
 
 
-def _list(bag: _Bag, value: object, at: str, *, low: int, high: int) -> list[object] | None:
+def as_list(bag: Bag, value: object, at: str, *, low: int, high: int) -> list[object] | None:
     if not isinstance(value, list):
         bag.schema(at, "This value must be a list.")
         return None
@@ -156,22 +164,22 @@ def _list(bag: _Bag, value: object, at: str, *, low: int, high: int) -> list[obj
     return value
 
 
-def _path(bag: _Bag, value: object, at: str) -> RelativePath | None:
-    text = _text(bag, value, at, pattern=RELATIVE, high=MAX_PATH)
+def _path(bag: Bag, value: object, at: str) -> RelativePath | None:
+    text = as_text(bag, value, at, pattern=RELATIVE, high=MAX_PATH)
     return None if text is None else RelativePath(text)
 
 
-def _output(bag: _Bag, value: object) -> Output | None:
-    raw = _object(bag, value, "/output")
+def as_output(bag: Bag, value: object) -> Output | None:
+    raw = as_object(bag, value, "/output")
     if raw is None:
         return None
-    _keys(bag, raw, {"path", "width", "height", "fps", "encode"}, "/output")
-    if not _need(bag, raw, ("path", "width", "height", "fps"), "/output"):
+    only_keys(bag, raw, {"path", "width", "height", "fps", "encode"}, "/output")
+    if not need(bag, raw, ("path", "width", "height", "fps"), "/output"):
         return None
     path = _path(bag, raw.get("path"), "/output/path")
-    width = _number(bag, raw.get("width"), "/output/width", whole=True, low=16, high=7680, multiple=2)
-    height = _number(bag, raw.get("height"), "/output/height", whole=True, low=16, high=4320, multiple=2)
-    fps = _number(bag, raw.get("fps"), "/output/fps", whole=True, low=1, high=120)
+    width = as_number(bag, raw.get("width"), "/output/width", whole=True, low=16, high=7680, multiple=2)
+    height = as_number(bag, raw.get("height"), "/output/height", whole=True, low=16, high=4320, multiple=2)
+    fps = as_number(bag, raw.get("fps"), "/output/fps", whole=True, low=1, high=120)
     encode: EncodeMode = "web"
     if "encode" in raw:
         chosen = raw["encode"]
@@ -185,21 +193,21 @@ def _output(bag: _Bag, value: object) -> Output | None:
     return Output(path, int(width), int(height), int(fps), encode)
 
 
-def _brand(bag: _Bag, value: object) -> Brand | None:
-    raw = _object(bag, value, "/brand")
+def as_brand(bag: Bag, value: object) -> Brand | None:
+    raw = as_object(bag, value, "/brand")
     if raw is None:
         return None
-    _keys(bag, raw, {"font", "colors", "logo"}, "/brand")
-    font = _text(bag, raw["font"], "/brand/font", high=128) if "font" in raw else None
+    only_keys(bag, raw, {"font", "colors", "logo"}, "/brand")
+    font = as_text(bag, raw["font"], "/brand/font", high=128) if "font" in raw else None
     logo = _path(bag, raw["logo"], "/brand/logo") if "logo" in raw else None
     colors: BrandColors | None = None
     if "colors" in raw:
-        block = _object(bag, raw["colors"], "/brand/colors")
+        block = as_object(bag, raw["colors"], "/brand/colors")
         if block is not None:
-            _keys(bag, block, {"bg", "fg", "accent"}, "/brand/colors")
-            if _need(bag, block, ("bg", "fg", "accent"), "/brand/colors"):
+            only_keys(bag, block, {"bg", "fg", "accent"}, "/brand/colors")
+            if need(bag, block, ("bg", "fg", "accent"), "/brand/colors"):
                 paints = [
-                    _text(bag, block[name], say("/brand/colors/", name), pattern=COLOR, low=7, high=7)
+                    as_text(bag, block[name], say("/brand/colors/", name), pattern=COLOR, low=7, high=7)
                     for name in ("bg", "fg", "accent")
                 ]
                 if all(item is not None for item in paints):
@@ -210,38 +218,65 @@ def _brand(bag: _Bag, value: object) -> Brand | None:
     return Brand(font, colors, logo)
 
 
-def _cache(bag: _Bag, value: object) -> RelativePath | None:
-    raw = _object(bag, value, "/cache")
+def _cache(bag: Bag, value: object) -> RelativePath | None:
+    raw = as_object(bag, value, "/cache")
     if raw is None:
         return None
-    _keys(bag, raw, {"dir"}, "/cache")
-    if not _need(bag, raw, ("dir",), "/cache"):
+    only_keys(bag, raw, {"dir"}, "/cache")
+    if not need(bag, raw, ("dir",), "/cache"):
         return None
     return _path(bag, raw.get("dir"), "/cache/dir")
 
 
-def _action(bag: _Bag, value: object, at: str) -> Action | None:
-    raw = _object(bag, value, at)
+def as_template(bag: Bag, value: object, at: str) -> TemplateRef | None:
+    raw = as_object(bag, value, at)
     if raw is None:
         return None
-    _keys(bag, raw, {"click", "wait", "scroll"}, at)
+    only_keys(bag, raw, {"id", "templateVersion"}, at)
+    if not need(bag, raw, ("id", "templateVersion"), at):
+        return None
+    name = as_text(bag, raw["id"], say(at, "/id"), pattern=TEMPLATE, high=64)
+    if raw["templateVersion"] != TEMPLATE_VERSION or isinstance(raw["templateVersion"], bool):
+        bag.schema(say(at, "/templateVersion"), "templateVersion must be 1.")
+        return None
+    return None if name is None else TemplateRef(name, TEMPLATE_VERSION)
+
+
+def as_budget(bag: Bag, value: object, at: str) -> Decimal | None:
+    raw = as_object(bag, value, at)
+    if raw is None:
+        return None
+    only_keys(bag, raw, {"maxUsd"}, at)
+    if not need(bag, raw, ("maxUsd",), at):
+        return None
+    limit = raw["maxUsd"]
+    if as_number(bag, limit, say(at, "/maxUsd"), low=0, high=MAX_BUDGET_USD, exclusive_low=True) is None:
+        return None
+    return Decimal(str(limit))
+
+
+def _action(bag: Bag, value: object, at: str) -> Action | None:
+    raw = as_object(bag, value, at)
+    if raw is None:
+        return None
+    only_keys(bag, raw, {"click", "wait", "scroll"}, at)
     if len(raw) != 1:
         bag.schema(at, "An action needs exactly one kind.")
         return None
     if set(raw) != {"click"} and set(raw) != {"wait"} and set(raw) != {"scroll"}:
         return None
     if "click" in raw:
-        selector = _text(bag, raw["click"], say(at, "/click"), high=512)
+        selector = as_text(bag, raw["click"], say(at, "/click"), high=512)
         return None if selector is None else Click(selector)
     if "wait" in raw:
-        seconds = _number(bag, raw["wait"], say(at, "/wait"), low=0, exclusive_low=True)
+        seconds = as_number(bag, raw["wait"], say(at, "/wait"), low=0, exclusive_low=True)
         return None if seconds is None else Wait(seconds)
-    pixels = _number(bag, raw["scroll"], say(at, "/scroll"), whole=True)
+    pixels = as_number(bag, raw["scroll"], say(at, "/scroll"), whole=True)
     return None if pixels is None else Scroll(int(pixels))
 
 
-def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
-    raw = _object(bag, value, at)
+def as_clip(bag: Bag, value: object, at: str) -> Clip | None:
+    raw = as_object(bag, value, at)
     if raw is None:
         return None
     if "type" not in raw:
@@ -272,22 +307,22 @@ def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
         "speech": ("at", "text", "provider", "model", "voice"),
         "audio": ("path", "at"),
     }[kind]
-    _keys(bag, raw, allowed, at)
-    if not _need(bag, raw, required, at):
+    only_keys(bag, raw, allowed, at)
+    if not need(bag, raw, required, at):
         return None
     if kind == "title_card":
-        duration = _number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
-        text = _text(bag, raw["text"], say(at, "/text"))
-        subtitle = _text(bag, raw["subtitle"], say(at, "/subtitle")) if "subtitle" in raw else None
+        duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
+        text = as_text(bag, raw["text"], say(at, "/text"))
+        subtitle = as_text(bag, raw["subtitle"], say(at, "/subtitle")) if "subtitle" in raw else None
         if duration is None or text is None or ("subtitle" in raw and subtitle is None):
             return None
         return TitleCard(duration, text, subtitle)
     if kind == "screen_recording":
-        url = _text(bag, raw["url"], say(at, "/url"), pattern=WEB, high=MAX_URL)
-        duration = _number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
+        url = as_text(bag, raw["url"], say(at, "/url"), pattern=WEB, high=MAX_URL)
+        duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
         actions: tuple[Action, ...] = ()
         if "actions" in raw:
-            listed = _list(bag, raw["actions"], say(at, "/actions"), low=0, high=64)
+            listed = as_list(bag, raw["actions"], say(at, "/actions"), low=0, high=64)
             if listed is None or url is None or duration is None:
                 return None
             built = [_action(bag, item, say(at, "/actions/", str(index))) for index, item in enumerate(listed)]
@@ -299,24 +334,24 @@ def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
         return ScreenRecording(WebAddress(url), duration, actions)
     if kind == "video":
         path = _path(bag, raw["path"], say(at, "/path"))
-        start = _number(bag, raw["in"], say(at, "/in"), low=0) if "in" in raw else None
-        end = _number(bag, raw["out"], say(at, "/out"), low=0, exclusive_low=True) if "out" in raw else None
+        start = as_number(bag, raw["in"], say(at, "/in"), low=0) if "in" in raw else None
+        end = as_number(bag, raw["out"], say(at, "/out"), low=0, exclusive_low=True) if "out" in raw else None
         if path is None or ("in" in raw and start is None) or ("out" in raw and end is None):
             return None
         return VideoClip(path, start, end)
     if kind == "image":
         path = _path(bag, raw["path"], say(at, "/path"))
-        duration = _number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
+        duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
         kenburns: KenBurns | None = None
         if "kenburns" in raw:
-            block = _object(bag, raw["kenburns"], say(at, "/kenburns"))
+            block = as_object(bag, raw["kenburns"], say(at, "/kenburns"))
             if block is None or path is None or duration is None:
                 return None
-            _keys(bag, block, {"from", "to"}, say(at, "/kenburns"))
-            if not _need(bag, block, ("from", "to"), say(at, "/kenburns")):
+            only_keys(bag, block, {"from", "to"}, say(at, "/kenburns"))
+            if not need(bag, block, ("from", "to"), say(at, "/kenburns")):
                 return None
-            zoom_from = _number(bag, block["from"], say(at, "/kenburns/from"), low=1, high=4)
-            zoom_to = _number(bag, block["to"], say(at, "/kenburns/to"), low=1, high=4)
+            zoom_from = as_number(bag, block["from"], say(at, "/kenburns/from"), low=1, high=4)
+            zoom_to = as_number(bag, block["to"], say(at, "/kenburns/to"), low=1, high=4)
             if zoom_from is None or zoom_to is None:
                 return None
             kenburns = KenBurns(zoom_from, zoom_to)
@@ -324,42 +359,42 @@ def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
             return None
         return ImageClip(path, duration, kenburns)
     if kind in SPOKEN:
-        at_time = _number(bag, raw["at"], say(at, "/at"), low=0)
-        text = _text(bag, raw["text"], say(at, "/text"))
+        at_time = as_number(bag, raw["at"], say(at, "/at"), low=0)
+        text = as_text(bag, raw["text"], say(at, "/text"))
         duration = None
         if "duration" in raw:
-            duration = _number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
+            duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
         if at_time is None or text is None or ("duration" in raw and duration is None):
             return None
         if kind == "voiceover":
             return Voiceover(at_time, text, duration)
-        provider = _text(bag, raw["provider"], say(at, "/provider"), pattern=PROVIDER, high=32)
-        model = _text(bag, raw["model"], say(at, "/model"), pattern=MODEL, high=64)
-        voice = _text(bag, raw["voice"], say(at, "/voice"), high=128)
+        provider = as_text(bag, raw["provider"], say(at, "/provider"), pattern=PROVIDER, high=32)
+        model = as_text(bag, raw["model"], say(at, "/model"), pattern=MODEL, high=64)
+        voice = as_text(bag, raw["voice"], say(at, "/voice"), high=128)
         if provider is None or model is None or voice is None:
             return None
         return Speech(at_time, text, duration, provider, model, voice)
     path = _path(bag, raw["path"], say(at, "/path"))
-    at_time = _number(bag, raw["at"], say(at, "/at"), low=0)
-    gain = _number(bag, raw["gain_db"], say(at, "/gain_db"), low=-60, high=12) if "gain_db" in raw else None
+    at_time = as_number(bag, raw["at"], say(at, "/at"), low=0)
+    gain = as_number(bag, raw["gain_db"], say(at, "/gain_db"), low=-60, high=12) if "gain_db" in raw else None
     duck: TrackId | None = None
     if "duck_under" in raw:
-        named = _text(bag, raw["duck_under"], say(at, "/duck_under"), pattern=TRACK, high=32)
+        named = as_text(bag, raw["duck_under"], say(at, "/duck_under"), pattern=TRACK, high=32)
         duck = None if named is None else TrackId(named)
     if path is None or at_time is None or ("gain_db" in raw and gain is None) or ("duck_under" in raw and duck is None):
         return None
     return AudioClip(path, at_time, gain, duck)
 
 
-def _track(bag: _Bag, value: object, at: str) -> Track | None:
-    raw = _object(bag, value, at)
+def _track(bag: Bag, value: object, at: str) -> Track | None:
+    raw = as_object(bag, value, at)
     if raw is None:
         return None
-    _keys(bag, raw, {"id", "clips", "from"}, at)
+    only_keys(bag, raw, {"id", "clips", "from"}, at)
     if "id" not in raw:
         bag.schema(at, "Field id is required.")
         return None
-    track_id = _text(bag, raw["id"], say(at, "/id"), pattern=TRACK, high=32)
+    track_id = as_text(bag, raw["id"], say(at, "/id"), pattern=TRACK, high=32)
     has_clips = "clips" in raw
     has_from = "from" in raw
     if has_clips == has_from:
@@ -368,34 +403,34 @@ def _track(bag: _Bag, value: object, at: str) -> Track | None:
     if track_id is None:
         return None
     if has_from:
-        source = _text(bag, raw["from"], say(at, "/from"), pattern=TRACK, high=32)
+        source = as_text(bag, raw["from"], say(at, "/from"), pattern=TRACK, high=32)
         return None if source is None else CaptionsTrack(TrackId(track_id), TrackId(source))
-    listed = _list(bag, raw["clips"], say(at, "/clips"), low=1, high=512)
+    listed = as_list(bag, raw["clips"], say(at, "/clips"), low=1, high=512)
     if listed is None:
         return None
-    clips = [_clip(bag, item, say(at, "/clips/", str(index))) for index, item in enumerate(listed)]
+    clips = [as_clip(bag, item, say(at, "/clips/", str(index))) for index, item in enumerate(listed)]
     if any(item is None for item in clips):
         return None
     return ClipTrack(TrackId(track_id), tuple(item for item in clips if item is not None))
 
 
-def _cut(bag: _Bag, value: object, at: str) -> Cut | None:
-    raw = _object(bag, value, at)
+def _cut(bag: Bag, value: object, at: str) -> Cut | None:
+    raw = as_object(bag, value, at)
     if raw is None:
         return None
-    _keys(bag, raw, {"at", "transition", "duration"}, at)
-    if not _need(bag, raw, ("at", "transition", "duration"), at):
+    only_keys(bag, raw, {"at", "transition", "duration"}, at)
+    if not need(bag, raw, ("at", "transition", "duration"), at):
         return None
-    when = _number(bag, raw["at"], say(at, "/at"), low=0)
+    when = as_number(bag, raw["at"], say(at, "/at"), low=0)
     if raw.get("transition") != "crossfade":
         bag.schema(say(at, "/transition"), "The transition must be crossfade.")
-    duration = _number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
+    duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
     if when is None or duration is None or raw.get("transition") != "crossfade":
         return None
     return Cut(when, "crossfade", duration)
 
 
-def _rules(bag: _Bag, script: Script) -> None:
+def _rules(bag: Bag, script: Script) -> None:
     ids = [track.id for track in script.tracks]
     if len(set(ids)) != len(ids):
         bag.rule("track-ids-unique", "/tracks", "Two tracks use the same id.")
@@ -428,11 +463,11 @@ def _rules(bag: _Bag, script: Script) -> None:
 
 
 def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple[None, tuple[ScriptProblem, ...]]:
-    bag = _Bag()
-    document = _object(bag, raw, "")
+    bag = Bag()
+    document = as_object(bag, raw, "")
     if document is None:
         return None, tuple(bag.items)
-    _keys(bag, document, {"schemaVersion", "output", "brand", "cache", "tracks", "cuts"}, "")
+    only_keys(bag, document, TOP_LEVEL, "")
     if "schemaVersion" not in document:
         bag.schema("", "Field schemaVersion is required.")
     elif document.get("schemaVersion") != SCHEMA_VERSION:
@@ -443,10 +478,15 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
         if "tracks" not in document:
             bag.schema("", "Field tracks is required.")
         return None, tuple(bag.items)
-    output = _output(bag, document["output"])
-    brand = _brand(bag, document["brand"]) if "brand" in document else None
+    output = as_output(bag, document["output"])
+    brand = as_brand(bag, document["brand"]) if "brand" in document else None
     cache_dir = _cache(bag, document["cache"]) if "cache" in document else None
-    listed = _list(bag, document["tracks"], "/tracks", low=1, high=16)
+    template = as_template(bag, document["template"], "/template") if "template" in document else None
+    budget = as_budget(bag, document["budget"], "/budget") if "budget" in document else None
+    disclosure = None
+    if "disclosure" in document:
+        disclosure = as_text(bag, document["disclosure"], "/disclosure", high=MAX_LABEL)
+    listed = as_list(bag, document["tracks"], "/tracks", low=1, high=16)
     tracks: list[Track] = []
     if listed is not None:
         built = [_track(bag, item, say("/tracks/", str(index))) for index, item in enumerate(listed)]
@@ -456,7 +496,7 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
             tracks = [item for item in built if item is not None]
     cuts: list[Cut] = []
     if "cuts" in document:
-        listed_cuts = _list(bag, document["cuts"], "/cuts", low=0, high=256)
+        listed_cuts = as_list(bag, document["cuts"], "/cuts", low=0, high=256)
         if listed_cuts is not None:
             built_cuts = [_cut(bag, item, say("/cuts/", str(index))) for index, item in enumerate(listed_cuts)]
             if any(item is None for item in built_cuts):
@@ -465,7 +505,7 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
                 cuts = [item for item in built_cuts if item is not None]
     if bag.items or output is None:
         return None, tuple(bag.items)
-    script = Script(output, brand, tuple(tracks), tuple(cuts), cache_dir)
+    script = Script(output, brand, tuple(tracks), tuple(cuts), cache_dir, template, budget, disclosure)
     _rules(bag, script)
     if bag.items:
         return None, tuple(bag.items)

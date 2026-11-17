@@ -57,7 +57,12 @@ def kept(path: Path) -> bool:
 def tracked() -> set[Path] | None:
     try:
         listed = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except OSError:
         return None
@@ -99,7 +104,7 @@ def test_no_company_names_in_shipped_folders() -> None:
 def test_the_scan_covers_the_shipped_folders() -> None:
     files = scanned_files()
     tops = {path.relative_to(ROOT).parts[0] for path in files}
-    assert {"src", "schemas", "examples"} <= tops
+    assert {"src", "schemas", "templates", "examples"} <= tops
     assert sum(1 for path in files if readable(path) != "") > 50
 
 

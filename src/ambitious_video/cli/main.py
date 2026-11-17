@@ -19,6 +19,7 @@ from ambitious_kit.db.sqlite import load_migrations
 from ambitious_kit.domain.envelope import JsonObject, failure
 
 from ambitious_video.cli import engine, guide
+from ambitious_video.cli import expand as expander
 from ambitious_video.db.store import count_jobs
 from ambitious_video.domain.need import NeedTool
 from ambitious_video.install.tools import tool_report, tool_warnings
@@ -29,11 +30,15 @@ SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
 CACHE_DIR: ContextVar[Path | None] = ContextVar("cache_dir", default=None)
 OLDER_THAN: ContextVar[str | None] = ContextVar("older_than", default=None)
 OFFLINE: ContextVar[bool] = ContextVar("offline", default=False)
+TEMPLATE: ContextVar[str | None] = ContextVar("template", default=None)
+OUT: ContextVar[str | None] = ContextVar("out", default=None)
 KIT_VALUE_FLAGS = ("--in", "--db", "--now", "--seed")
 MAX_PRUNE_DAYS = 36500
 OWN_FLAGS = {
     "--cache": ("plan", "estimate", "render", "cache list", "cache prune"),
     "--older-than": ("cache prune",),
+    "--template": ("expand",),
+    "--out": ("expand",),
 }
 PLAIN_FLAGS = {"--offline": ("plan", "estimate", "render")}
 STDIN_WAIT_SECONDS = 2.0
@@ -162,6 +167,12 @@ def _script(raw: object) -> object:
     return raw
 
 
+def _inputs(raw: object) -> object:
+    if not isinstance(raw, dict):
+        raise failure("E_INPUT_SCHEMA", "The input must be an object.", "Send the inputs as an object.")
+    return raw
+
+
 def _render_input(raw: object) -> tuple[str | None, object | None]:
     if not isinstance(raw, dict):
         raise failure("E_INPUT_SCHEMA", "The input must be an object.", "Send the video script as an object.")
@@ -190,6 +201,12 @@ def _guard(action: Callable[[], JsonObject]) -> JsonObject:
         raise engine.tool_failure(error) from None
     except ProviderError as error:
         raise engine.provider_failure(error) from None
+
+
+def expand(context: Context[object]) -> JsonObject:
+    chosen = OUT.get()
+    out = None if chosen is None else Path(chosen)
+    return expander.expand_data(context.input, SCRIPT_DIR.get(), TEMPLATE.get(), out, _loads)
 
 
 def validate(context: Context[object]) -> JsonObject:
@@ -257,7 +274,7 @@ def cache_prune(context: DbContext[None]) -> JsonObject:
 
 
 def show_guide(_context: Context[None]) -> JsonObject:
-    return guide.guide_data()
+    return guide.guide_data(expander.starters_data(_loads))
 
 
 def show_help(_context: Context[None]) -> JsonObject:
@@ -307,6 +324,8 @@ def main() -> int:
     cache_token = CACHE_DIR.set(None if chosen is None else Path(chosen))
     days_token = OLDER_THAN.set(own.get("--older-than"))
     offline_token = OFFLINE.set("--offline" in own)
+    template_token = TEMPLATE.set(own.get("--template"))
+    out_token = OUT.set(own.get("--out"))
     sys.argv = [original[0], *kept]
     try:
         return run_cli(
@@ -316,6 +335,7 @@ def main() -> int:
                 schema_version=1,
                 migrations=load_migrations(files("ambitious_video").joinpath("db").joinpath("migrations")),
                 commands={
+                    "expand": pure_command(expand, _inputs),
                     "validate": pure_command(validate, _script),
                     "plan": pure_command(plan, _script),
                     "estimate": pure_command(estimate, _script),
@@ -333,6 +353,8 @@ def main() -> int:
         )
     finally:
         sys.argv = original
+        OUT.reset(out_token)
+        TEMPLATE.reset(template_token)
         OFFLINE.reset(offline_token)
         OLDER_THAN.reset(days_token)
         CACHE_DIR.reset(cache_token)

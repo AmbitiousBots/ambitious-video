@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ambitious-video:video-template:v1",
+  "title": "Video template, version 1",
+  "description": "A video with named inputs. The expand command fills the {{input}} slots with the values of an inputs file and writes a video script. Substitution is plain: a slot is replaced by one value, and there is no expression language.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["templateVersion", "id", "title", "output", "scenes"],
+  "properties": {
+    "templateVersion": { "const": 1 },
+    "id": { "$ref": "#/$defs/templateId" },
+    "title": { "$ref": "#/$defs/label" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "inputs": {
+      "description": "The named values a video needs. An inputs file gives a value for each required one.",
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+      "additionalProperties": { "$ref": "#/$defs/input" }
+    },
+    "brand": { "$ref": "#/$defs/brand" },
+    "output": { "$ref": "#/$defs/output" },
+    "budget": { "$ref": "#/$defs/budget" },
+    "speech": { "$ref": "#/$defs/speech" },
+    "music": { "$ref": "#/$defs/music" },
+    "fallbacks": { "$ref": "#/$defs/fallbacks" },
+    "scenes": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/scene" } },
+    "endCard": { "$ref": "#/$defs/endCard" },
+    "disclosure": {
+      "description": "The words that mark AI-generated scenes, such as: AI-generated scenes. Plain text, copied into the script.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "$defs": {
+    "templateId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+    "sceneId": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+    "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "text": {
+      "description": "Text that may hold {{input}} slots of text and choice inputs.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "slot": {
+      "description": "One whole slot, such as {{picture_1}}.",
+      "type": "string",
+      "pattern": "^\\{\\{\\s*[a-z][a-z0-9_]{0,31}\\s*\\}\\}$"
+    },
+    "relativePath": {
+      "description": "A path below the folder that holds the inputs file. It cannot start with / and cannot step out with a .. part.",
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "pathOrSlot": { "anyOf": [{ "$ref": "#/$defs/slot" }, { "$ref": "#/$defs/relativePath" }] },
+    "hexColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+    "startSeconds": { "type": "number", "minimum": 0 },
+    "lengthSeconds": { "type": "number", "exclusiveMinimum": 0 },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["text", "image", "video", "audio", "color", "voice", "choice"] },
+        "required": { "type": "boolean", "default": false },
+        "default": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/label" }
+        },
+        "maxLength": { "type": "integer", "minimum": 1, "maximum": 2000 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 500 }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "choice" } } },
+          "then": { "required": ["options"] },
+          "else": { "properties": { "options": false } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "text" } } },
+          "else": { "properties": { "maxLength": false } }
+        }
+      ]
+    },
+    "brand": {
+      "description": "Either the customer's brand file, named by file and read from the folder of the inputs file, or the brand written here with slots.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file"],
+          "properties": { "file": { "$ref": "#/$defs/relativePath" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "font": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "colors": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["bg", "fg", "accent"],
+              "properties": {
+                "bg": { "$ref": "#/$defs/colorOrSlot" },
+                "fg": { "$ref": "#/$defs/colorOrSlot" },
+                "accent": { "$ref": "#/$defs/colorOrSlot" }
+              }
+            },
+            "logo": { "$ref": "#/$defs/pathOrSlot" }
+          }
+        }
+      ]
+    },
+    "colorOrSlot": { "anyOf": [{ "$ref": "#/$defs/slot" }, { "$ref": "#/$defs/hexColor" }] },
+    "output": {
+      "description": "Where the video is written and its size. An inputs file can replace any of these.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "width", "height", "fps"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "width": { "type": "integer", "minimum": 16, "maximum": 7680, "multipleOf": 2 },
+        "height": { "type": "integer", "minimum": 16, "maximum": 4320, "multipleOf": 2 },
+        "fps": { "type": "integer", "minimum": 1, "maximum": 120 },
+        "encode": { "enum": ["web", "lossless"], "default": "web" }
+      }
+    },
+    "budget": {
+      "description": "The most one video from this template should cost, in US dollars.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxUsd"],
+      "properties": {
+        "maxUsd": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 }
+      }
+    },
+    "speech": {
+      "description": "Who speaks the lines. The provider and the model are fixed here; the voice may be a slot of a voice input.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "voice"],
+      "properties": {
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+        "model": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "voice": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "music": {
+      "description": "One audio file played under the whole video. It is turned down while a line is heard.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "$ref": "#/$defs/pathOrSlot" },
+        "gain_db": { "type": "number", "minimum": -60, "maximum": 12 }
+      }
+    },
+    "fallbacks": {
+      "description": "What a step becomes when a slot it needs has no value. Without an entry, the missing value is an error.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "speech": { "const": "captions" },
+        "music": { "const": "none" }
+      }
+    },
+    "line": {
+      "description": "One line of narration. at is counted in seconds from the start of its scene.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "at": { "$ref": "#/$defs/startSeconds" },
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "text": { "$ref": "#/$defs/text" }
+      }
+    },
+    "lines": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/$defs/line" } },
+    "shown": {
+      "description": "What a scene shows: a title card, a picture or a part of a video file, written as in a video script.",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "enum": ["title_card", "image", "video"] } },
+      "allOf": [
+        { "if": { "required": ["type"], "properties": { "type": { "const": "title_card" } } }, "then": { "$ref": "#/$defs/titleCard" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "image" } } }, "then": { "$ref": "#/$defs/image" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "video" } } }, "then": { "$ref": "#/$defs/video" } }
+      ]
+    },
+    "titleCard": {
+      "additionalProperties": false,
+      "required": ["duration", "text"],
+      "properties": {
+        "type": true,
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "text": { "$ref": "#/$defs/text" },
+        "subtitle": { "$ref": "#/$defs/text" }
+      }
+    },
+    "image": {
+      "additionalProperties": false,
+      "required": ["path", "duration"],
+      "properties": {
+        "type": true,
+        "path": { "$ref": "#/$defs/pathOrSlot" },
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "kenburns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": {
+            "from": { "type": "number", "minimum": 1, "maximum": 4 },
+            "to": { "type": "number", "minimum": 1, "maximum": 4 }
+          }
+        }
+      }
+    },
+    "video": {
+      "description": "A part of a video file. out is required, so the length of the scene is known without opening the file.",
+      "additionalProperties": false,
+      "required": ["path", "out"],
+      "properties": {
+        "type": true,
+        "path": { "$ref": "#/$defs/pathOrSlot" },
+        "in": { "$ref": "#/$defs/startSeconds" },
+        "out": { "$ref": "#/$defs/lengthSeconds" }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "show"],
+      "properties": {
+        "id": { "$ref": "#/$defs/sceneId" },
+        "show": { "$ref": "#/$defs/shown" },
+        "fallback": {
+          "description": "Shown instead when a slot in show has no value.",
+          "$ref": "#/$defs/shown"
+        },
+        "say": { "$ref": "#/$defs/lines" },
+        "cut": {
+          "description": "A crossfade from this scene into the next one.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transition", "duration"],
+          "properties": {
+            "transition": { "enum": ["crossfade"] },
+            "duration": { "$ref": "#/$defs/lengthSeconds" }
+          }
+        }
+      }
+    },
+    "endCard": {
+      "description": "A last title card, after the scenes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration", "text"],
+      "properties": {
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "text": { "$ref": "#/$defs/text" },
+        "subtitle": { "$ref": "#/$defs/text" },
+        "say": { "$ref": "#/$defs/lines" }
+      }
+    }
+  }
+}

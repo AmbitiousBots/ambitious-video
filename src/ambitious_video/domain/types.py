@@ -17,17 +17,22 @@ Timestamp = NewType("Timestamp", str)
 Usd = NewType("Usd", Decimal)
 
 SCHEMA_VERSION: Final = 2
+TEMPLATE_VERSION: Final = 1
 
 TRACK_ID_PATTERN: Final = "^[a-z][a-z0-9_-]{0,31}$"
 HEX_COLOR_PATTERN: Final = "^#[0-9A-Fa-f]{6}$"
 PROVIDER_ID_PATTERN: Final = "^[a-z][a-z0-9-]{0,31}$"
 MODEL_ID_PATTERN: Final = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+TEMPLATE_ID_PATTERN: Final = "^[a-z][a-z0-9-]{0,63}$"
+INPUT_NAME_PATTERN: Final = "^[a-z][a-z0-9_]{0,31}$"
 
 ClipType = Literal["title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio"]
 ActionKind = Literal["click", "wait", "scroll"]
 Transition = Literal["crossfade"]
 EncodeMode = Literal["web", "lossless"]
 ProviderKind = Literal["scene", "speech", "lipsync"]
+InputType = Literal["text", "image", "video", "audio", "color", "voice", "choice"]
+SceneType = Literal["title_card", "image", "video"]
 
 ScriptRule = Literal[
     "track-ids-unique",
@@ -204,12 +209,21 @@ class Cut:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateRef:
+    id: str
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
 class Script:
     output: Output
     brand: Brand | None
     tracks: tuple[Track, ...]
     cuts: tuple[Cut, ...]
     cache_dir: RelativePath | None = None
+    template: TemplateRef | None = None
+    budget_usd: Decimal | None = None
+    disclosure: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
