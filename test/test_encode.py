@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
 
+from PIL import Image
 from test_render import run, subprocess_verify
+
+from ambitious_video.media.film import MEAN_LIMIT, distance
 
 SCRIPT = "\n".join(
     [
@@ -22,6 +26,21 @@ SCRIPT = "\n".join(
         "    from: voice",
         "cuts:",
         "  - { at: 1.0, transition: crossfade, duration: 0.2 }",
+        "",
+    ]
+)
+
+GRAIN = "\n".join(
+    [
+        "schemaVersion: 1",
+        "output: { path: grain.mp4, width: 320, height: 180, fps: 10 }",
+        "tracks:",
+        "  - id: main",
+        "    clips:",
+        "      - { type: image, path: grain.png, duration: 1.0, kenburns: { from: 1.0, to: 1.1 } }",
+        '      - { type: title_card, duration: 1.0, text: "Two" }',
+        "cuts:",
+        "  - { at: 1.0, transition: crossfade, duration: 0.4 }",
         "",
     ]
 )
@@ -74,6 +93,30 @@ def test_default_render_is_h264_yuv420p_and_verifies(tmp_path: Path) -> None:
         "title-1": True,
         "cut-10": True,
     }
+
+
+def test_a_web_render_of_a_noise_still_with_a_crossfade_verifies(tmp_path: Path) -> None:
+    noise = hashlib.shake_256(b"grain").digest(320 * 180 * 3)
+    Image.frombytes("RGB", (320, 180), noise).save(tmp_path / "grain.png")
+    data = rendered(tmp_path / "home", tmp_path, GRAIN)
+    assert video_stream(tmp_path / "grain.mp4")["pix_fmt"] == "yuv420p"
+    checked = subprocess_verify(tmp_path / "home", tmp_path, str(data["jobId"]))
+    assert checked["exit"] == 0, checked
+    assert checks_of(checked) == {
+        "duration": True,
+        "resolution": True,
+        "audio": True,
+        "encoding": True,
+        "title-1": True,
+        "cut-10": True,
+    }
+
+
+def test_an_even_shift_of_three_levels_is_over_the_mean_limit() -> None:
+    drawn = Image.new("RGB", (320, 180), (100, 100, 100))
+    mean, worst_block = distance(drawn, Image.new("RGB", (320, 180), (103, 103, 103)))
+    assert mean == 3.0 and mean > MEAN_LIMIT
+    assert worst_block == 3
 
 
 def test_encode_web_is_the_default(tmp_path: Path) -> None:

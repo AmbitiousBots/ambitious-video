@@ -45,6 +45,7 @@ WEB_CODEC = ("-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "
 LOSSLESS_CODEC = ("-c:v", "libx264rgb", "-qp", "0", "-pix_fmt", "rgb24")
 STORED_AS: dict[EncodeMode, tuple[str, str]] = {"web": ("h264", "yuv420p"), "lossless": ("h264", "gbrp")}
 MEAN_LIMIT = 2.0
+MEAN_BLOCK = 8
 BLOCK = 4
 BLOCK_LIMIT = 32
 
@@ -283,9 +284,8 @@ def distance(expected: PilImage, shot: PilImage) -> tuple[float, int]:
         from PIL import ImageChops
     except ImportError as error:
         raise NeedTool("pillow") from error
-    counts = ImageChops.difference(expected, shot).histogram()
-    samples = expected.width * expected.height * 3
-    mean = sum((index % 256) * count for index, count in enumerate(counts)) / samples
+    averaged = ImageChops.difference(expected.reduce(MEAN_BLOCK), shot.reduce(MEAN_BLOCK)).histogram()
+    mean = sum((index % 256) * count for index, count in enumerate(averaged)) / sum(averaged)
     blocks = ImageChops.difference(expected.reduce(BLOCK), shot.reduce(BLOCK)).histogram()
     return mean, max(index % 256 for index, count in enumerate(blocks) if count > 0)
 

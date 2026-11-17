@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -47,7 +48,8 @@ def rgb_of(text: str | None, default: tuple[int, int, int]) -> tuple[int, int, i
 
 def load_font(path: str, size: int) -> PilFont:
     _image, _draw, image_font = pil()
-    return image_font.truetype(path, size, layout_engine=image_font.Layout.BASIC)
+    held = io.BytesIO(Path(path).read_bytes())
+    return image_font.truetype(held, size, layout_engine=image_font.Layout.BASIC)
 
 
 def readable_font(path: str) -> bool:

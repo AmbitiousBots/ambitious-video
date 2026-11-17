@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 from blockfont import write_block_font
 from PIL.Image import Image
@@ -10,6 +11,7 @@ from test_render import run
 from ambitious_video.domain.load import load_script
 from ambitious_video.domain.timeline import timeline_for
 from ambitious_video.media.film import canvas_for, frame_at
+from ambitious_video.steps.common import readable_font
 
 HEAD = """
 schemaVersion: 1
@@ -134,6 +136,25 @@ def test_a_missing_or_unreadable_font_file_is_refused(tmp_path: Path) -> None:
     unread = run(tmp_path / "home", tmp_path, ["validate"], HEAD + FONT + MAIN)
     assert unread["exit"] == 1
     found = problems_of(unread)
+    assert [(item["code"], item["at"]) for item in found] == [("E_MEDIA", "/brand/font")]
+    assert "cannot be read as a font" in str(found[0]["message"])
+
+
+def test_a_file_that_is_not_a_font_never_loads_a_system_font_of_that_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    system = tmp_path / "system"
+    folder = tmp_path / "script"
+    write_block_font(system / "Library" / "Fonts" / "blocks.ttf")
+    write_block_font(system / "fonts" / "blocks.ttf")
+    (folder / "fonts").mkdir(parents=True)
+    (folder / "fonts" / "blocks.ttf").write_text("this is not a font\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(system))
+    monkeypatch.setenv("XDG_DATA_HOME", str(system))
+    assert not readable_font(str(folder / "fonts" / "blocks.ttf"))
+    refused = run(tmp_path / "home", folder, ["validate"], HEAD + FONT + MAIN)
+    assert refused["exit"] == 1, refused
+    found = problems_of(refused)
     assert [(item["code"], item["at"]) for item in found] == [("E_MEDIA", "/brand/font")]
     assert "cannot be read as a font" in str(found[0]["message"])
 
