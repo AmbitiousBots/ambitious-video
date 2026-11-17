@@ -45,8 +45,8 @@
       "Write { \"jobId\": \"<data.jobId from render>\" } to job.json, then: ambitious-video verify --in job.json"
     ],
     "notes": [
-      "Leave voice unset unless you want spoken voiceover and have set the provider key in the environment. Without voice, voiceover lines are captions only, nothing is spoken, and the estimate is 0.",
-      "Captions are drawn only by a track with from: <id of a track with voiceover clips>. Each voiceover clip is shown during its own time, one sentence at a time. A script with no such track draws no captions.",
+      "A voiceover clip is a caption only: nothing is spoken, no key is needed, and the estimate is 0. To have a line spoken, use a speech clip that names a provider, a model and a voice, and set that provider's key in the environment. The estimate then shows the price and its source.",
+      "Captions are drawn only by a track with from: <id of a track with voiceover or speech clips>. Each such clip is shown during its own time, one sentence at a time. A script with no such track draws no captions.",
       "Paths in a script are relative to the folder that holds the script. The video is written to output.path in that folder.",
       "brand.font must be the path of a font file next to the script, such as fonts/name.ttf. A font name is rejected, because fonts installed on one computer are not on another.",
       "output.encode is web by default: H.264 with yuv420p pixels, which browsers play. Set output.encode: lossless for an exact RGB file whose bytes repeat for the same script."

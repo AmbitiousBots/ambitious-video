@@ -53,7 +53,7 @@ def test_guide_prints_the_example_script(tmp_path: Path) -> None:
     assert example["script"] == EXAMPLE.read_text(encoding="utf-8")
     assert example["repositoryPath"] == "examples/titles-and-captions.yaml"
     notes = data["notes"]
-    assert isinstance(notes, list) and any("Leave voice unset" in str(note) for note in notes)
+    assert isinstance(notes, list) and any("use a speech clip" in str(note) for note in notes)
     assert isinstance(data["steps"], list) and data["steps"]
 
 
@@ -61,7 +61,7 @@ def test_the_example_is_title_cards_captions_and_one_crossfade() -> None:
     text = EXAMPLE.read_text(encoding="utf-8")
     script = yaml.safe_load(text)
     assert "voice" not in script and "brand" not in script
-    assert "Leave `voice` unset" in text
+    assert "nothing is spoken" in text and "`speech` clip" in text
     kinds = {clip["type"] for track in script["tracks"] for clip in track.get("clips", [])}
     assert kinds == {"title_card", "voiceover"}
     assert [track["from"] for track in script["tracks"] if "from" in track] == ["voice"]

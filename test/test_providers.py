@@ -146,11 +146,17 @@ def _open(home: Path) -> Db:
 
 
 def _render(
-    db: Db, script: Mapping[str, object], folder: Path, job: str, when: datetime, env: Mapping[str, str]
+    db: Db,
+    script: Mapping[str, object],
+    folder: Path,
+    job: str,
+    when: datetime,
+    env: Mapping[str, str],
+    cache: Path | None = None,
 ) -> dict[str, object]:
     db.execute("BEGIN IMMEDIATE")
     try:
-        data = engine.render_new(db, dict(script), folder, job, when, env)
+        data = engine.render_new(db, dict(script), folder, job, when, env, cache)
         db.execute("COMMIT")
     except BaseException:
         if db.in_transaction:
@@ -232,10 +238,15 @@ def test_a_provider_registered_only_in_a_test_runs_plan_estimate_cache_and_rende
         assert {(entry["provider"], entry["model"], entry["kind"]) for entry in listed} == {
             ("test-speech", "large", "speech")
         }
+
+        moved = _render(db, script, folder, "job-three", LATER, quiet, tmp_path / "other")
+        assert len(fake_speech.calls) == len(spoken) and list_ledger(db) == ledger
+        assert moved["costUsd"] == "0.000000" and all(step["cached"] is True for step in _lines(moved, "steps"))
+        assert len(_lines(engine.cache_list(db, tmp_path / "other"), "entries")) == len(spoken)
     finally:
         db.close()
     assert SECRET.encode() not in _everything_written(home, folder)
-    assert SECRET not in json.dumps([plan, before, first, after, second])
+    assert SECRET not in json.dumps([plan, before, first, after, second, moved])
 
 
 def test_a_cheaper_model_of_the_same_provider_is_another_step_and_another_price(

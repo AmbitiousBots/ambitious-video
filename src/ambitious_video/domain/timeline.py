@@ -215,9 +215,9 @@ def _captions(script: Script, spans: list[Span]) -> tuple[Caption, ...]:
     for track in script.tracks:
         if not isinstance(track, CaptionsTrack):
             continue
-        spoken = [span for span in spans if span.track == track.source and isinstance(span.clip, Voiceover)]
+        spoken = [span for span in spans if span.track == track.source and isinstance(span.clip, Voiceover | Speech)]
         for span in sorted(spoken, key=lambda item: (item.start, item.index)):
-            if isinstance(span.clip, Voiceover):
+            if isinstance(span.clip, Voiceover | Speech):
                 found.extend(segments(track.id, span.clip.text, span.start, span.frames))
     return tuple(found)
 
