@@ -21,6 +21,7 @@ from ambitious_kit.paths import ambitious_home, refuse_agent_data
 from ambitious_video import providers
 from ambitious_video.db import step_cache
 from ambitious_video.db.lock import Hold
+from ambitious_video.db.requests import forget_request, store_request, stored_request
 from ambitious_video.db.store import (
     JobRow,
     count_calls,
@@ -56,6 +57,7 @@ from ambitious_video.domain.types import (
     Clip,
     ClipTrack,
     EncodeMode,
+    GeneratedScene,
     ImageClip,
     PaidClip,
     Script,
@@ -67,15 +69,28 @@ from ambitious_video.domain.types import (
     idem_key,
 )
 from ambitious_video.media.audio import Piece, write_wav
-from ambitious_video.media.film import STORED_AS, TO_RGB, canvas_for, encode, frame_at, matches, prepare
+from ambitious_video.media.film import STORED_AS, TO_RGB, Made, canvas_for, encode, frame_at, matches, prepare
 from ambitious_video.media.probe import duration_of, frame_count, inspect, stored_as
-from ambitious_video.providers.base import Provider, ProviderError
+from ambitious_video.providers.base import (
+    Deferred,
+    Provider,
+    ProviderError,
+    RequestLost,
+    SceneMaker,
+    await_result,
+)
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken
 from ambitious_video.steps import compile_clip
-from ambitious_video.steps.common import readable_font
+from ambitious_video.steps.common import readable_font, readable_image
 
 FONT_INPUT = "brand.font"
-PAID_KINDS = {Speech: "speech"}
+PAID_KINDS: dict[type, str] = {Speech: "speech", GeneratedScene: "scene"}
+MANIFEST_SUFFIX = ".manifest.json"
+MANIFEST_VERSION = 1
+
+
+class Waiting(Failure):
+    pass
 
 
 def as_json(value: object) -> JsonValue:
@@ -161,6 +176,17 @@ def font_faults(script: Script, root: Path) -> tuple[Fault, ...]:
     return ()
 
 
+def _scene_faults(clip: GeneratedScene, found: Provider, at: str) -> list[Fault]:
+    if not isinstance(found, SceneMaker):
+        return [Fault("E_INPUT_SCHEMA", say(at, "/provider"), "That provider does not do this step.")]
+    rows = [Fault("E_INPUT_SCHEMA", say(at, "/", name), message) for name, message in found.faults(clip)]
+    if clip.seed is not None and not found.seedable:
+        rows.append(Fault("E_INPUT_SCHEMA", say(at, "/seed"), "This provider takes no seed."))
+    if clip.kenburns is not None and found.output != "image":
+        rows.append(Fault("E_INPUT_SCHEMA", say(at, "/kenburns"), "Only a still picture takes kenburns."))
+    return rows
+
+
 def _provider_faults(script: Script) -> tuple[Fault, ...]:
     rows: list[Fault] = []
     for track_index, track in enumerate(script.tracks):
@@ -177,6 +203,8 @@ def _provider_faults(script: Script) -> tuple[Fault, ...]:
                 rows.append(Fault("E_INPUT_SCHEMA", say(at, "/provider"), "That provider does not do this step."))
             elif clip.model not in found.models:
                 rows.append(Fault("E_INPUT_SCHEMA", say(at, "/model"), "The provider has no such model."))
+            elif isinstance(clip, GeneratedScene):
+                rows.extend(_scene_faults(clip, found, at))
     return tuple(rows)
 
 
@@ -195,6 +223,18 @@ def _declined(_clip: PaidClip) -> bool:
     return True
 
 
+def _is_scene(clip: PaidClip) -> bool:
+    return isinstance(clip, GeneratedScene)
+
+
+def _fallback_faults(script: Script, media: Mapping[str, float | None], known: tuple[Fault, ...]) -> tuple[Fault, ...]:
+    spare, placed = with_fallbacks(script, _is_scene)
+    if not placed:
+        return ()
+    faults = timeline_for(spare, media, require_files=True).faults
+    return tuple(item for item in faults if item not in known)
+
+
 def studied(
     raw: object, root: Path, *, require_files: bool, offline: bool
 ) -> tuple[Script, Timeline, Mapping[int, Fallback]]:
@@ -210,6 +250,8 @@ def studied(
     media = media_map(script, root) if require_files else None
     timeline = timeline_for(script, media, require_files=require_files)
     found = (*font_faults(script, root), *timeline.faults) if require_files else timeline.faults
+    if media is not None and not offline:
+        found = (*found, *_fallback_faults(script, media, timeline.faults))
     if found:
         raise_faults(found, seconds_json(timeline.total, timeline.fps))
     spots = {(span.track, span.index): span.step for span in timeline.spans}
@@ -253,11 +295,20 @@ def step_spec(clip: Clip, hashes: Mapping[str, str | None]) -> StepSpec:
     if isinstance(clip, PaidClip):
         found = _provider_of(clip)
         params = sorted_json(found.params(clip))
+        if isinstance(clip, GeneratedScene):
+            given: tuple[str | None, ...] = () if clip.image is None else (hashes.get(clip.image),)
+            return StepSpec(found.kind, found.id, clip.model, found.adapter_version, params, clip.seed, given)
         return StepSpec(found.kind, found.id, clip.model, found.adapter_version, params, None, ())
     inputs: tuple[str | None, ...] = ()
     if isinstance(clip, VideoClip | ImageClip | AudioClip):
         inputs = (hashes.get(clip.path),)
     return StepSpec(kind_of(clip), LOCAL, None, LOCAL_VERSION, as_json(compile_clip(clip)), None, inputs)
+
+
+def _zoom_json(clip: Clip) -> JsonValue:
+    if not isinstance(clip, GeneratedScene) or clip.kenburns is None:
+        return None
+    return {"from": clip.kenburns.zoom_from, "to": clip.kenburns.zoom_to}
 
 
 def _output_spec(script: Script, timeline: Timeline, hashes: Mapping[str, str | None], keys: list[str]) -> StepSpec:
@@ -282,6 +333,10 @@ def _output_spec(script: Script, timeline: Timeline, hashes: Mapping[str, str | 
             for span in timeline.spans
         ],
     }
+    made = [span for span in timeline.spans if isinstance(span.clip, GeneratedScene)]
+    if made and isinstance(params, dict):
+        params["aiTag"] = timeline.disclosure
+        params["generated"] = [{"index": span.step, "kenburns": _zoom_json(span.clip)} for span in made]
     logo: tuple[str | None, ...] = ()
     if brand is not None and brand.logo is not None:
         logo = (hashes.get(brand.logo),)
@@ -309,22 +364,31 @@ class Paid:
     spec: StepSpec
     key: str
     quote: Quote
+    inputs: Mapping[str, Path]
 
 
-def _paid(span: Span, clip: PaidClip) -> Paid:
+def _paid(span: Span, clip: PaidClip, hashes: Mapping[str, str | None], root: Path) -> Paid:
     found = _provider_of(clip)
-    spec = step_spec(clip, {})
-    units = paid_units(clip)
+    spec = step_spec(clip, hashes)
+    inputs: dict[str, Path] = {}
+    if isinstance(clip, GeneratedScene) and clip.image is not None:
+        inputs["image"] = _checked(root, clip.image)
     try:
         price = found.price(clip.model)
+        units = paid_units(clip, price.unit)
         usd = found.quote(spec.params if isinstance(spec.params, Mapping) else {}, units)
     except (PriceMissing, PriceTableBroken):
         _no_price()
-    return Paid(span, clip, found, spec, step_key(spec), Quote(span.step, span.kind, units, usd, price))
+    return Paid(span, clip, found, spec, step_key(spec), Quote(span.step, span.kind, units, usd, price), inputs)
 
 
-def paid_steps(timeline: Timeline) -> tuple[Paid, ...]:
-    return tuple(_paid(span, span.clip) for span in timeline.spans if isinstance(span.clip, PaidClip))
+def paid_steps(timeline: Timeline, root: Path) -> tuple[Paid, ...]:
+    hashes: dict[str, str | None] = {}
+    for span in timeline.spans:
+        if isinstance(span.clip, GeneratedScene) and span.clip.image is not None:
+            full = _checked(root, span.clip.image)
+            hashes[span.clip.image] = file_sha(full) if full.is_file() else None
+    return tuple(_paid(span, span.clip, hashes, root) for span in timeline.spans if isinstance(span.clip, PaidClip))
 
 
 def _damaged(error: step_cache.CacheDamaged) -> Failure:
@@ -397,11 +461,79 @@ def _require_keys(db: sqlite3.Connection, paid: tuple[Paid, ...], store: Path, e
         raise _no_key(missing)
 
 
-def _run(item: Paid, env: Mapping[str, str]) -> bytes:
+def _waiting(item: Paid, job_id: str, request_id: str) -> Waiting:
+    entry = ErrorEntry(
+        "E_PENDING",
+        "The provider has not finished the step.",
+        say("Retry the job id later. ", "The request is kept ", "and is not sent again."),
+    )
+    data: JsonObject = {
+        "jobId": job_id,
+        "index": item.span.step,
+        "stepKey": item.key,
+        "provider": item.provider.id,
+        "requestId": request_id,
+    }
+    return Waiting([entry], data)
+
+
+def _lost(item: Paid) -> Failure:
+    return failure(
+        "E_PROVIDER",
+        "The provider could not make the step.",
+        say("Render again to send the step again, ", "or run with --offline."),
+        {"provider": item.provider.id, "stepKey": item.key},
+    )
+
+
+def _usable(item: Paid, path: Path) -> bool:
+    if not isinstance(item.provider, SceneMaker):
+        return True
+    if item.provider.output != "image":
+        return duration_of(str(path)) is not None
+    return readable_image(path)
+
+
+def _later(
+    db: sqlite3.Connection, item: Paid, maker: Deferred, env: Mapping[str, str], job_id: str, stamp: str
+) -> bytes:
     work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
     try:
         params = item.spec.params if isinstance(item.spec.params, Mapping) else {}
-        result = item.provider.run(params, {}, env.get(item.provider.secret, ""), work / step_cache.BODY)
+        request_id = stored_request(db, item.key)
+        if request_id is None:
+            request_id = maker.submit(params, item.inputs, env.get(item.provider.secret, ""))
+            begin(db)
+            store_request(db, item.key, item.provider.id, item.spec.model or "", request_id, stamp)
+            commit(db)
+        try:
+            result = await_result(maker, request_id, env.get(item.provider.secret, ""), work / step_cache.BODY)
+        except RequestLost:
+            begin(db)
+            forget_request(db, item.key)
+            commit(db)
+            raise _lost(item) from None
+        if result is None:
+            raise _waiting(item, job_id, request_id)
+        if not _usable(item, result.path):
+            begin(db)
+            forget_request(db, item.key)
+            commit(db)
+            raise _lost(item)
+        return result.path.read_bytes()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _run(db: sqlite3.Connection, item: Paid, env: Mapping[str, str], job_id: str, stamp: str) -> bytes:
+    if isinstance(item.provider, Deferred):
+        return _later(db, item, item.provider, env, job_id, stamp)
+    work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
+    try:
+        params = item.spec.params if isinstance(item.spec.params, Mapping) else {}
+        result = item.provider.run(params, item.inputs, env.get(item.provider.secret, ""), work / step_cache.BODY)
+        if not _usable(item, result.path):
+            raise _lost(item)
         return result.path.read_bytes()
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -459,6 +591,8 @@ def _fetch(
             commit(db)
             try:
                 body = call()
+            except Waiting:
+                raise
             except Exception:
                 begin(db)
                 step_cache.delete_row(db, item.key, where)
@@ -469,6 +603,7 @@ def _fetch(
         begin(db)
         if owed:
             _add_line(db, item, job_id)
+        forget_request(db, item.key)
         step_cache.mark_ready(db, entry, where, label, stamp)
         commit(db)
         return entry.path, not owed
@@ -483,6 +618,7 @@ class Spoken:
     pieces: tuple[Piece, ...]
     steps: tuple[JsonObject, ...]
     billed: Decimal
+    media: Mapping[int, Made]
 
 
 def _pieces(
@@ -500,12 +636,14 @@ def _pieces(
     steps: list[JsonObject] = []
     billed = Decimal(0)
     seen: dict[str, Path] = {}
+    media: dict[int, Made] = {}
     for item in paid:
         cached = item.key in seen
         if not cached:
             if _keyless(db, store, item, env):
                 raise _no_key(secrets_needed((item,), env))
-            seen[item.key], cached = _fetch(db, store, item, job_id, stamp, partial(_run, item, env))
+            call = partial(_run, db, item, env, job_id, stamp)
+            seen[item.key], cached = _fetch(db, store, item, job_id, stamp, call)
         usd = Decimal(0) if cached else item.quote.usd
         billed += usd
         steps.append(
@@ -522,12 +660,14 @@ def _pieces(
         if isinstance(item.clip, Speech):
             pieces.append(Piece(seen[item.key], item.span.start, 0.0, ()))
             ranges.append((item.span.start, item.span.end))
+        elif isinstance(item.provider, SceneMaker):
+            media[item.span.step] = Made(seen[item.key], item.provider.output == "image")
     for span in timeline.spans:
         if isinstance(span.clip, AudioClip):
             ducks = tuple(ranges) if span.clip.duck_under is not None else ()
             gain = 0.0 if span.clip.gain_db is None else span.clip.gain_db
             pieces.append(Piece(root / str(span.clip.path), span.start, gain, ducks))
-    return Spoken(tuple(pieces), tuple(steps), billed)
+    return Spoken(tuple(pieces), tuple(steps), billed, media)
 
 
 def _standins(plan: JsonObject) -> list[JsonObject]:
@@ -556,6 +696,57 @@ def _step_index(step: JsonObject) -> int:
     return index if isinstance(index, int) else 0
 
 
+def _manifest(job_id: str, output: Path, script: Script, spoken: Spoken, plan: JsonObject, offline: bool) -> JsonObject:
+    billed = {_step_index(step): step for step in spoken.steps}
+    listed = plan["steps"]
+    steps: list[JsonValue] = []
+    for step in listed if isinstance(listed, list) else []:
+        if not isinstance(step, Mapping):
+            continue
+        paid = billed.get(_step_index(step))
+        row: dict[str, JsonValue] = {
+            "index": step["index"],
+            "type": step["type"],
+            "stepKey": step["stepKey"],
+            "provider": step["provider"],
+            "model": step["model"],
+            "paid": step["paid"],
+            "cached": False if paid is None else paid["cached"],
+            "usd": money_text(Decimal(0)) if paid is None else paid["usd"],
+        }
+        for name in ("fallback", "fallbackFor"):
+            if name in step:
+                row[name] = step[name]
+        steps.append(row)
+    final = plan["output"]
+    return {
+        "manifestVersion": MANIFEST_VERSION,
+        "jobId": job_id,
+        "template": plan.get("template"),
+        "planSha256": plan["planSha256"],
+        "offline": offline,
+        "disclosure": script.disclosure,
+        "costUsd": money_text(spoken.billed),
+        "output": {
+            "file": output.name,
+            "sha256": file_sha(output),
+            "stepKey": final["stepKey"] if isinstance(final, Mapping) else None,
+        },
+        "steps": steps,
+    }
+
+
+def manifest_path(output: Path) -> Path:
+    return output.with_name(output.name + MANIFEST_SUFFIX)
+
+
+def _write_manifest(output: Path, manifest: JsonObject) -> None:
+    target = manifest_path(output)
+    draft = target.with_name(target.name + ".partial")
+    draft.write_text(json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(draft, target)
+
+
 def _rendered(
     job_id: str, output: Path, timeline: Timeline, spoken: Spoken, plan: JsonObject, store: Path
 ) -> JsonObject:
@@ -563,6 +754,7 @@ def _rendered(
     return {
         "jobId": job_id,
         "output": str(output),
+        "manifest": str(manifest_path(output)),
         "sha256": file_sha(output),
         "durationSec": seconds_json(timeline.total, timeline.fps),
         "costUsd": money_text(spoken.billed),
@@ -572,14 +764,14 @@ def _rendered(
     }
 
 
-def _produce(script: Script, timeline: Timeline, root: Path, dest: Path, pieces: tuple[Piece, ...]) -> str:
+def _produce(script: Script, timeline: Timeline, root: Path, dest: Path, spoken: Spoken) -> str:
     work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
     partial = work / "video.mp4"
     try:
         wav = work / "audio.wav"
-        write_wav(wav, timeline.total, timeline.fps, pieces)
+        write_wav(wav, timeline.total, timeline.fps, spoken.pieces)
         canvas = canvas_for(timeline, root)
-        prepare(timeline, canvas, work, root)
+        prepare(timeline, canvas, work, root, spoken.media)
         dest.parent.mkdir(parents=True, exist_ok=True)
         encode(timeline, canvas, wav, partial, script.output.encode)
         os.replace(partial, dest)
@@ -608,7 +800,7 @@ def render_new(
 ) -> JsonObject:
     script, timeline, _taken = studied(raw, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
-    paid = paid_steps(timeline)
+    paid = paid_steps(timeline, root)
     _require_keys(db, paid, store, env)
     plan = plan_data(raw, root, offline=offline)
     stamp = format_instant(when)
@@ -639,7 +831,8 @@ def render_new(
             raise failure("E_JOB_STATE", "A render already holds this job.", "Wait for it, or retry the job id.")
         try:
             spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp)
-            digest = _produce(script, timeline, root, output, spoken.pieces)
+            digest = _produce(script, timeline, root, output, spoken)
+            _write_manifest(output, _manifest(job_id, output, script, spoken, plan, offline))
             begin(db)
             _remember_assets(db, script, root)
             if not mark_rendered(db, job_id, stamp, digest):
@@ -675,7 +868,7 @@ def render_again(
     root = Path(row.script_dir)
     script, timeline, _taken = studied(stored, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
-    paid = paid_steps(timeline)
+    paid = paid_steps(timeline, root)
     _require_keys(db, paid, store, env)
     plan = plan_data(stored, root, offline=offline)
     stamp = format_instant(when)
@@ -709,7 +902,8 @@ def render_again(
         try:
             output = Path(row.output_path)
             spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp)
-            digest = _produce(script, timeline, root, output, spoken.pieces)
+            digest = _produce(script, timeline, root, output, spoken)
+            _write_manifest(output, _manifest(job_id, output, script, spoken, plan, offline))
             begin(db)
             _remember_assets(db, script, root)
             if not mark_rendered(db, job_id, stamp, digest):
@@ -724,6 +918,15 @@ def render_again(
         hold.close()
     begin(db)
     return _rendered(job_id, Path(row.output_path), timeline, spoken, plan, store)
+
+
+def _made_at(timeline: Timeline, index: int) -> bool:
+    made = [span for span in timeline.spans if isinstance(span.clip, GeneratedScene)]
+    if any(span.start <= index < span.end for span in made):
+        return True
+    edges = {edge for span in made for edge in (span.start, span.end)}
+    windows = [mark for mark in timeline.cuts if mark.at - mark.half <= index < mark.at - mark.half + mark.frames]
+    return any(mark.at in edges for mark in windows)
 
 
 def _samples(timeline: Timeline) -> tuple[tuple[str, int], ...]:
@@ -741,7 +944,7 @@ def _samples(timeline: Timeline) -> tuple[tuple[str, int], ...]:
             if not any(start <= mark.at < end for start, end in windows):
                 pass
             chosen.append((say("cut-", str(mark.at)), mark.at))
-    return tuple(chosen)
+    return tuple(item for item in chosen if not _made_at(timeline, item[1]))
 
 
 def _grab(video: str, index: int, dest: Path, counted: int, mode: EncodeMode) -> None:
@@ -1013,8 +1216,8 @@ def _estimate_line(span: Span, timeline: Timeline, item: Paid | None, cached: bo
     }
 
 
-def _owed(timeline: Timeline, store: Path) -> tuple[Paid, ...]:
-    return tuple(item for item in paid_steps(timeline) if _entry(store, item.key) is None)
+def _owed(paid: tuple[Paid, ...], store: Path) -> tuple[Paid, ...]:
+    return tuple(item for item in paid if _entry(store, item.key) is None)
 
 
 def plan_view(
@@ -1023,7 +1226,7 @@ def plan_view(
     plan = dict(plan_data(raw, root, offline=offline))
     script, timeline, _taken = studied(raw, root, require_files=False, offline=offline)
     store = cache_root(env, cache_flag, script, root)
-    plan["secretsNeeded"] = secrets_needed(_owed(timeline, store), env)
+    plan["secretsNeeded"] = secrets_needed(_owed(paid_steps(timeline, root), store), env)
     return {name: plan[name] for name in sorted(plan)}
 
 
@@ -1032,9 +1235,10 @@ def estimate_data(
 ) -> JsonObject:
     script, timeline, taken = studied(raw, root, require_files=False, offline=offline)
     store = cache_root(env, cache_flag, script, root)
-    owed = _owed(timeline, store)
+    every = paid_steps(timeline, root)
+    owed = _owed(every, store)
     waiting = {item.span.step for item in owed}
-    paid = {item.span.step: item for item in paid_steps(timeline)}
+    paid = {item.span.step: item for item in every}
     rows: list[Quote] = []
     lines: list[JsonObject] = []
     for span in timeline.spans:

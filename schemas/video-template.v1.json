@@ -27,7 +27,7 @@
     "scenes": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/scene" } },
     "endCard": { "$ref": "#/$defs/endCard" },
     "disclosure": {
-      "description": "The words that mark AI-generated scenes, such as: AI-generated scenes. Plain text, copied into the script.",
+      "description": "The words drawn on every frame of a generated scene, such as: AI-generated scenes. Plain text, copied into the script. A template that shows a generated_scene needs them.",
       "type": "string",
       "minLength": 1,
       "maxLength": 200
@@ -183,14 +183,15 @@
     },
     "lines": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/$defs/line" } },
     "shown": {
-      "description": "What a scene shows: a title card, a picture or a part of a video file, written as in a video script.",
+      "description": "What a scene shows: a title card, a picture, a part of a video file or a generated scene, written as in a video script.",
       "type": "object",
       "required": ["type"],
-      "properties": { "type": { "enum": ["title_card", "image", "video"] } },
+      "properties": { "type": { "enum": ["title_card", "image", "video", "generated_scene"] } },
       "allOf": [
         { "if": { "required": ["type"], "properties": { "type": { "const": "title_card" } } }, "then": { "$ref": "#/$defs/titleCard" } },
         { "if": { "required": ["type"], "properties": { "type": { "const": "image" } } }, "then": { "$ref": "#/$defs/image" } },
-        { "if": { "required": ["type"], "properties": { "type": { "const": "video" } } }, "then": { "$ref": "#/$defs/video" } }
+        { "if": { "required": ["type"], "properties": { "type": { "const": "video" } } }, "then": { "$ref": "#/$defs/video" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "generated_scene" } } }, "then": { "$ref": "#/$defs/generatedScene" } }
       ]
     },
     "titleCard": {
@@ -231,6 +232,36 @@
         "in": { "$ref": "#/$defs/startSeconds" },
         "out": { "$ref": "#/$defs/lengthSeconds" }
       }
+    },
+    "zoom": { "type": "object", "additionalProperties": false, "required": ["from", "to"], "properties": { "from": { "type": "number", "minimum": 1, "maximum": 4 }, "to": { "type": "number", "minimum": 1, "maximum": 4 } } },
+    "generatedScene": {
+      "description": "A scene made by a provider from a prompt, paid for with the owner's key. Every frame of it carries the disclosure text. When the provider is not called (--offline), the fallback is shown for the same time.",
+      "additionalProperties": false,
+      "required": ["provider", "model", "prompt", "duration", "fallback"],
+      "properties": {
+        "type": true,
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+        "model": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "prompt": { "$ref": "#/$defs/text" },
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "resolution": { "description": "A size the provider names, such as 720p or 1k.", "type": "string", "pattern": "^[0-9]{1,4}[kp]$" },
+        "aspect_ratio": { "description": "The shape of the scene, such as 16:9 or 9:16.", "type": "string", "pattern": "^[0-9.]{1,4}:[0-9.]{1,4}$" },
+        "seed": { "description": "Only for a provider that takes a seed.", "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "image": { "description": "A reference picture sent to the provider. Its hash is part of the step key.", "$ref": "#/$defs/pathOrSlot" },
+        "kenburns": { "description": "A slow zoom over a generated still picture.", "$ref": "#/$defs/zoom" },
+        "fallback": { "$ref": "#/$defs/sceneFallback" }
+      }
+    },
+    "sceneFallback": {
+      "description": "Shown instead of a generated scene, for the duration of that scene: a title card, a picture or a part of a video file.",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "enum": ["title_card", "image", "video"] } },
+      "allOf": [
+        { "if": { "required": ["type"], "properties": { "type": { "const": "title_card" } } }, "then": { "additionalProperties": false, "required": ["text"], "properties": { "type": true, "text": { "$ref": "#/$defs/text" }, "subtitle": { "$ref": "#/$defs/text" } } } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "image" } } }, "then": { "additionalProperties": false, "required": ["path"], "properties": { "type": true, "path": { "$ref": "#/$defs/pathOrSlot" }, "kenburns": { "$ref": "#/$defs/zoom" } } } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "video" } } }, "then": { "additionalProperties": false, "required": ["path"], "properties": { "type": true, "path": { "$ref": "#/$defs/pathOrSlot" }, "in": { "$ref": "#/$defs/startSeconds" } } } }
+      ]
     },
     "scene": {
       "type": "object",

@@ -204,5 +204,24 @@
   "cache-dir-outside-the-folder.yaml": {
     "keyword": "pattern",
     "at": "/cache/dir"
+  },
+  "generated-scene-without-disclosure.yaml": {
+    "rule": "generated-scenes-need-disclosure"
+  },
+  "generated-scene-without-fallback.yaml": {
+    "keyword": "required",
+    "at": "/tracks/0/clips/0"
+  },
+  "generated-scene-with-a-key.yaml": {
+    "keyword": "additionalProperties",
+    "at": "/tracks/0/clips/0"
+  },
+  "generated-scene-fallback-with-a-duration.yaml": {
+    "keyword": "additionalProperties",
+    "at": "/tracks/0/clips/0/fallback"
+  },
+  "generated-scene-fallback-of-another-kind.yaml": {
+    "keyword": "enum",
+    "at": "/tracks/0/clips/0/fallback/type"
   }
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from ambitious_video.domain.types import PaidClip
+from ambitious_video.domain.types import PaidClip, Speech
 
 SIX = Decimal("0.000001")
 UNITS = frozenset({"character", "second", "image", "frame"})
@@ -32,8 +32,12 @@ class Quote:
         return self.price is not None
 
 
-def paid_units(clip: PaidClip) -> Decimal:
-    return Decimal(len(clip.text))
+def paid_units(clip: PaidClip, unit: str) -> Decimal:
+    if isinstance(clip, Speech):
+        return Decimal(len(clip.text))
+    if unit == "second":
+        return Decimal(str(clip.duration))
+    return Decimal(1)
 
 
 def money_text(value: Decimal) -> str:

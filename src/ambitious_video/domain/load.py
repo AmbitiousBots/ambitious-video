@@ -5,9 +5,12 @@ from collections.abc import Mapping
 from decimal import Decimal
 
 from ambitious_video.domain.types import (
+    ASPECT_RATIO_PATTERN,
     HEX_COLOR_PATTERN,
+    MAX_SEED,
     MODEL_ID_PATTERN,
     PROVIDER_ID_PATTERN,
+    RESOLUTION_PATTERN,
     SCHEMA_VERSION,
     TEMPLATE_ID_PATTERN,
     TEMPLATE_VERSION,
@@ -22,12 +25,14 @@ from ambitious_video.domain.types import (
     ClipTrack,
     Cut,
     EncodeMode,
+    GeneratedScene,
     HexColor,
     ImageClip,
     KenBurns,
     Output,
     RelativePath,
     RuleProblem,
+    SceneFallback,
     SchemaProblem,
     ScreenRecording,
     Script,
@@ -53,7 +58,37 @@ COLOR = re.compile(HEX_COLOR_PATTERN)
 PROVIDER = re.compile(PROVIDER_ID_PATTERN)
 MODEL = re.compile(MODEL_ID_PATTERN)
 TEMPLATE = re.compile(TEMPLATE_ID_PATTERN)
-CLIP_TYPES = ("title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio")
+RESOLUTION = re.compile(RESOLUTION_PATTERN)
+ASPECT_RATIO = re.compile(ASPECT_RATIO_PATTERN)
+CLIP_TYPES = (
+    "title_card",
+    "screen_recording",
+    "video",
+    "image",
+    "voiceover",
+    "speech",
+    "audio",
+    "generated_scene",
+)
+FALLBACK_KEYS = {
+    "title_card": {"type", "text", "subtitle"},
+    "image": {"type", "path", "kenburns"},
+    "video": {"type", "path", "in"},
+}
+FALLBACK_NEEDS = {"title_card": ("text",), "image": ("path",), "video": ("path",)}
+SCENE_KEYS = {
+    "type",
+    "provider",
+    "model",
+    "prompt",
+    "duration",
+    "resolution",
+    "aspect_ratio",
+    "seed",
+    "image",
+    "kenburns",
+    "fallback",
+}
 SPOKEN = frozenset({"voiceover", "speech"})
 MAX_TEXT = 2000
 MAX_PATH = 1024
@@ -275,6 +310,84 @@ def _action(bag: Bag, value: object, at: str) -> Action | None:
     return None if pixels is None else Scroll(int(pixels))
 
 
+def _kenburns(bag: Bag, value: object, at: str) -> KenBurns | None:
+    block = as_object(bag, value, at)
+    if block is None:
+        return None
+    only_keys(bag, block, {"from", "to"}, at)
+    if not need(bag, block, ("from", "to"), at):
+        return None
+    zoom_from = as_number(bag, block["from"], say(at, "/from"), low=1, high=4)
+    zoom_to = as_number(bag, block["to"], say(at, "/to"), low=1, high=4)
+    if zoom_from is None or zoom_to is None:
+        return None
+    return KenBurns(zoom_from, zoom_to)
+
+
+def _scene_fallback(bag: Bag, value: object, at: str, duration: float) -> SceneFallback | None:
+    raw = as_object(bag, value, at)
+    if raw is None:
+        return None
+    kind = raw.get("type")
+    if not isinstance(kind, str) or kind not in FALLBACK_KEYS:
+        bag.schema(say(at, "/type"), "Use title_card, image or video.")
+        return None
+    before = len(bag.items)
+    only_keys(bag, raw, FALLBACK_KEYS[kind], at)
+    if not need(bag, raw, FALLBACK_NEEDS[kind], at):
+        return None
+    if kind == "title_card":
+        text = as_text(bag, raw["text"], say(at, "/text"))
+        subtitle = as_text(bag, raw["subtitle"], say(at, "/subtitle")) if "subtitle" in raw else None
+        if text is None or len(bag.items) != before:
+            return None
+        return TitleCard(duration, text, subtitle)
+    path = _path(bag, raw["path"], say(at, "/path"))
+    if kind == "image":
+        zoom = _kenburns(bag, raw["kenburns"], say(at, "/kenburns")) if "kenburns" in raw else None
+        if path is None or len(bag.items) != before:
+            return None
+        return ImageClip(path, duration, zoom)
+    start = as_number(bag, raw["in"], say(at, "/in"), low=0) if "in" in raw else None
+    if path is None or len(bag.items) != before:
+        return None
+    return VideoClip(path, start, (start or 0.0) + duration)
+
+
+def _generated(bag: Bag, raw: Mapping[str, object], at: str) -> GeneratedScene | None:
+    before = len(bag.items)
+    provider = as_text(bag, raw["provider"], say(at, "/provider"), pattern=PROVIDER, high=32)
+    model = as_text(bag, raw["model"], say(at, "/model"), pattern=MODEL, high=64)
+    prompt = as_text(bag, raw["prompt"], say(at, "/prompt"))
+    duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
+    resolution = None
+    if "resolution" in raw:
+        resolution = as_text(bag, raw["resolution"], say(at, "/resolution"), pattern=RESOLUTION, high=5)
+    aspect = None
+    if "aspect_ratio" in raw:
+        aspect = as_text(bag, raw["aspect_ratio"], say(at, "/aspect_ratio"), pattern=ASPECT_RATIO, high=9)
+    seed = as_number(bag, raw["seed"], say(at, "/seed"), whole=True, low=0, high=MAX_SEED) if "seed" in raw else None
+    image = _path(bag, raw["image"], say(at, "/image")) if "image" in raw else None
+    zoom = _kenburns(bag, raw["kenburns"], say(at, "/kenburns")) if "kenburns" in raw else None
+    if provider is None or model is None or prompt is None or duration is None:
+        return None
+    fallback = _scene_fallback(bag, raw["fallback"], say(at, "/fallback"), duration)
+    if fallback is None or len(bag.items) != before:
+        return None
+    return GeneratedScene(
+        duration,
+        prompt,
+        provider,
+        model,
+        resolution,
+        aspect,
+        None if seed is None else int(seed),
+        image,
+        zoom,
+        fallback,
+    )
+
+
 def as_clip(bag: Bag, value: object, at: str) -> Clip | None:
     raw = as_object(bag, value, at)
     if raw is None:
@@ -297,6 +410,7 @@ def as_clip(bag: Bag, value: object, at: str) -> Clip | None:
         "voiceover": {"type", "at", "text", "duration"},
         "speech": {"type", "at", "text", "duration", "provider", "model", "voice"},
         "audio": {"type", "path", "at", "gain_db", "duck_under"},
+        "generated_scene": SCENE_KEYS,
     }[kind]
     required = {
         "title_card": ("duration", "text"),
@@ -306,10 +420,13 @@ def as_clip(bag: Bag, value: object, at: str) -> Clip | None:
         "voiceover": ("at", "text"),
         "speech": ("at", "text", "provider", "model", "voice"),
         "audio": ("path", "at"),
+        "generated_scene": ("provider", "model", "prompt", "duration", "fallback"),
     }[kind]
     only_keys(bag, raw, allowed, at)
     if not need(bag, raw, required, at):
         return None
+    if kind == "generated_scene":
+        return _generated(bag, raw, at)
     if kind == "title_card":
         duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
         text = as_text(bag, raw["text"], say(at, "/text"))
@@ -431,6 +548,13 @@ def _cut(bag: Bag, value: object, at: str) -> Cut | None:
 
 
 def _rules(bag: Bag, script: Script) -> None:
+    every = [clip for track in script.tracks if isinstance(track, ClipTrack) for clip in track.clips]
+    if script.disclosure is None and any(isinstance(clip, GeneratedScene) for clip in every):
+        bag.rule(
+            "generated-scenes-need-disclosure",
+            "",
+            "A generated scene needs disclosure text.",
+        )
     ids = [track.id for track in script.tracks]
     if len(set(ids)) != len(ids):
         bag.rule("track-ids-unique", "/tracks", "Two tracks use the same id.")

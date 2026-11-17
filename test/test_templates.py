@@ -469,7 +469,7 @@ TEMPLATE_PROBLEMS = [
     ([*SECOND_SHOW, "path"], "{{mark}}", "/scenes/1/show/path", "Slot mark has the wrong type.", False),
     ([*SECOND_SHOW, "path"], "clips/{{clip}}", "/scenes/1/show/path", "Use one whole slot or a plain value.", False),
     ([*SECOND_SHOW, "out"], None, "/scenes/1/show", "Field out is required.", True),
-    ([*SECOND_SHOW, "type"], "screen_recording", "/scenes/1/show/type", "Use title_card, image or video.", True),
+    ([*SECOND_SHOW, "type"], "screen_recording", "/scenes/1/show/type", "A scene cannot show this type.", True),
     (["scenes", 1, "id"], "hello", "/scenes", "Two scenes use the same id.", False),
     (["scenes", 0, "cut", "transition"], "wipe", "/scenes/0/cut/transition", "The transition must be crossfade.", True),
     (["scenes", 0, "say", 0, "words"], "x", "/scenes/0/say/0/words", "This field is not allowed.", True),
