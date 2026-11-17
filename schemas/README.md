@@ -1,11 +1,11 @@
 # Schemas
 
-`video-script.v1.json` is the JSON Schema (draft 2020-12) for a video script: the YAML or JSON document that describes a video as data. `examples/minimal.yaml` and `examples/all-clip-types.yaml` are two such documents, and each folder under `examples/samples/` holds one more.
+`video-script.v1.json` is the JSON Schema (draft 2020-12) for a video script: the YAML or JSON document that describes a video as data. `examples/minimal.yaml`, `examples/titles-and-captions.yaml` and `examples/all-clip-types.yaml` are such documents, and each folder under `examples/samples/` holds one more. `titles-and-captions.yaml` is the one to copy first: it needs no media files and no key, and the `guide` command prints it.
 
 ```yaml
 schemaVersion: 1
-output: { path: out/demo.mp4, width: 1920, height: 1080, fps: 30 }
-brand: { font: Inter, colors: { bg: "#0B0B0B", fg: "#FFFFFF", accent: "#3B82F6" }, logo: assets/logo.png }
+output: { path: out/demo.mp4, width: 1920, height: 1080, fps: 30, encode: web }
+brand: { font: assets/font.ttf, colors: { bg: "#0B0B0B", fg: "#FFFFFF", accent: "#3B82F6" }, logo: assets/logo.png }
 voice: { provider: xai, voice: default }
 cache: { dir: .video-cache }
 tracks:
@@ -26,11 +26,11 @@ cuts: [{ at: 11.0, transition: crossfade, duration: 0.4 }]
 
 ## What the schema says
 
-- **`output`**: where the video is written, its size in pixels (even numbers, as common video encoders need) and its frames per second.
-- **`brand`** (optional): a font, three colors as `#RRGGBB`, and a logo file. Nothing about a business is built in: without `brand.colors`, title cards are drawn in neutral colors (background `#111111`, text `#FFFFFF`, accent `#336699`), text is set in the drawing library's built-in font, and no logo is shown.
-- **`voice`** (optional): the provider and voice that speak `voiceover` clips. Speaking needs the provider's key in the environment when the video is rendered; a key never goes in a script, and the schema rejects one. Without `voice`, nothing is spoken and no key is needed; `voiceover` clips still give captions their words and timing.
+- **`output`**: where the video is written, its size in pixels (even numbers, as common video encoders need) and its frames per second. `encode` (optional) is `web` or `lossless`. `web`, the default, is H.264 with `yuv420p` pixels, which browsers and common players show. `lossless` is exact RGB, for comparing a video pixel by pixel; many browsers cannot show it.
+- **`brand`** (optional): a font file, three colors as `#RRGGBB`, and a logo file. Nothing about a business is built in: without `brand.colors`, title cards are drawn in neutral colors (background `#111111`, text `#FFFFFF`, accent `#336699`), text is set in the drawing library's built-in font, and no logo is shown. `font` must be the path of a font file, such as `fonts/name.ttf`. A font name such as `Sans` is not enough, because fonts installed on one computer are not on another and are never searched.
+- **`voice`** (optional): the provider and voice that speak `voiceover` clips. Speaking needs the provider's key in the environment when the video is rendered; a key never goes in a script, and the schema rejects one. Without `voice`, nothing is spoken and no key is needed; `voiceover` clips still give captions their words and timing. Leave `voice` unset unless spoken voiceover is wanted and the key is set.
 - **`cache`** (optional): `cache: { dir: <folder> }` names the folder, below the script's folder, where results of paid steps are kept so that the same step is not paid for twice. Without it the cache is `$AMBITIOUS_HOME/video/cache`; `--cache <dir>` on the command line overrides both. It does not change the plan or any step key.
-- **`tracks`**: each track has an `id` and either `clips` or `from`. A track with `from: <track id>` shows captions made from the `voiceover` clips of that track.
+- **`tracks`**: each track has an `id` and either `clips` or `from`. A track with `from: <track id>` draws captions from the `voiceover` clips of that track: each clip is shown during its own time, and a clip with more than one sentence shows one sentence at a time, each for a share of the clip that matches its length in characters. A sentence ends at `.`, `!` or `?` followed by a space. A script with no `from` track draws no captions.
 - **Clips.** Six types. An unknown `type` is rejected.
 
   | `type` | Needs | May have |
@@ -58,7 +58,7 @@ JSON Schema cannot compare one part of a document with another. These rules are 
 | `duck-under-another-track` | `duck_under` names a track in the script other than the clip's own. |
 | `video-out-after-in` | A `video` clip's `out` is later than its `in`. |
 
-Rules that need the media files or the computed timeline (clips on a track do not overlap, every `at`, `in` and `out` falls inside its media, every cut falls inside the video) belong to the `validate` command and are not checked here.
+Rules that need the media files or the computed timeline (clips on a track do not overlap, every `at`, `in` and `out` falls inside its media, every cut falls inside the video, `brand.font` is a readable font file below the script's folder) belong to the `validate` command and are not checked here.
 
 ## Examples
 
@@ -72,6 +72,6 @@ Rules that need the media files or the computed timeline (clips on a track do no
 python3 scripts/check_schemas.py
 ```
 
-The script itself uses only the Python standard library. On first run it creates `.venv/` and installs the two packages it checks with, `jsonschema` and `PyYAML`, from `scripts/dev-requirements.txt`, where every file is pinned by SHA-256 (`scripts/dev-requirements.in` lists the two versions; `uv pip compile --generate-hashes --universal` writes the pinned file). It needs Python 3.13 or newer and starts itself again with the Python pinned in `.mise.toml` when it is run by an older one. It also checks that the schema, the model in `spec/` and `src/ambitious_video/domain/types.py` name the same clip types, actions, transitions, providers, patterns, rules, job states and moves. It ends with `check_schemas: ok`.
+The script itself uses only the Python standard library. On first run it creates `.venv/` and installs the two packages it checks with, `jsonschema` and `PyYAML`, from `scripts/dev-requirements.txt`, where every file is pinned by SHA-256 (`scripts/dev-requirements.in` lists the two versions; `uv pip compile --generate-hashes --universal` writes the pinned file). It needs Python 3.13 or newer and starts itself again with the Python pinned in `.mise.toml` when it is run by an older one. It also checks that the schema, the model in `spec/` and `src/ambitious_video/domain/types.py` name the same clip types, actions, transitions, providers, output encodings, patterns, rules, job states and moves. It ends with `check_schemas: ok`.
 
 A change that makes a valid script invalid belongs in a new schema file with a new version number.

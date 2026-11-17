@@ -108,6 +108,32 @@ def inspect(path: str) -> tuple[int, int, float, bool]:
     return width, height, duration, audio
 
 
+def stored_as(path: str) -> tuple[str, str]:
+    result = _run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name,pix_fmt",
+            "-of",
+            "json",
+            path,
+        ]
+    )
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        raise NeedTool("ffprobe")
+    payload = json.loads(result.stdout)
+    streams = payload.get("streams") if isinstance(payload, dict) else None
+    first = streams[0] if isinstance(streams, list) and streams else None
+    if not isinstance(first, dict):
+        return "", ""
+    return str(first.get("codec_name", "")), str(first.get("pix_fmt", ""))
+
+
 def decode_pcm(path: str) -> bytes:
     try:
         result = subprocess.run(

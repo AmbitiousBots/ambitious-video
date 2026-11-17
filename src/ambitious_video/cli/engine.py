@@ -34,7 +34,7 @@ from ambitious_video.db.store import (
 )
 from ambitious_video.db.tx import begin, commit
 from ambitious_video.domain.clips import kind_of
-from ambitious_video.domain.load import load_script, say
+from ambitious_video.domain.load import RELATIVE, load_script, say
 from ambitious_video.domain.money import Quote, money_text, quotes, total_usd, units_text
 from ambitious_video.domain.need import NeedTool
 from ambitious_video.domain.plan import (
@@ -53,6 +53,7 @@ from ambitious_video.domain.types import (
     AudioClip,
     CaptionsTrack,
     Clip,
+    EncodeMode,
     ImageClip,
     Script,
     ScriptProblem,
@@ -63,11 +64,13 @@ from ambitious_video.domain.types import (
     idem_key,
 )
 from ambitious_video.media.audio import Piece, write_wav
-from ambitious_video.media.film import canvas_for, encode, frame_at, prepare
-from ambitious_video.media.probe import duration_of, inspect
+from ambitious_video.media.film import STORED_AS, TO_RGB, canvas_for, encode, frame_at, matches, prepare
+from ambitious_video.media.probe import duration_of, inspect, stored_as
 from ambitious_video.steps import compile_clip
+from ambitious_video.steps.common import readable_font
 
 Speaker = Callable[[str, str, str], bytes]
+FONT_INPUT = "brand.font"
 
 
 def as_json(value: object) -> JsonValue:
@@ -130,6 +133,29 @@ def media_map(script: Script, root: Path) -> dict[str, float | None]:
     return found
 
 
+def font_faults(script: Script, root: Path) -> tuple[Fault, ...]:
+    font = None if script.brand is None else script.brand.font
+    if font is None:
+        return ()
+    at = "/brand/font"
+    if RELATIVE.fullmatch(font) is None:
+        inside = say("brand.font must be a font file ", "in the folder that holds the script.")
+        return (Fault("E_MEDIA", at, inside),)
+    full = _checked(root, font)
+    if not full.is_file():
+        missing = say(
+            "The font file is missing. ",
+            "brand.font must be the path ",
+            "of a font file, such as fonts/name.ttf, ",
+            "not the name of a font.",
+        )
+        return (Fault("E_MEDIA", at, missing),)
+    if not readable_font(str(full)):
+        unread = say("The font file cannot be read as a font. ", "Use a TrueType or OpenType file.")
+        return (Fault("E_MEDIA", at, unread),)
+    return ()
+
+
 def study(raw: object, root: Path, *, require_files: bool) -> tuple[Script, Timeline]:
     script, problems = load_script(raw)
     faults = _faults_of(problems)
@@ -138,8 +164,9 @@ def study(raw: object, root: Path, *, require_files: bool) -> tuple[Script, Time
         raise failure("E_INPUT_SCHEMA", "The script is not valid.", "Fix the script field in data.problems.")
     media = media_map(script, root) if require_files else None
     timeline = timeline_for(script, media, require_files=require_files)
-    if timeline.faults:
-        raise_faults(timeline.faults, seconds_json(timeline.total, timeline.fps))
+    found = (*font_faults(script, root), *timeline.faults) if require_files else timeline.faults
+    if found:
+        raise_faults(found, seconds_json(timeline.total, timeline.fps))
     return script, timeline
 
 
@@ -155,6 +182,10 @@ def _hashes(script: Script, root: Path) -> dict[str, str | None]:
     for path, _kind in asset_paths(script):
         full = _checked(root, path)
         found[path] = file_sha(full) if full.is_file() else None
+    font = None if script.brand is None else script.brand.font
+    if font is not None:
+        named = _checked(root, font) if RELATIVE.fullmatch(font) is not None else None
+        found[FONT_INPUT] = file_sha(named) if named is not None and named.is_file() else None
     return found
 
 
@@ -178,6 +209,7 @@ def _output_spec(script: Script, timeline: Timeline, hashes: Mapping[str, str | 
         "height": timeline.height,
         "fps": timeline.fps,
         "frames": timeline.total,
+        "encode": script.output.encode,
         "font": None if brand is None else brand.font,
         "colors": colors,
         "cuts": [{"atFrame": mark.at, "frames": mark.frames} for mark in timeline.cuts],
@@ -192,7 +224,10 @@ def _output_spec(script: Script, timeline: Timeline, hashes: Mapping[str, str | 
     logo: tuple[str | None, ...] = ()
     if brand is not None and brand.logo is not None:
         logo = (hashes.get(brand.logo),)
-    return StepSpec("render", LOCAL, None, LOCAL_VERSION, params, None, (*logo, *keys))
+    font: tuple[str | None, ...] = ()
+    if brand is not None and brand.font is not None:
+        font = (hashes.get(FONT_INPUT),)
+    return StepSpec("render", LOCAL, None, LOCAL_VERSION, params, None, (*logo, *font, *keys))
 
 
 def cache_root(env: Mapping[str, str], flag: Path | None, script: Script | None, root: Path) -> Path:
@@ -415,7 +450,7 @@ def _produce(script: Script, timeline: Timeline, root: Path, dest: Path, pieces:
         canvas = canvas_for(timeline, root)
         prepare(timeline, canvas, work, root)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        encode(timeline, canvas, wav, partial)
+        encode(timeline, canvas, wav, partial, script.output.encode)
         os.replace(partial, dest)
         return file_sha(dest)
     finally:
@@ -580,9 +615,10 @@ def _samples(timeline: Timeline) -> tuple[tuple[str, int], ...]:
     return tuple(chosen)
 
 
-def _grab(video: str, index: int, dest: Path) -> None:
+def _grab(video: str, index: int, dest: Path, mode: EncodeMode) -> None:
     import subprocess
 
+    picked = "select=eq(n\\," + str(index) + ")"
     result = subprocess.run(
         [
             "ffmpeg",
@@ -593,7 +629,7 @@ def _grab(video: str, index: int, dest: Path) -> None:
             "-i",
             video,
             "-vf",
-            "select=eq(n\\," + str(index) + ")",
+            picked if mode == "lossless" else picked + "," + TO_RGB,
             "-vframes",
             "1",
             str(dest),
@@ -625,17 +661,17 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
         checks.append({"name": "duration", "ok": abs(duration - expected) <= 0.05})
         checks.append({"name": "resolution", "ok": width == row.width and height == row.height})
         checks.append({"name": "audio", "ok": audio})
+        mode = script.output.encode
+        checks.append({"name": "encoding", "ok": stored_as(str(output)) == STORED_AS[mode]})
         work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
         try:
             canvas = canvas_for(timeline, Path(row.script_dir))
             prepare(timeline, canvas, work, Path(row.script_dir))
             for name, index in _samples(timeline):
-                painted = frame_at(timeline, index, canvas).tobytes()
+                painted = frame_at(timeline, index, canvas)
                 shot = work / (name + ".png")
-                _grab(str(output), index, shot)
-                from ambitious_video.media.film import pixels
-
-                checks.append({"name": name, "ok": pixels(shot) == painted})
+                _grab(str(output), index, shot, mode)
+                checks.append({"name": name, "ok": matches(painted, shot, mode)})
         finally:
             shutil.rmtree(work, ignore_errors=True)
     passed = all(item.get("ok") is True for item in checks)
@@ -683,6 +719,13 @@ def plan_data(raw: object, root: Path) -> JsonObject:
             "fps": out.fps,
             "stepKey": step_key(_output_spec(script, timeline, hashes, keys)),
         },
+        "captions": as_json(
+            [
+                {"track": item.track, "atFrame": item.start, "frames": item.frames, "text": item.text}
+                for item in timeline.captions
+            ]
+        ),
+        "encode": out.encode,
     }
     plan["planSha256"] = plan_sha(plan)
     return {name: sorted_json(plan[name]) for name in sorted(plan)}

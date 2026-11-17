@@ -75,4 +75,36 @@ for line in open(sys.argv[1], encoding="utf-8"):
 print(sys.argv[2], body["data"]["durationSec"], len(body["data"]["steps"]), "steps")
 PY
 done
+
+echo "== help, version, guide: the printed example renders and verifies =="
+"$PY" dist/ambitious-video.pyz --help --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/help.json"
+"$PY" dist/ambitious-video.pyz --version --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/version.json"
+"$PY" dist/ambitious-video.pyz guide --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/guide.json"
+"$PY" - "$WORK" examples/titles-and-captions.yaml <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+for name in ("help", "version", "guide"):
+    body = json.loads((work / f"{name}.json").read_text(encoding="utf-8"))
+    if not body["ok"] or body["command"] != name:
+        raise SystemExit(body)
+if json.loads((work / "version.json").read_text(encoding="utf-8"))["data"]["version"] != "0.1.0":
+    raise SystemExit("--version did not report 0.1.0")
+script = json.loads((work / "guide.json").read_text(encoding="utf-8"))["data"]["example"]["script"]
+if script != Path(sys.argv[2]).read_text(encoding="utf-8"):
+    raise SystemExit("guide does not print examples/titles-and-captions.yaml")
+(work / "guide").mkdir()
+(work / "guide" / "video.yaml").write_text(script, encoding="utf-8")
+PY
+"$PY" dist/ambitious-video.pyz validate --in "$WORK/guide/video.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null
+"$PY" dist/ambitious-video.pyz render --in "$WORK/guide/video.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/guide-render.json"
+"$PY" - "$WORK/guide-render.json" "$WORK/guide-job.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], encoding="utf-8"))
+if not body["ok"] or body["data"]["costUsd"] != "0.000000":
+    raise SystemExit(body)
+json.dump({"jobId": body["data"]["jobId"]}, open(sys.argv[2], "w", encoding="utf-8"))
+print(body["data"]["jobId"], body["data"]["durationSec"], body["data"]["costUsd"])
+PY
+"$PY" dist/ambitious-video.pyz verify --in "$WORK/guide-job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null
 echo "verify/run: ok"

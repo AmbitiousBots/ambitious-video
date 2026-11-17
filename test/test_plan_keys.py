@@ -148,6 +148,22 @@ def test_changed_picture_changes_only_downstream_step_keys(name: str, tmp_path: 
     assert before["planSha256"] != after["planSha256"]
 
 
+def test_encoding_and_font_file_change_only_the_output_key(tmp_path: Path) -> None:
+    script, folder = _copy("minimal", tmp_path)
+    (folder / "font.ttf").write_bytes(b"first font bytes")
+    script["brand"] = {"font": "font.ttf"}
+    before = _plan(script, folder)
+    output = script["output"]
+    assert isinstance(output, dict)
+    output["encode"] = "lossless"
+    stored = _plan(script, folder)
+    (folder / "font.ttf").write_bytes(b"other font bytes")
+    drawn = _plan(script, folder)
+    assert _keys(before) == _keys(stored) == _keys(drawn)
+    assert before["encode"] == "web" and stored["encode"] == "lossless"
+    assert len({canonical(plan["output"]) for plan in (before, stored, drawn)}) == 3
+
+
 def test_paid_step_key_names_the_content_not_the_job_or_the_place() -> None:
     def speech_keys(script: dict[str, object], folder: Path) -> dict[str, str]:
         steps = _plan(script, folder)["steps"]

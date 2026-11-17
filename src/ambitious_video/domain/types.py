@@ -25,6 +25,7 @@ ClipType = Literal["title_card", "screen_recording", "video", "image", "voiceove
 ActionKind = Literal["click", "wait", "scroll"]
 Transition = Literal["crossfade"]
 VoiceProvider = Literal["xai"]
+EncodeMode = Literal["web", "lossless"]
 
 ScriptRule = Literal[
     "track-ids-unique",
@@ -80,6 +81,7 @@ class Output:
     width: int
     height: int
     fps: int
+    encode: EncodeMode
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,10 +17,10 @@ from ambitious_kit.db.sqlite import load_migrations
 from ambitious_kit.domain.envelope import JsonObject, failure
 
 from ambitious_video.ai.speech import SpeechError
-from ambitious_video.cli import engine
+from ambitious_video.cli import engine, guide
 from ambitious_video.db.store import count_jobs
 from ambitious_video.domain.need import NeedTool
-from ambitious_video.install.tools import tool_report
+from ambitious_video.install.tools import tool_report, tool_warnings
 
 VERSION = "0.1.0"
 SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
@@ -148,7 +148,7 @@ def _guard(action: Callable[[], JsonObject]) -> JsonObject:
 
 
 def validate(context: Context[object]) -> JsonObject:
-    return engine.validate_data(context.input, SCRIPT_DIR.get())
+    return _guard(lambda: engine.validate_data(context.input, SCRIPT_DIR.get()))
 
 
 def plan(context: Context[object]) -> JsonObject:
@@ -212,6 +212,26 @@ def cache_prune(context: DbContext[None]) -> JsonObject:
     return engine.cache_prune(context.db, CACHE_DIR.get(), int(asked), context.now)
 
 
+def show_guide(_context: Context[None]) -> JsonObject:
+    return guide.guide_data()
+
+
+def show_help(_context: Context[None]) -> JsonObject:
+    return guide.help_data(VERSION)
+
+
+def show_version(_context: Context[None]) -> JsonObject:
+    return guide.version_data(VERSION)
+
+
+def _with_tools(data: JsonObject) -> JsonObject:
+    merged = dict(data)
+    report = tool_report()
+    merged["tools"] = report
+    merged["warnings"] = tool_warnings(report)
+    return merged
+
+
 class _Selfcheck(Protocol):
     def __call__(self, *, module: str, db_path: str, binary_path: str, migrations: object) -> JsonObject: ...
 
@@ -223,12 +243,8 @@ def _patched_selfcheck(original: _Selfcheck) -> _Selfcheck:
         try:
             data = original(module=module, db_path=db_path, binary_path=binary_path, migrations=migrations)
         except Failure as error:
-            merged = dict(error.data)
-            merged["tools"] = tool_report()
-            raise Failure(error.errors, merged) from None
-        merged = dict(data)
-        merged["tools"] = tool_report()
-        return merged
+            raise Failure(error.errors, _with_tools(error.data)) from None
+        return _with_tools(data)
 
     return wrapped
 
@@ -239,7 +255,7 @@ def main() -> int:
     runner.json.loads = _loads  # type: ignore[attr-defined] # YAML scripts use the JSON loader
     runner.selfcheck = _patched_selfcheck(runner.selfcheck)  # type: ignore[attr-defined,arg-type] # tools sit beside the kit report
     original = sys.argv
-    kept, own = _own_flags(sys.argv[1:])
+    kept, own = _own_flags(guide.builtin_command(sys.argv[1:]))
     token = SCRIPT_DIR.set(_directory(kept))
     chosen = own.get("--cache")
     cache_token = CACHE_DIR.set(None if chosen is None else Path(chosen))
@@ -262,6 +278,9 @@ def main() -> int:
                     "ledger": read_command(ledger, no_input),
                     "cache list": read_command(cache_list, no_input),
                     "cache prune": write_command(cache_prune, no_input),
+                    "guide": pure_command(show_guide, no_input),
+                    "help": pure_command(show_help, no_input),
+                    "version": pure_command(show_version, no_input),
                 },
             )
         )

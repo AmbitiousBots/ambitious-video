@@ -36,14 +36,24 @@
         "path": { "$ref": "#/$defs/relativePath" },
         "width": { "type": "integer", "minimum": 16, "maximum": 7680, "multipleOf": 2 },
         "height": { "type": "integer", "minimum": 16, "maximum": 4320, "multipleOf": 2 },
-        "fps": { "type": "integer", "minimum": 1, "maximum": 120 }
+        "fps": { "type": "integer", "minimum": 1, "maximum": 120 },
+        "encode": {
+          "description": "How the video is stored. web (the default) is H.264 with yuv420p pixels, which browsers and common players show. lossless is exact RGB, for comparing a video pixel by pixel.",
+          "enum": ["web", "lossless"],
+          "default": "web"
+        }
       }
     },
     "brand": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "font": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "font": {
+          "description": "The path of a font file below the folder that holds the script, such as fonts/name.ttf. The validate command rejects a font name, a path outside that folder, and a file that is not a font.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
         "colors": {
           "type": "object",
           "additionalProperties": false,

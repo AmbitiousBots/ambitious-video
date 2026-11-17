@@ -34,7 +34,7 @@ EXAMPLES = REPO / "examples"
 INVALID = EXAMPLES / "invalid"
 EXPECTED = INVALID / "EXPECTED.json"
 MODEL = REPO / "spec" / "RenderJob.tla"
-REQUIRED_EXAMPLES = ("minimal.yaml", "all-clip-types.yaml")
+REQUIRED_EXAMPLES = ("minimal.yaml", "all-clip-types.yaml", "titles-and-captions.yaml")
 SAMPLES = EXAMPLES / "samples"
 REQUIRED_SAMPLES = ("example-accounting", "example-bookshop", "example-fitness", "example-plumbing")
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
@@ -164,6 +164,7 @@ def schema_matches_types(schema: Document, types: ModuleType) -> list[str]:
     same("recording actions", list(defs["action"]["properties"]), members(types.ActionKind))
     same("cut transitions", defs["cut"]["properties"]["transition"]["enum"], members(types.Transition))
     same("voice providers", defs["voice"]["properties"]["provider"]["enum"], members(types.VoiceProvider))
+    same("output encodings", defs["output"]["properties"]["encode"]["enum"], members(types.EncodeMode))
     same("pattern of a track id", defs["trackId"]["pattern"], types.TRACK_ID_PATTERN)
     same("pattern of a color", defs["hexColor"]["pattern"], types.HEX_COLOR_PATTERN)
     same("schema version", schema["properties"]["schemaVersion"]["const"], types.SCHEMA_VERSION)
@@ -320,7 +321,7 @@ def main() -> None:
         f"python {sys.version.split()[0]}, jsonschema {version('jsonschema')}, PyYAML {version('PyYAML')}",
         "ok  schemas/video-script.v1.json is a valid JSON Schema (draft 2020-12)",
         "ok  the schema and src/ambitious_video/domain/types.py agree on clip types, actions, transitions, "
-        "providers, patterns and rules",
+        "providers, output encodings, patterns and rules",
         "ok  the job states and moves in spec/RenderJob.tla and types.py agree",
         f"ok  {valid} examples accepted, and together they use every clip type",
         f"ok  {samples} sample projects accepted, each with the brand its brand.yaml names",
