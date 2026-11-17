@@ -10,6 +10,12 @@
     "a voice script without a key fails with E_NO_KEY",
     "jobs and ledger read the database without changing it",
     "the four fictional sample projects validate and plan with no key",
-    "a name scan keeps company names out of src, schemas, templates and examples"
+    "a name scan keeps company names out of src, schemas, templates and examples",
+    "guide prints a short example script that validates and renders with no key and no media files",
+    "--help and --version exit 0 with one envelope, and --version reports the version",
+    "selfcheck stays ok without Playwright and warns that only screen_recording needs it",
+    "the default video is H.264 yuv420p for browsers, and output.encode: lossless keeps exact RGB",
+    "brand.font is a font file next to the script, and a font name is refused",
+    "captions are drawn only by a from track, one voiceover segment at a time"
   ]
 }
