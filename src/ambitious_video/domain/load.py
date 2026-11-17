@@ -15,6 +15,7 @@ from ambitious_video.domain.types import (
     Clip,
     ClipTrack,
     Cut,
+    EncodeMode,
     HexColor,
     ImageClip,
     KenBurns,
@@ -158,16 +159,24 @@ def _output(bag: _Bag, value: object) -> Output | None:
     raw = _object(bag, value, "/output")
     if raw is None:
         return None
-    _keys(bag, raw, {"path", "width", "height", "fps"}, "/output")
+    _keys(bag, raw, {"path", "width", "height", "fps", "encode"}, "/output")
     if not _need(bag, raw, ("path", "width", "height", "fps"), "/output"):
         return None
     path = _path(bag, raw.get("path"), "/output/path")
     width = _number(bag, raw.get("width"), "/output/width", whole=True, low=16, high=7680, multiple=2)
     height = _number(bag, raw.get("height"), "/output/height", whole=True, low=16, high=4320, multiple=2)
     fps = _number(bag, raw.get("fps"), "/output/fps", whole=True, low=1, high=120)
+    encode: EncodeMode = "web"
+    if "encode" in raw:
+        chosen = raw["encode"]
+        if chosen == "lossless":
+            encode = "lossless"
+        elif chosen != "web":
+            bag.schema("/output/encode", "encode must be web or lossless.")
+            return None
     if path is None or width is None or height is None or fps is None:
         return None
-    return Output(path, int(width), int(height), int(fps))
+    return Output(path, int(width), int(height), int(fps), encode)
 
 
 def _brand(bag: _Bag, value: object) -> Brand | None:

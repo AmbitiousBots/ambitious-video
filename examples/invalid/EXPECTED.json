@@ -123,6 +123,10 @@
     "keyword": "multipleOf",
     "at": "/output/width"
   },
+  "output-encode-unknown.yaml": {
+    "keyword": "enum",
+    "at": "/output/encode"
+  },
   "output-fps-zero.yaml": {
     "keyword": "minimum",
     "at": "/output/fps"

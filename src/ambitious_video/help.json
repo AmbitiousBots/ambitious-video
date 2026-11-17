@@ -1,0 +1,51 @@
+{
+  "help": {
+    "usage": "ambitious-video <command> [--in file] [--db path] [--now ISO8601] [--seed int] [--json]",
+    "summary": "Renders a video from a script written as YAML or JSON. Every command prints one JSON envelope on stdout and nothing else.",
+    "commands": [
+      { "name": "guide", "summary": "Print an example script to copy, and the steps to render it." },
+      { "name": "validate", "summary": "Check a script and the files it names. Reads a script." },
+      { "name": "plan", "summary": "List the steps, the captions and the assets of a script. Reads a script." },
+      { "name": "estimate", "summary": "Price a script without calling a provider. Reads a script." },
+      { "name": "render", "summary": "Render a script to a video file. Reads a script, or { \"jobId\": \"...\" } to retry a job." },
+      { "name": "verify", "summary": "Check the video of a rendered job. Reads { \"jobId\": \"...\" }." },
+      { "name": "jobs", "summary": "List the render jobs in the database." },
+      { "name": "ledger", "summary": "List the cost lines in the database." },
+      { "name": "selfcheck", "summary": "Report the runtime, the database and the tools, with warnings for a missing tool." },
+      { "name": "commands", "summary": "List every command with its access and whether it reads input." },
+      { "name": "help", "summary": "Print this help. The flag --help does the same." },
+      { "name": "version", "summary": "Print the version. The flag --version does the same." }
+    ],
+    "flags": [
+      { "flag": "--in file", "meaning": "Read the script or other input from this file instead of stdin." },
+      { "flag": "--db path", "meaning": "Use this SQLite file instead of $AMBITIOUS_HOME/video/video.sqlite." },
+      { "flag": "--now ISO8601", "meaning": "Use this time instead of the clock, for example 2026-01-01T00:00:00Z." },
+      { "flag": "--seed int", "meaning": "Use this seed for anything random, such as a job id." },
+      { "flag": "--json", "meaning": "Accepted for compatibility. Output is always JSON." },
+      { "flag": "--help", "meaning": "Print this help as envelope data and exit 0. -h does the same." },
+      { "flag": "--version", "meaning": "Print the version as envelope data and exit 0." }
+    ],
+    "start": "Run the guide command, save data.example.script to a file, then validate and render that file."
+  },
+  "guide": {
+    "example": {
+      "name": "titles-and-captions.yaml",
+      "repositoryPath": "examples/titles-and-captions.yaml",
+      "needs": "No media files and no API key."
+    },
+    "steps": [
+      "Save data.example.script as video.yaml in an empty folder.",
+      "ambitious-video validate --in video.yaml",
+      "ambitious-video estimate --in video.yaml",
+      "ambitious-video render --in video.yaml",
+      "Write { \"jobId\": \"<data.jobId from render>\" } to job.json, then: ambitious-video verify --in job.json"
+    ],
+    "notes": [
+      "Leave voice unset unless you want spoken voiceover and have set the provider key in the environment. Without voice, voiceover lines are captions only, nothing is spoken, and the estimate is 0.",
+      "Captions are drawn only by a track with from: <id of a track with voiceover clips>. Each voiceover clip is shown during its own time, one sentence at a time. A script with no such track draws no captions.",
+      "Paths in a script are relative to the folder that holds the script. The video is written to output.path in that folder.",
+      "brand.font must be the path of a font file next to the script, such as fonts/name.ttf. A font name is rejected, because fonts installed on one computer are not on another.",
+      "output.encode is web by default: H.264 with yuv420p pixels, which browsers play. Set output.encode: lossless for an exact RGB file whose bytes repeat for the same script."
+    ]
+  }
+}

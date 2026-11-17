@@ -1,0 +1,21 @@
+# Two title cards, captions and one crossfade.
+# This script needs no media files and no API key.
+#
+# Leave `voice` unset unless you want spoken voiceover and have set the
+# provider key in the environment. Without `voice`, each voiceover line is
+# shown as a caption and nothing is spoken.
+schemaVersion: 1
+output: { path: out/titles-and-captions.mp4, width: 1280, height: 720, fps: 30 }
+tracks:
+  - id: main
+    clips:
+      - { type: title_card, duration: 3.0, text: "Your title", subtitle: "A short line under the title" }
+      - { type: title_card, duration: 3.0, text: "Your closing line" }
+  - id: voice
+    clips:
+      - { type: voiceover, at: 0.5, duration: 2.0, text: "This line is shown as a caption." }
+      - { type: voiceover, at: 3.5, duration: 2.0, text: "Each line is shown only for its own time." }
+  - id: captions
+    from: voice
+cuts:
+  - { at: 3.0, transition: crossfade, duration: 0.5 }

@@ -25,7 +25,7 @@ node scripts/check-standalone.mjs
 bash spec/check.sh && python3 scripts/check_schemas.py
 ```
 
-`verify/run` renders `examples/minimal.yaml`, which needs no API key. Do not point a check at a paid speech call. `verify/run` removes `XAI_API_KEY` from the environment for that run.
+`verify/run` renders `examples/minimal.yaml` and the script that `guide` prints, which need no API key. Do not point a check at a paid speech call. `verify/run` removes `XAI_API_KEY` from the environment for that run.
 
 ## Secrets
 

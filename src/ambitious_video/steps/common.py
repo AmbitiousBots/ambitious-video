@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,6 +35,8 @@ class Canvas:
     step: int
     pictures: dict[str, PilImage]
     folders: dict[str, str]
+    font: str | None = None
+    fonts: dict[int, PilFont] = field(default_factory=dict)
 
 
 def rgb_of(text: str | None, default: tuple[int, int, int]) -> tuple[int, int, int]:
@@ -43,9 +45,30 @@ def rgb_of(text: str | None, default: tuple[int, int, int]) -> tuple[int, int, i
     return (int(text[1:3], 16), int(text[3:5], 16), int(text[5:7], 16))
 
 
-def font_for(size: int) -> PilFont:
+def load_font(path: str, size: int) -> PilFont:
     _image, _draw, image_font = pil()
-    return image_font.load_default(size=size)
+    return image_font.truetype(path, size, layout_engine=image_font.Layout.BASIC)
+
+
+def readable_font(path: str) -> bool:
+    try:
+        load_font(path, 16).getbbox("Ag")
+    except OSError:
+        return False
+    return True
+
+
+def font_for(canvas: Canvas, size: int) -> PilFont:
+    found = canvas.fonts.get(size)
+    if found is not None:
+        return found
+    if canvas.font is None:
+        _image, _draw, image_font = pil()
+        font = image_font.load_default(size=size)
+    else:
+        font = load_font(canvas.font, size)
+    canvas.fonts[size] = font
+    return font
 
 
 def open_image(canvas: Canvas, path: str) -> PilImage:

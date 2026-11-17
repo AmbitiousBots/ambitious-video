@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from ambitious_video.domain.captions import Caption, segments
 from ambitious_video.domain.clips import VISUAL, kind_of, placed_at
 from ambitious_video.domain.load import say
 from ambitious_video.domain.types import (
     AudioClip,
     Brand,
+    CaptionsTrack,
     Clip,
     ClipTrack,
     ImageClip,
@@ -74,6 +76,7 @@ class Timeline:
     visual_track: str | None
     brand: Brand | None
     faults: tuple[Fault, ...]
+    captions: tuple[Caption, ...]
 
 
 def _asset_paths(script: Script) -> tuple[tuple[str, str], ...]:
@@ -202,7 +205,20 @@ def _place(script: Script, media: Mapping[str, float | None] | None, *, require:
         visual_track,
         script.brand,
         tuple(faults),
+        _captions(script, spans),
     )
+
+
+def _captions(script: Script, spans: list[Span]) -> tuple[Caption, ...]:
+    found: list[Caption] = []
+    for track in script.tracks:
+        if not isinstance(track, CaptionsTrack):
+            continue
+        spoken = [span for span in spans if span.track == track.source and isinstance(span.clip, Voiceover)]
+        for span in sorted(spoken, key=lambda item: (item.start, item.index)):
+            if isinstance(span.clip, Voiceover):
+                found.extend(segments(track.id, span.clip.text, span.start, span.frames))
+    return tuple(found)
 
 
 def _cuts(
