@@ -2,6 +2,7 @@
 schemaVersion: 2
 template: {id: announcement, templateVersion: 1}
 budget: {maxUsd: 5}
+disclosure: AI-generated scenes
 output: {path: out/example-fitness.mp4, width: 1080, height: 1920, fps: 30}
 brand:
   colors: {bg: '#1B1B2F', fg: '#FFFFFF', accent: '#E4572E'}

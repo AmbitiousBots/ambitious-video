@@ -38,7 +38,7 @@ EXAMPLES = REPO / "examples"
 INVALID = EXAMPLES / "invalid"
 EXPECTED = INVALID / "EXPECTED.json"
 MODEL = REPO / "spec" / "RenderJob.tla"
-REQUIRED_EXAMPLES = ("minimal.yaml", "all-clip-types.yaml", "titles-and-captions.yaml")
+REQUIRED_EXAMPLES = ("minimal.yaml", "all-clip-types.yaml", "titles-and-captions.yaml", "generated-scenes.yaml")
 SAMPLES = EXAMPLES / "samples"
 REQUIRED_SAMPLES = ("example-accounting", "example-bookshop", "example-fitness", "example-plumbing")
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
@@ -125,11 +125,18 @@ def video_ends_before_it_starts(script: Document) -> bool:
     )
 
 
+def generates_a_scene_without_disclosure(script: Document) -> bool:
+    return "disclosure" not in script and any(
+        clip["type"] == "generated_scene" for track in script["tracks"] for clip in track.get("clips", [])
+    )
+
+
 RULES: dict[str, Callable[[Document], bool]] = {
     "track-ids-unique": repeats_a_track_id,
     "captions-from-a-voiceover-track": captions_from_no_voiceover,
     "duck-under-another-track": ducks_under_itself_or_nothing,
     "video-out-after-in": video_ends_before_it_starts,
+    "generated-scenes-need-disclosure": generates_a_scene_without_disclosure,
 }
 
 
@@ -172,6 +179,11 @@ def schema_matches_types(schema: Document, types: ModuleType) -> list[str]:
     same("pattern of a model id", defs["modelId"]["pattern"], types.MODEL_ID_PATTERN)
     same("pattern of a track id", defs["trackId"]["pattern"], types.TRACK_ID_PATTERN)
     same("pattern of a color", defs["hexColor"]["pattern"], types.HEX_COLOR_PATTERN)
+    scene = defs["generatedScene"]["properties"]
+    same("pattern of a resolution", scene["resolution"]["pattern"], types.RESOLUTION_PATTERN)
+    same("pattern of an aspect ratio", scene["aspect_ratio"]["pattern"], types.ASPECT_RATIO_PATTERN)
+    same("largest seed", scene["seed"]["maximum"], types.MAX_SEED)
+    same("what a fallback can show", defs["sceneFallback"]["properties"]["type"]["enum"], members(types.FallbackType))
     same("schema version", schema["properties"]["schemaVersion"]["const"], types.SCHEMA_VERSION)
     same("rules checked next to the schema", list(RULES), members(types.ScriptRule))
     return problems
@@ -201,6 +213,7 @@ def template_schema_matches_types(schema: Document, script_schema: Document, typ
     same("pattern of a color", defs["hexColor"]["pattern"], types.HEX_COLOR_PATTERN)
     same("pattern of a provider id", defs["speech"]["properties"]["provider"]["pattern"], types.PROVIDER_ID_PATTERN)
     same("pattern of a model id", defs["speech"]["properties"]["model"]["pattern"], types.MODEL_ID_PATTERN)
+    same("a generated scene in a template", list(defs["generatedScene"]["properties"]), list(script_schema["$defs"]["generatedScene"]["properties"]))
     for name in ("path", "width", "height", "fps"):
         in_template = defs["output"]["properties"][name]
         same(f"output {name}", in_template, script_schema["$defs"]["output"]["properties"][name])

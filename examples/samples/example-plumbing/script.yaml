@@ -2,6 +2,7 @@
 schemaVersion: 2
 template: {id: welcome, templateVersion: 1}
 budget: {maxUsd: 5}
+disclosure: AI-generated scenes
 output: {path: out/example-plumbing.mp4, width: 1280, height: 720, fps: 30}
 brand:
   colors: {bg: '#0F2A3D', fg: '#F4F7FA', accent: '#2E9BD6'}

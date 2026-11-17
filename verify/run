@@ -186,8 +186,8 @@ if one["script"] != two["script"] or one["scriptSha256"] != two["scriptSha256"] 
     raise SystemExit("the same template and inputs must expand to the same script")
 if plan != again or plan["template"] != {"id": template, "templateVersion": 1}:
     raise SystemExit("the plan of an expanded script must repeat and name its template")
-if one["script"]["budget"] != {"maxUsd": 5}:
-    raise SystemExit("a script from a starter template must carry its budget of 5")
+if one["script"]["budget"] != {"maxUsd": 5} or one["script"]["disclosure"] != "AI-generated scenes":
+    raise SystemExit("a script from a starter template must carry its budget of 5 and its disclosure text")
 if estimate["usd"] != "0.000000" or estimate["secretsNeeded"] != [] or not read("validate")["ok"]:
     raise SystemExit("a sample without a voice must need no key and cost nothing")
 spoken, render = read("small-estimate"), read("small-render")
@@ -208,6 +208,75 @@ if not body["ok"] or not body["data"]["passed"]:
     raise SystemExit(body)
 PY
 done
+
+echo "== generated scenes: priced per second, key asked, fallback offline, manifest written =="
+mkdir -p "$WORK/scenes/assets"
+cp examples/generated-scenes.yaml "$WORK/scenes/scenes.yaml"
+cp examples/assets/still.png "$WORK/scenes/assets/still.png"
+"$PY" - "$WORK/scenes/scenes.yaml" <<'PY'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+small = text.replace("width: 1280, height: 720, fps: 30", "width: 320, height: 180, fps: 10")
+if small == text:
+    raise SystemExit("the example output line changed; update verify/run")
+path.write_text(small, encoding="utf-8")
+PY
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/estimate.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/scenes/scenes.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/scenes/plan-b.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/refused.json" || true
+"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/offline-plan.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/render-a.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/scenes/scenes.yaml" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/scenes/render-b.json"
+"$PY" dist/ambitious-video.pyz ledger --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/ledger.json"
+"$PY" - "$WORK/scenes" <<'PY'
+import json, sys
+from pathlib import Path
+at = Path(sys.argv[1])
+def read(name, ok=True):
+    body = json.loads((at / f"{name}.json").read_text(encoding="utf-8"))
+    if body["ok"] is not ok:
+        raise SystemExit(body)
+    return body
+estimate, plan, again = (read(name)["data"] for name in ("estimate", "plan-a", "plan-b"))
+paid = [line for line in estimate["breakdown"] if "provider" in line]
+priced = [(line["provider"], line["unit"], line["units"], line["usdPerUnit"], line["usd"]) for line in paid]
+if priced != [("xai-video", "second", "8", "0.05", "0.400000"), ("xai-image", "image", "1", "0.02", "0.020000")]:
+    raise SystemExit("a moving scene is priced per second and a still per picture")
+wanted = [{"env": "XAI_API_KEY", "provider": "xai-image, xai-video", "steps": [1, 2], "usd": "0.420000"}]
+if estimate["usd"] != "0.420000" or estimate["secretsNeeded"] != wanted or plan != again:
+    raise SystemExit("the estimate must name the one key, and the plan must repeat on another day")
+refused = read("refused", ok=False)
+if [error["code"] for error in refused["errors"]] != ["E_NO_KEY"] or refused["data"] != {"missing": wanted}:
+    raise SystemExit("a render without the key must stop with E_NO_KEY and name the key")
+offline, one, two, ledger = (read(name)["data"] for name in ("offline-plan", "render-a", "render-b", "ledger"))
+if one["costUsd"] != "0.000000" or one["sha256"] != two["sha256"] or ledger["lines"] != []:
+    raise SystemExit("two offline renders must cost nothing and write the same file")
+if [step["fallback"] for step in one["steps"]] != ["image", "title_card"]:
+    raise SystemExit("each generated scene must take its own fallback")
+manifest = json.loads(Path(two["manifest"]).read_text(encoding="utf-8"))
+if Path(two["manifest"]).name != "generated-scenes.mp4.manifest.json" or manifest["template"] is not None:
+    raise SystemExit("the manifest must sit next to the video and name no template for a hand-written script")
+if manifest["planSha256"] != offline["planSha256"] or manifest["output"]["sha256"] != two["sha256"]:
+    raise SystemExit("the manifest must name the plan and the file that were rendered")
+named = ("index", "type", "provider", "model", "stepKey", "paid", "cached", "usd")
+steps = manifest["steps"]
+if len(steps) != len(offline["steps"]) or any(name not in step for step in steps for name in named):
+    raise SystemExit("the manifest must list every step with its provider, model, stepKey, cached and usd")
+if [step.get("fallback") for step in steps] != [None, "image", "title_card", None] or manifest["offline"] is not True:
+    raise SystemExit("the manifest must mark the steps that took a fallback")
+json.dump({"jobId": two["jobId"]}, open(at / "job.json", "w", encoding="utf-8"))
+print("scenes", estimate["usd"], "usd online,", one["costUsd"], "offline, manifest", Path(two["manifest"]).name)
+PY
+"$PY" dist/ambitious-video.pyz verify --in "$WORK/scenes/job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/verify.json"
+"$PY" - "$WORK/scenes/verify.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], encoding="utf-8"))
+if not body["ok"] or not body["data"]["passed"]:
+    raise SystemExit(body)
+PY
 
 echo "== help, version, guide: the printed example renders and verifies =="
 "$PY" dist/ambitious-video.pyz --help --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/help.json"

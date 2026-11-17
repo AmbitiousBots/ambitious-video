@@ -1,6 +1,6 @@
 # ambitious-video
 
-The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, speech, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
+The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, speech, generated scenes, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
 
 The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
@@ -13,7 +13,7 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`,
 | `validate` | none | Whether the script is usable, its duration, and any problems. |
 | `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, `planSha256`, and `secretsNeeded`: the keys an uncached paid step still needs. With `--offline`, the plan in which every paid step takes its free fallback. |
 | `estimate` | none | A dry-run price from `pricing.json`. No provider is called. Each paid line names its provider, model, units, price and price source; a step already in the step cache is priced at 0. `secretsNeeded` lists the keys that are still needed. With `--offline` the price is 0. |
-| `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. Stops with `E_NO_KEY` before any call when a key is missing. With `--offline`, calls no provider and marks each replaced step with `fallback`. |
+| `render` | write | Renders the script and writes a provenance manifest next to the video. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. Stops with `E_NO_KEY` before any call when a key is missing, and with `E_PENDING` when a provider has not finished in time (the retry asks for the same request again and sends nothing new). With `--offline`, calls no provider and marks each replaced step with `fallback`. |
 | `verify` | write | Checks duration, frame count, resolution, audio, encoding, and title and cut frames of a rendered job. |
 | `jobs` | read | The jobs in the database. |
 | `ledger` | read | The cost lines, exactly one per provider call. A line's idempotency key is the step key (`<stepKey>#2`, `#3`, ... when a removed result had to be called for again), so a retry or a new job with the same inputs does not add a line. |
@@ -113,7 +113,7 @@ An input the template does not have, a missing required input, a value of the wr
 
 ## Paid steps and providers
 
-A paid step is a clip that names a provider and one of its models. The only paid step so far is `speech`: a line spoken by a text-to-speech provider.
+A paid step is a clip that names a provider and one of its models. There are two: `speech`, a line spoken by a text-to-speech provider, and `generated_scene`, a scene a provider makes from a prompt ([Generated scenes](#generated-scenes)).
 
 ```yaml
 - { type: speech, at: 0.5, text: "Narration line", provider: xai-speech, model: tts, voice: eve }
@@ -121,13 +121,15 @@ A paid step is a clip that names a provider and one of its models. The only paid
 
 The provider, the model and the voice are always written in the script. Nothing picks one for you at render time and no voice is built in. A `voiceover` clip is the free form of the same line: it gives captions their words and timing, nothing is spoken and no key is needed.
 
-Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for `xai-speech`), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger, a log or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged. [Keys asked on demand](#keys-asked-on-demand) says how to find out which keys a script needs, and [Rendering offline](#rendering-offline) how to render without any.
+Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for the three adapters that ship), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger, a log or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged. [Keys asked on demand](#keys-asked-on-demand) says how to find out which keys a script needs, and [Rendering offline](#rendering-offline) how to render without any.
 
 | Provider id | Step | Models | Key | Unit |
 |---|---|---|---|---|
 | `xai-speech` | `speech` | `tts` | `XAI_API_KEY` | character |
+| `xai-video` | `generated_scene` | `grok-imagine-video`, `grok-imagine-video-1.5`, `grok-imagine-video-1.5-lite` | `XAI_API_KEY` | second |
+| `xai-image` | `generated_scene` (a still picture) | `grok-imagine-image`, `grok-imagine-image-2.0` | `XAI_API_KEY` | image |
 
-`pricing.json` holds one entry per provider and model: `unit`, `usdPerUnit`, `sourceUrl` (the provider's public price page) and `checkedAt` (the day that page was read). These are list prices, not measured spend; check the source before relying on them. The table also holds prices for providers that have no adapter yet (video, image, another speech provider and lip-sync, the last priced per output frame); a script cannot use those until their adapters exist.
+`pricing.json` holds one entry per provider and model: `unit`, `usdPerUnit`, `sourceUrl` (the provider's public price page) and `checkedAt` (the day that page was read). These are list prices, not measured spend; check the source before relying on them. The table also holds prices for providers that have no adapter yet (another speech provider and lip-sync, the last priced per output frame); a script cannot use those until their adapters exist.
 
 `estimate` prices a script from that table without calling anyone. A paid line looks like this:
 
@@ -138,6 +140,37 @@ Keys are bring-your-own. Each provider reads its key from one environment variab
 ```
 
 A step whose result is already in the step cache has `"cached": true` and `"usd": "0.000000"`, and `usd` at the top is the sum of what a render would still be charged. `--cache <dir>` tells `estimate` which cache to look in, as it does for `render`. `estimate` reads only that folder and not the database, so a result that `render` would copy from another cache folder is still shown at its price: a render can cost less than the estimate, never more.
+
+### Generated scenes
+
+A `generated_scene` clip asks a provider for a scene and shows it for `duration` seconds:
+
+```yaml
+disclosure: "AI-generated scenes"
+tracks:
+  - id: main
+    clips:
+      - type: generated_scene
+        provider: xai-video
+        model: grok-imagine-video        # or grok-imagine-video-1.5, grok-imagine-video-1.5-lite
+        prompt: "A slow aerial shot of a small town at sunrise, no people, no text"
+        duration: 8
+        resolution: 720p                 # optional
+        aspect_ratio: "16:9"             # optional
+        image: assets/reference.png      # optional: a picture the scene starts from
+        fallback: { type: image, path: assets/town.png, kenburns: { from: 1.0, to: 1.08 } }
+```
+
+- **Provider and model** are written in the clip, as for speech. `xai-video` returns a moving scene, priced per second of `duration` (whole seconds from 1 to 15). `xai-image` returns one still picture, priced per picture, which is shown for `duration` with the clip's optional `kenburns: { from, to }` zoom. `validate` refuses a length, a size, a shape or a reference picture the named provider does not offer, and a `seed` for a provider that takes none.
+- **`fallback`** is required: `{ type: image, path, kenburns }`, `{ type: video, path, in }` or `{ type: title_card, text, subtitle }`. It has no length of its own; it is shown for the `duration` of the scene, so the rest of the video keeps its timing. `validate` checks its file, and that a video file is long enough.
+- **Disclosure.** Every frame that shows a generated scene, including the frames of a crossfade into or out of one, carries a small tag in the top right corner with the script's `disclosure` text. The text comes from the script (a template copies its own into it; the starter templates say "AI-generated scenes"), no wording is built in, and a script with a `generated_scene` clip and no `disclosure` is refused. Frames of other clips, and of a fallback, carry no tag.
+- **Only the picture is used.** A moving scene is cut to the frames of its time on the track; its last frame is held if it is shorter, and any sound it has is left out.
+- **The result is cached** under its step key like any paid step: a second job with the same prompt, model, length and reference picture calls nothing and costs nothing.
+- **`verify` does not compare the frames of a generated scene.** It skips every sample frame in which such a scene is visible, so an online and an offline render of one script get the same answer. A video made only of generated scenes is checked for duration, frame count, size, sound and encoding, and for no frame.
+
+A moving scene takes the provider a while. `render` sends the request once, writes the provider's request id to the database under the step key before it asks for the result, and then polls for a bounded time (every 5 seconds for up to 10 minutes with `xai-video`). If the scene is not ready by then, `render` stops with `E_PENDING` and the job is `failed`. The ledger has no line for the scene yet, but the provider may still charge for it when it finishes, and the ledger records that only when a later render collects the result, so retry the job. A video with several scenes sends every one of them before it waits for the first, so they are made at the same time and one retry can collect them all; if a later step then fails, the scenes already sent are still made, and the retry collects them. Retrying that job, or rendering the same step in a new job, asks for the stored request id again and never sends the prompt a second time. When the result arrives it is stored and the ledger gets its one line, whose idempotency key is the step key. The stored request id is dropped only when the result is stored, when the provider itself reports that the request failed or expired, when it answers the stored id with HTTP 404 or 410 (it no longer knows the request), or when the bytes it returns are not a video. Each of these ends with `E_PROVIDER`, and only then does the next render send the step again. In the last case the provider has usually charged for the scene, so real spend can be higher than the ledger shows. Any other failed poll (a refused key, a rate limit, an outage) keeps the request, and the retry asks for it again. If such retries keep failing, `render --resend` forgets the stored request of every unfinished scene of that video and sends it again; the provider may charge for the earlier request as well, so use it only then. One gap remains: a process that is killed after the provider accepted the request and before the id was written cannot know the id, and its retry sends the step again.
+
+The two adapters follow the provider's public API documentation, and the tests run them against a local stand-in server. No test calls the provider, so check a first paid render with a short scene. The request and response shapes are kept in `providers/xai_video.py` and `providers/xai_image.py`, apart from everything else.
 
 ### Keys asked on demand
 
@@ -167,8 +200,9 @@ A program that renders for someone else, such as an assistant, should work in th
 | Paid step | Fallback | What changes |
 |---|---|---|
 | `speech` | `captions` | Nothing is spoken. The line keeps its words and its time, so a captions track still shows it, exactly as a `voiceover` clip would. |
+| `generated_scene` | `image`, `video` or `title_card` | The clip's own `fallback` is shown for the same time: the owner's picture (with a slow zoom if it names one), a part of the owner's video file, or a title card in the brand colors. No disclosure text is drawn, because nothing was generated. |
 
-A replaced step is listed as the free step that stands in for it, with `"fallback": "captions"` and `"fallbackFor": { "type": "speech", "provider": "...", "model": "..." }`, in the steps of `plan` and `render` and in the lines of `estimate`. The offline plan has no paid step, so its estimate and its `costUsd` are `0.000000`, `secretsNeeded` is empty, the ledger gets no line and the step cache is not read or written. It is a different plan from the online one, with its own `planSha256`, and it is as repeatable as any free render: the same script and files give the same plan in every process and the same video file on the same machine and toolchain. `--offline` applies to the whole command, also when a key is set or a result is cached. With `{ "jobId": "..." }` it applies to that retry.
+A replaced step is listed as the free step that stands in for it, with `"fallback": "captions"` (or `image`, `video`, `title_card` for a scene) and `"fallbackFor": { "type": "speech", "provider": "...", "model": "..." }`, in the steps of `plan` and `render` and in the lines of `estimate`. The offline plan has no paid step, so its estimate and its `costUsd` are `0.000000`, `secretsNeeded` is empty, the ledger gets no line and the step cache is not read or written. It is a different plan from the online one, with its own `planSha256`, and it is as repeatable as any free render: the same script and files give the same plan in every process and the same video file on the same machine and toolchain. `--offline` applies to the whole command, also when a key is set or a result is cached. With `{ "jobId": "..." }` it applies to that retry.
 
 `--offline` replaces paid steps only. A `screen_recording` clip still opens the page it names.
 
@@ -186,15 +220,29 @@ A provider is one module in `src/ambitious_video/providers/` with a class that f
 | `price(model)`, `quote(params, units)` | The price entry and the price of that many units, from `pricing.json` only. |
 | `run(params, inputs, secret, out)` | The call. Writes the result to `out`. Uses only the standard library, and must not keep, log or raise the key. |
 
-The commands find providers only through that registry, so an adapter needs no change to `plan`, `estimate`, the step cache or `render`. `test/test_providers.py` registers one inside a test and runs it through all four. A script that names a provider id, a model or a kind of step the registry does not have is refused by `validate`.
+A `scene` provider also follows `SceneMaker`: `output` says whether it returns a `video` or an `image` (a still picture, shown with the clip's `kenburns` zoom), and `faults(step)` names the fields of a clip it cannot make, such as a length or a size it does not offer, so `validate` refuses them before anything is sent. A provider that answers later follows `Deferred` instead of doing the work in `run`: `submit(params, inputs, secret)` starts the work and returns the provider's request id, `collect(request_id, secret, out)` returns the result or `None` while it is not ready, and `patience` gives the seconds between two polls and the longest wait. It raises `RequestLost` when the provider says the request failed, which is the only case in which a step is sent again.
+
+The commands find providers only through that registry, so an adapter needs no change to `plan`, `estimate`, the step cache or `render`. `test/test_providers.py` registers one inside a test and runs it through all four, and `test/test_generated_scenes.py` does the same with one that answers later. A script that names a provider id, a model or a kind of step the registry does not have is refused by `validate`.
 
 ## Plans, step keys and the step cache
 
 `plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. A script that `expand` made also has `template: { id, templateVersion }` in its plan. `render` returns the same `planSha256`. `secretsNeeded` is printed next to the plan and is not part of `planSha256`, because it depends on which keys are set and what the step cache holds; everything else in `data` is hashed.
 
-Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the model, the words, the voice and the adapter's language and format settings), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. For a provider that takes a seed, `provider_seed` derives it from `--seed` and the step key. Speech takes none, so `--seed` does not change a speech key, and no provider that takes a seed ships yet.
+Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the model, the words, the voice and the adapter's language and format settings), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. The key of a generated scene names the model, the prompt, the length, the size and shape when given, and the hash of the reference picture. Its `fallback`, its `kenburns` zoom and the disclosure text are not sent to the provider, so they change only the output's key and never cause a second charge. A `generated_scene` clip can carry a `seed` for a provider that takes one, and it is then part of the key. None of the adapters that ship takes a seed, and `--seed` never changes a step key.
 
 The result of a paid step is kept in `<cache dir>/<stepKey>/` (`output.bin` and a `meta.json` with its hash) and listed in the `step_cache` table. Before a paid call, `render` looks there. A hit calls nothing, needs no key, and adds no ledger line; a miss calls the provider once, stores the result and adds one ledger line whose idempotency key is the step key. When the chosen cache folder has no result but another cache folder this database has used does, the verified result is copied in instead: no call, no key and no line. Renders that use one database take turns on a step key, also when they run at the same time with different cache folders, so the second one copies the result of the first. A second job with the same words and voice therefore costs nothing, and two renders with every paid step cached write the same file on the same machine and toolchain. `render` lists each paid step with `cached` and the `usd` this call was charged, and `costUsd` is their sum.
+
+Every render writes a provenance manifest next to the video, as `<output file>.manifest.json` (`render` returns its path in `data.manifest`). It says where each step of that file came from:
+
+```json
+{ "manifestVersion": 1, "jobId": "...", "template": { "id": "welcome", "templateVersion": 1 }, "planSha256": "...",
+  "offline": false, "disclosure": "AI-generated scenes", "costUsd": "0.400000",
+  "output": { "file": "welcome.mp4", "sha256": "...", "stepKey": "..." },
+  "steps": [ { "index": 1, "type": "generated_scene", "provider": "xai-video", "model": "grok-imagine-video",
+               "stepKey": "...", "paid": true, "cached": false, "usd": "0.400000" } ] }
+```
+
+`template` is `null` for a script that was not made from a template. `steps` lists every step of the plan, free ones with the provider `local`; `cached` and `usd` say whether this render took a paid result from the step cache and what it was charged (a step that an earlier attempt of the same job paid for is `cached` with `usd` 0 in the final manifest; the ledger is the record of what was spent); a step that took its fallback also has `fallback` and `fallbackFor`. The manifest holds no key, no absolute path and no time.
 
 The cache folder is `$AMBITIOUS_HOME/video/cache`. A script can name another with `cache: { dir: <folder below the script> }`, and `--cache <dir>` on `plan`, `estimate`, `render`, `cache list` and `cache prune` overrides both. Entries are never removed automatically. `cache prune --older-than 90` removes the entries last used more than 90 days ago; an entry that a running render holds is left alone, and `--older-than` takes whole days from 0 to 36500. The ledger holds one line per provider call, and a step key is called again only if its result was removed: by `cache prune`, or by deleting its folder by hand. That next call is paid for and gets its own line, with the idempotency key `<stepKey>#2` (then `#3`, and so on), so the ledger total stays equal to what `render` reported as `costUsd`. An entry whose file no longer matches its recorded hash is refused with `E_CACHE`.
 
@@ -225,13 +273,14 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 
 | Code | Exit | Meaning | Typical hint |
 |---|---|---|---|
-| `E_UNKNOWN_STEP` | 1 | A clip `type` is not one of the seven known steps. | Use one of the types in the script schema. |
+| `E_UNKNOWN_STEP` | 1 | A clip `type` is not one of the eight known steps. | Use one of the types in the script schema. |
 | `E_JOB_STATE` | 1 | The job is not in a state that allows the requested move. | Read `jobs` and retry only a failed or abandoned job. |
 | `E_OVERLAP` | 1 | Two clips on one track overlap. | Move a clip or shorten it. |
 | `E_MEDIA` | 1 | A file is missing, `in` / `out` falls outside it, or `brand.font` is not a font file next to the script. | Put the file next to the script, or fix the times. |
 | `E_RANGE` | 1 | A cut is not on a clip boundary, or the video is longer than 1800 seconds. | Place the cut where one clip ends and the next begins. |
 | `E_TOOL` | 1 | ffmpeg, ffprobe, Pillow or Playwright is missing, or ffmpeg failed while rendering. | Install the missing tool and run the command again. |
-| `E_PROVIDER` | 1 | A provider rejected the call. `data.provider` names it and `data.status` is the HTTP status (0 when there was no answer). | Check the model, the voice and the key. |
+| `E_PROVIDER` | 1 | A provider rejected the call. `data.provider` names it and `data.status` is the HTTP status (0 when there was no answer). For a scene the provider gave up on or no longer knows, or returned bytes that are not a video or a picture, `data.stepKey` names the step, nothing is stored, the ledger gets no line, and the next render sends the step again. When a poll for a stored request fails for another reason, `data.requestId` names the request and it is kept. | Check the model, the voice and the key. For a kept request, retry the job id; if that keeps failing, render with `--resend`. |
+| `E_PENDING` | 1 | A provider that answers later had not finished within the wait. The job moves to `failed`, the request id is kept, and the ledger has no line yet (the provider may still charge when the scene finishes). `data` holds `jobId`, `index`, `stepKey`, `provider` and `requestId`. | Retry with `{ "jobId": "..." }` later. The same request is asked for again and nothing is sent twice. |
 | `E_VERIFY` | 1 | A rendered file failed a check. There is one error for each failed check, and its message says what differs: the duration or the frame count against the script's, how the video is stored against `output.encode`, a frame that is missing or that differs, or a file that is not a video. The job moves to `failed`. | Read `data.checks`: each check has `ok`, and `expected` and `actual` where they apply. |
 | `E_CACHE` | 1 | A step cache entry does not match its recorded hash. | Delete the folder named in `data.stepKey` and render again. |
 
@@ -242,7 +291,7 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `schemas/video-script.v2.json` | The video script format. [schemas/README.md](schemas/README.md) explains it. |
 | `schemas/video-template.v1.json` | The template format that `expand` reads. The same README explains it. |
 | `templates/` | The three starter templates: `welcome.yaml`, `short-explainer.yaml` and `announcement.yaml`. A copy of each is inside the package, in `src/ambitious_video/templates/`, so the binary has them; a test keeps the copies the same. |
-| `examples/` | Three scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, and `all-clip-types.yaml` uses every clip type, including paid `speech`. `examples/invalid/` holds scripts that must be rejected. |
+| `examples/` | Four scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, `all-clip-types.yaml` uses every free clip type and paid `speech`, and `generated-scenes.yaml` has two `generated_scene` clips with their fallbacks. `examples/invalid/` holds scripts that must be rejected. |
 | `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has an `inputs.yaml` for one starter template, a `brand.yaml`, the `script.yaml` that `expand` writes from them, and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
 | `src/ambitious_video/steps/` | One module per clip type. Each `compile` is pure. Register a new type in `steps/__init__.py`. |
 | `src/ambitious_video/providers/` | The `Provider` protocol, the registry, the price table reader, and one module per provider adapter. |

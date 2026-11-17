@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,6 +13,7 @@ from ambitious_video.domain.timeline import Mark, Span, Timeline
 from ambitious_video.domain.types import (
     Brand,
     EncodeMode,
+    GeneratedScene,
     ImageClip,
     ScreenRecording,
     TitleCard,
@@ -21,6 +24,8 @@ from ambitious_video.steps.common import Canvas, fit, rgb_of
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PilImage
+from ambitious_video.steps.generated_scene import FRAMES, STILL
+from ambitious_video.steps.generated_scene import frame as made_frame
 from ambitious_video.steps.image import frame as image_frame
 from ambitious_video.steps.screen_recording import frame as screen_frame
 from ambitious_video.steps.screen_recording import record
@@ -50,6 +55,12 @@ BLOCK = 4
 BLOCK_LIMIT = 32
 
 
+@dataclass(frozen=True, slots=True)
+class Made:
+    path: Path
+    still: bool
+
+
 def canvas_for(timeline: Timeline, root: Path) -> Canvas:
     colors = None if timeline.brand is None else timeline.brand.colors
     bg = rgb_of(None if colors is None else str(colors.bg), (17, 17, 17))
@@ -60,9 +71,17 @@ def canvas_for(timeline: Timeline, root: Path) -> Canvas:
     return Canvas(timeline.width, timeline.height, bg, fg, accent, root, logo, 0, {}, {}, font)
 
 
-def prepare(timeline: Timeline, canvas: Canvas, work: Path, root: Path) -> None:
+def prepare(
+    timeline: Timeline, canvas: Canvas, work: Path, root: Path, media: Mapping[int, Made] | None = None
+) -> None:
     for span in timeline.spans:
         folder = work / f"step-{span.step}"
+        made = None if media is None else media.get(span.step)
+        if isinstance(span.clip, GeneratedScene) and made is not None and made.still:
+            canvas.folders[STILL + str(span.step)] = str(made.path.resolve())
+        elif isinstance(span.clip, GeneratedScene) and made is not None:
+            extract_frames(str(made.path), 0.0, span.frames, timeline.fps, folder)
+            canvas.folders[FRAMES + str(span.step)] = str(folder)
         if isinstance(span.clip, VideoClip):
             start = 0.0 if span.clip.start is None else span.clip.start
             extract_frames(str(root / span.clip.path), start, span.frames, timeline.fps, folder)
@@ -83,6 +102,8 @@ def _sample(span: Span, local: int, canvas: Canvas) -> PilImage:
         return video_frame(span.clip, clamped, span.frames, canvas)
     if isinstance(span.clip, ScreenRecording):
         return screen_frame(span.clip, clamped, span.frames, canvas)
+    if isinstance(span.clip, GeneratedScene):
+        return made_frame(span.clip, clamped, span.frames, canvas)
     from ambitious_video.steps.common import pil
 
     image_module, _draw, _font = pil()
@@ -151,12 +172,39 @@ def _draw_caption(image: PilImage, text: str, canvas: Canvas) -> PilImage:
     return frame
 
 
+def _draw_tag(image: PilImage, text: str, canvas: Canvas) -> PilImage:
+    from ambitious_video.steps.common import font_for, measure, pil, wrap
+
+    _image, draw_module, _font = pil()
+    frame = image.copy()
+    draw = draw_module.Draw(frame)
+    font = font_for(canvas, max(10, canvas.height // 40))
+    pad = max(3, canvas.height // 120)
+    edge = max(4, canvas.height // 60)
+    lines = wrap(draw, text, font, canvas.width - 2 * edge - 2 * pad) or (text,)
+    sizes = [measure(draw, line, font) for line in lines]
+    wide = max(size[0] for size in sizes)
+    high = sum(size[1] for size in sizes) + pad * (len(lines) - 1)
+    left = max(0, canvas.width - edge - wide - 2 * pad)
+    draw.rectangle((left, edge, canvas.width - edge, edge + high + 2 * pad), fill=canvas.bg)
+    top = edge + pad
+    for line, size in zip(lines, sizes, strict=True):
+        draw.text((left + pad, top), line, fill=canvas.fg, font=font, anchor="lt")
+        top += size[1] + pad
+    return frame
+
+
+def _is_made(span: Span | None) -> bool:
+    return span is not None and isinstance(span.clip, GeneratedScene)
+
+
 def frame_at(timeline: Timeline, index: int, canvas: Canvas) -> PilImage:
     visual = tuple(span for span in timeline.spans if span.track == timeline.visual_track and span.kind in VISUAL)
     mark = _cut_at(timeline.cuts, index)
     if mark is not None:
         left = _covering([span for span in visual if span.end == mark.at], mark.at - 1)
         right = _covering([span for span in visual if span.start == mark.at], mark.at)
+        tagged = _is_made(left) or _is_made(right)
         if left is not None and right is not None:
             alpha = (index - (mark.at - mark.half)) / mark.frames
             image = _blend(
@@ -168,6 +216,7 @@ def frame_at(timeline: Timeline, index: int, canvas: Canvas) -> PilImage:
             image = _blank(canvas)
     else:
         span = _covering(visual, index)
+        tagged = _is_made(span)
         image = _blank(canvas) if span is None else _sample(span, index - span.start, canvas)
     seen = False
     tracks: list[str] = []
@@ -185,10 +234,13 @@ def frame_at(timeline: Timeline, index: int, canvas: Canvas) -> PilImage:
             index,
         )
         if overlay is not None:
+            tagged = _is_made(overlay)
             image = _sample(overlay, index - overlay.start, canvas)
     caption = _caption(timeline, index)
     if caption is not None:
         image = _draw_caption(image, caption, canvas)
+    if tagged and timeline.disclosure is not None:
+        image = _draw_tag(image, timeline.disclosure, canvas)
     return image
 
 

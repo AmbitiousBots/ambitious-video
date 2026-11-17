@@ -68,6 +68,7 @@ TOP_LEVEL = {
 }
 REQUIRED = ("templateVersion", "id", "title", "output", "scenes")
 END_CARD = "end-card"
+GENERATED = "generated_scene"
 MAX_INPUTS = 64
 MAX_SCENES = 64
 MAX_LINES = 16
@@ -269,7 +270,7 @@ def _shown(bag: Bag, value: object, at: str, inputs: Mapping[str, Input]) -> dic
     before = len(bag.items)
     kind = raw.get("type")
     if not isinstance(kind, str) or kind not in SCENE_TYPES:
-        bag.schema(say(at, "/type"), "Use title_card, image or video.")
+        bag.schema(say(at, "/type"), "A scene cannot show this type.")
         return None
     as_clip(bag, raw, at)
     if kind == "video" and "out" not in raw:
@@ -277,6 +278,14 @@ def _shown(bag: Bag, value: object, at: str, inputs: Mapping[str, Input]) -> dic
     _slots(bag, raw.get("text"), say(at, "/text"), inputs, WORDS)
     _slots(bag, raw.get("subtitle"), say(at, "/subtitle"), inputs, WORDS)
     _slots(bag, raw.get("path"), say(at, "/path"), inputs, frozenset({kind}), whole=True)
+    _slots(bag, raw.get("prompt"), say(at, "/prompt"), inputs, WORDS)
+    _slots(bag, raw.get("image"), say(at, "/image"), inputs, frozenset({"image"}), whole=True)
+    spare = raw.get("fallback")
+    if kind == GENERATED and isinstance(spare, dict):
+        under = say(at, "/fallback")
+        _slots(bag, spare.get("text"), say(under, "/text"), inputs, WORDS)
+        _slots(bag, spare.get("subtitle"), say(under, "/subtitle"), inputs, WORDS)
+        _slots(bag, spare.get("path"), say(under, "/path"), inputs, frozenset({str(spare.get("type"))}), whole=True)
     return raw if len(bag.items) == before else None
 
 
@@ -452,6 +461,9 @@ def load_template(raw: object) -> tuple[Template | None, tuple[Located, ...]]:
     if "disclosure" in document:
         disclosure = as_text(bag, document["disclosure"], "/disclosure", high=MAX_LABEL)
     scenes = _scenes(bag, document, inputs)
+    shown = [scene.show for scene in scenes] + [scene.fallback for scene in scenes if scene.fallback is not None]
+    if disclosure is None and "disclosure" not in document and any(item.get("type") == GENERATED for item in shown):
+        bag.schema("", "A generated scene needs disclosure text.")
     if bag.items or name is None or title is None or output is None:
         return None, located(IN_TEMPLATE, bag)
     return (

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
+from ambitious_video.domain.clips import kind_of
 from ambitious_video.domain.types import Clip, ClipTrack, PaidClip, Script, Speech, Track, Voiceover
 
 CAPTIONS = "captions"
@@ -18,7 +19,7 @@ class Fallback:
 def fallback_of(clip: PaidClip) -> Fallback:
     if isinstance(clip, Speech):
         return Fallback(CAPTIONS, Voiceover(clip.at, clip.text, clip.duration), clip)
-    raise TypeError(type(clip).__name__)
+    return Fallback(kind_of(clip.fallback), clip.fallback, clip)
 
 
 def with_fallbacks(

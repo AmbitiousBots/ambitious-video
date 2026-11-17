@@ -30,6 +30,7 @@ SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
 CACHE_DIR: ContextVar[Path | None] = ContextVar("cache_dir", default=None)
 OLDER_THAN: ContextVar[str | None] = ContextVar("older_than", default=None)
 OFFLINE: ContextVar[bool] = ContextVar("offline", default=False)
+RESEND: ContextVar[bool] = ContextVar("resend", default=False)
 TEMPLATE: ContextVar[str | None] = ContextVar("template", default=None)
 OUT: ContextVar[str | None] = ContextVar("out", default=None)
 KIT_VALUE_FLAGS = ("--in", "--db", "--now", "--seed")
@@ -40,7 +41,7 @@ OWN_FLAGS = {
     "--template": ("expand",),
     "--out": ("expand",),
 }
-PLAIN_FLAGS = {"--offline": ("plan", "estimate", "render")}
+PLAIN_FLAGS = {"--offline": ("plan", "estimate", "render"), "--resend": ("render",)}
 STDIN_WAIT_SECONDS = 2.0
 
 
@@ -237,9 +238,17 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
                 context.env,
                 CACHE_DIR.get(),
                 offline=OFFLINE.get(),
+                resend=RESEND.get(),
             )
         return engine.render_again(
-            context.db, job_id, body, context.now, context.env, CACHE_DIR.get(), offline=OFFLINE.get()
+            context.db,
+            job_id,
+            body,
+            context.now,
+            context.env,
+            CACHE_DIR.get(),
+            offline=OFFLINE.get(),
+            resend=RESEND.get(),
         )
 
     return _guard(run)
@@ -324,6 +333,7 @@ def main() -> int:
     cache_token = CACHE_DIR.set(None if chosen is None else Path(chosen))
     days_token = OLDER_THAN.set(own.get("--older-than"))
     offline_token = OFFLINE.set("--offline" in own)
+    resend_token = RESEND.set("--resend" in own)
     template_token = TEMPLATE.set(own.get("--template"))
     out_token = OUT.set(own.get("--out"))
     sys.argv = [original[0], *kept]
@@ -355,6 +365,7 @@ def main() -> int:
         sys.argv = original
         OUT.reset(out_token)
         TEMPLATE.reset(template_token)
+        RESEND.reset(resend_token)
         OFFLINE.reset(offline_token)
         OLDER_THAN.reset(days_token)
         CACHE_DIR.reset(cache_token)

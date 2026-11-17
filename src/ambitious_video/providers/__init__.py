@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from ambitious_video.providers.base import Provider, ProviderError, RunResult
+from ambitious_video.providers.xai_image import XaiImage
 from ambitious_video.providers.xai_speech import XaiSpeech
+from ambitious_video.providers.xai_video import XaiVideo
 
 _REGISTERED: dict[str, Provider] = {}
 
@@ -25,5 +27,7 @@ def registered() -> tuple[Provider, ...]:
 
 
 register(XaiSpeech())
+register(XaiVideo())
+register(XaiImage())
 
 __all__ = ["Provider", "ProviderError", "RunResult", "find", "register", "registered", "unregister"]

@@ -12,6 +12,7 @@ from ambitious_video.domain.types import (
     CaptionsTrack,
     Clip,
     ClipTrack,
+    GeneratedScene,
     ImageClip,
     RelativePath,
     Script,
@@ -78,6 +79,7 @@ class Timeline:
     brand: Brand | None
     faults: tuple[Fault, ...]
     captions: tuple[Caption, ...]
+    disclosure: str | None = None
 
 
 def _asset_paths(script: Script) -> tuple[tuple[str, str], ...]:
@@ -94,6 +96,13 @@ def _asset_paths(script: Script) -> tuple[tuple[str, str], ...]:
                 found.append((clip.path, "image"))
             elif isinstance(clip, AudioClip):
                 found.append((clip.path, "audio"))
+            elif isinstance(clip, GeneratedScene):
+                if clip.image is not None:
+                    found.append((clip.image, "image"))
+                if isinstance(clip.fallback, VideoClip):
+                    found.append((clip.fallback.path, "video"))
+                elif isinstance(clip.fallback, ImageClip):
+                    found.append((clip.fallback.path, "image"))
     return tuple(found)
 
 
@@ -145,6 +154,11 @@ def _length(
         known = media.get(clip.path) if media is not None else None
         if known is None:
             faults.append(Fault("E_MEDIA", at, "The image file is missing."))
+            return None
+    if isinstance(clip, GeneratedScene) and require and clip.image is not None:
+        known = media.get(clip.image) if media is not None else None
+        if known is None:
+            faults.append(Fault("E_MEDIA", say(at, "/image"), "The image file is missing."))
             return None
     return frames_of(clip.duration, fps, minimum=1)
 
@@ -207,6 +221,7 @@ def _place(script: Script, media: Mapping[str, float | None] | None, *, require:
         script.brand,
         tuple(faults),
         _captions(script, spans),
+        script.disclosure if any(isinstance(span.clip, GeneratedScene) for span in spans) else None,
     )
 
 

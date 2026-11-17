@@ -1,6 +1,6 @@
 {
   "help": {
-    "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--offline] [--now ISO8601] [--seed int] [--json]",
+    "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--offline] [--resend] [--now ISO8601] [--seed int] [--json]",
     "summary": "Renders a video from a script written as YAML or JSON. Every command prints one JSON envelope on stdout and nothing else.",
     "commands": [
       { "name": "guide", "summary": "Print an example script to copy, the starter templates with their inputs, and the steps to render." },
@@ -8,7 +8,7 @@
       { "name": "validate", "summary": "Check a script and the files it names. Reads a script." },
       { "name": "plan", "summary": "List the steps with their step keys, the captions, the assets and the keys still needed (secretsNeeded) of a script. Reads a script." },
       { "name": "estimate", "summary": "Price a script without calling a provider, and list the keys still needed (secretsNeeded). Reads a script." },
-      { "name": "render", "summary": "Render a script to a video file. Reads a script, or { \"jobId\": \"...\" } to retry a job." },
+      { "name": "render", "summary": "Render a script to a video file and write its provenance manifest next to it. Reads a script, or { \"jobId\": \"...\" } to retry a job." },
       { "name": "verify", "summary": "Check the video of a rendered job. Reads { \"jobId\": \"...\" }." },
       { "name": "jobs", "summary": "List the render jobs in the database." },
       { "name": "ledger", "summary": "List the cost lines in the database." },
@@ -25,7 +25,8 @@
       { "flag": "--out file", "meaning": "For expand: also write the script to this file, as JSON when the name ends in .json and as YAML otherwise. Write it next to the inputs file, because paths in a script are relative to the script." },
       { "flag": "--db path", "meaning": "Use this SQLite file instead of $AMBITIOUS_HOME/video/video.sqlite." },
       { "flag": "--cache dir", "meaning": "For plan, estimate, render, cache list and cache prune: use this step cache folder instead of $AMBITIOUS_HOME/video/cache." },
-      { "flag": "--offline", "meaning": "For plan, estimate and render: call no provider and need no key. Every paid step takes its free fallback (speech becomes captions only), is marked with fallback, and costs 0." },
+      { "flag": "--offline", "meaning": "For plan, estimate and render: call no provider and need no key. Every paid step takes its free fallback (speech becomes captions only, a generated scene shows its fallback clip), is marked with fallback, and costs 0." },
+      { "flag": "--resend", "meaning": "For render: forget the stored request of every unfinished scene of this video and send it again. Use it only when retries keep failing with E_PROVIDER; the provider may charge for the earlier request as well." },
       { "flag": "--older-than days", "meaning": "For cache prune: remove entries last used more than this many whole days ago, 0 to 36500." },
       { "flag": "--now ISO8601", "meaning": "Use this time instead of the clock, for example 2026-01-01T00:00:00Z." },
       { "flag": "--seed int", "meaning": "Use this seed for anything random, such as a job id." },
@@ -57,7 +58,7 @@
         "ambitious-video render --in script.yaml, or with --offline to take the free fallback of every paid step."
       ],
       "notes": [
-        "A template is data that its owner keeps and changes: typed inputs (text, image, video, audio, color, voice, choice), a brand, ordered scenes with {{input}} slots, an optional endCard, and budget.maxUsd. Substitution is plain: a slot is replaced by one value, and there is no expression language.",
+        "A template is data that its owner keeps and changes: typed inputs (text, image, video, audio, color, voice, choice), a brand, ordered scenes with {{input}} slots, an optional endCard, budget.maxUsd, and disclosure, the text drawn on generated scenes. A scene can show a title_card, an image, a video or a generated_scene. Substitution is plain: a slot is replaced by one value, and there is no expression language.",
         "expand is pure. The same template, inputs and brand file give the same script, byte for byte. An input the template does not have, a missing required input and a value of the wrong type are refused with E_INPUT_SCHEMA; data.problems names the document (in) and the place (at) of each.",
         "inputs.yaml may also hold output: { path, width, height, fps, encode } to replace the template's output, for example an upright size.",
         "A step whose slot has no value takes the fallback the template names: a scene shows its fallback clip, speech becomes captions only (fallbacks.speech: captions), and music is left out (fallbacks.music: none). data.fallbacks lists each one taken. Without a named fallback the missing value is an error.",
@@ -71,10 +72,15 @@
       "An assistant that renders for an owner shows the estimate first and renders only after the owner agrees to the cost. It asks the owner once for each env in data.secretsNeeded, through the host's secure secret or environment mechanism, and sets the variable only in the environment of the render command.",
       "A key must never be put in a script, a file, a chat message, a page, a log or a command line. Do not ask for a key that data.secretsNeeded does not list.",
       "render checks every paid step before the first call. If a key is missing it stops with E_NO_KEY, data.missing lists the same entries, no provider is called and nothing is charged.",
-      "If the owner declines a key, or nothing may leave the computer, run plan, estimate and render again with --offline. Every paid step then takes its free fallback (speech becomes captions only), each such step is marked with fallback, the cost is 0.000000 and no provider is called. --offline replaces paid steps only: a screen_recording clip still opens the page it names."
+      "If the owner declines a key, or nothing may leave the computer, run plan, estimate and render again with --offline. Every paid step then takes its free fallback (speech becomes captions only, a generated scene shows its fallback clip for the same time), each such step is marked with fallback, the cost is 0.000000 and no provider is called. --offline replaces paid steps only: a screen_recording clip still opens the page it names."
     ],
     "notes": [
       "A voiceover clip is a caption only: nothing is spoken, no key is needed, and the estimate is 0. To have a line spoken, use a speech clip that names a provider, a model and a voice, and set that provider's key in the environment. The estimate then shows the price and its source.",
+      "A generated_scene clip asks a provider for a scene: { type: generated_scene, provider: xai-video, model: grok-imagine-video, prompt, duration, fallback }. xai-video returns a moving scene priced per second (whole seconds, 1 to 15; models grok-imagine-video, grok-imagine-video-1.5, grok-imagine-video-1.5-lite). xai-image returns one still picture priced per picture (models grok-imagine-image, grok-imagine-image-2.0), shown with an optional kenburns zoom. Optional: resolution, aspect_ratio, and image, a reference picture next to the script.",
+      "Every generated_scene needs a fallback that is shown for the same time when the provider is not called: { type: image, path, kenburns }, { type: video, path, in } or { type: title_card, text, subtitle }. The fallback has no duration of its own.",
+      "A script with a generated_scene must set disclosure, for example disclosure: \"AI-generated scenes\". That text is drawn as a small tag on every frame of a generated scene. No wording is built in, and frames of other clips carry no tag.",
+      "A moving scene is sent once and then polled. If it is not ready in time, render stops with E_PENDING and data.jobId; the ledger has no line for it yet, but the provider may still charge for the scene when it finishes. Retry with { \"jobId\": \"...\" } later: the stored request is asked for again and nothing is sent twice. Every scene of a video is sent before the first one is waited for. If the provider no longer knows the request (HTTP 404 or 410) or reports that it failed, the request is dropped and the next render sends the step again. If retries keep failing with E_PROVIDER for another reason, render with --resend. A finished scene is in the step cache, so the next job that uses it costs nothing.",
+      "Every render writes <output file>.manifest.json next to the video (data.manifest): the template id and templateVersion, planSha256, and for each step its provider, model, stepKey, whether it came from the cache, and the usd charged. It holds no key.",
       "Captions are drawn only by a track with from: <id of a track with voiceover or speech clips>. Each such clip is shown during its own time, one sentence at a time. A script with no such track draws no captions.",
       "Paths in a script are relative to the folder that holds the script. The video is written to output.path in that folder.",
       "brand.font must be the path of a font file next to the script, such as fonts/name.ttf. A font name is rejected, because fonts installed on one computer are not on another.",

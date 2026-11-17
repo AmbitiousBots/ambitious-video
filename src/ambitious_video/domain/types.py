@@ -25,20 +25,28 @@ PROVIDER_ID_PATTERN: Final = "^[a-z][a-z0-9-]{0,31}$"
 MODEL_ID_PATTERN: Final = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 TEMPLATE_ID_PATTERN: Final = "^[a-z][a-z0-9-]{0,63}$"
 INPUT_NAME_PATTERN: Final = "^[a-z][a-z0-9_]{0,31}$"
+RESOLUTION_PATTERN: Final = "^[0-9]{1,4}[kp]$"
+ASPECT_RATIO_PATTERN: Final = "^[0-9.]{1,4}:[0-9.]{1,4}$"
+MAX_SEED: Final = 4294967295
 
-ClipType = Literal["title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio"]
+ClipType = Literal[
+    "title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio", "generated_scene"
+]
 ActionKind = Literal["click", "wait", "scroll"]
 Transition = Literal["crossfade"]
 EncodeMode = Literal["web", "lossless"]
 ProviderKind = Literal["scene", "speech", "lipsync"]
 InputType = Literal["text", "image", "video", "audio", "color", "voice", "choice"]
-SceneType = Literal["title_card", "image", "video"]
+SceneType = Literal["title_card", "image", "video", "generated_scene"]
+FallbackType = Literal["title_card", "image", "video"]
+SceneOutput = Literal["video", "image"]
 
 ScriptRule = Literal[
     "track-ids-unique",
     "captions-from-a-voiceover-track",
     "duck-under-another-track",
     "video-out-after-in",
+    "generated-scenes-need-disclosure",
 ]
 
 JobState = Literal["queued", "rendering", "rendered", "verified", "failed", "retried"]
@@ -66,6 +74,7 @@ ErrorCode = Literal[
     "E_PROVIDER",
     "E_VERIFY",
     "E_CACHE",
+    "E_PENDING",
 ]
 
 
@@ -182,8 +191,25 @@ class AudioClip:
     duck_under: TrackId | None
 
 
-type Clip = TitleCard | ScreenRecording | VideoClip | ImageClip | Voiceover | Speech | AudioClip
-PaidClip = Speech
+type SceneFallback = TitleCard | ImageClip | VideoClip
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedScene:
+    duration: float
+    prompt: str
+    provider: str
+    model: str
+    resolution: str | None
+    aspect_ratio: str | None
+    seed: int | None
+    image: RelativePath | None
+    kenburns: KenBurns | None
+    fallback: SceneFallback
+
+
+type Clip = TitleCard | ScreenRecording | VideoClip | ImageClip | Voiceover | Speech | AudioClip | GeneratedScene
+PaidClip = Speech | GeneratedScene
 
 
 @dataclass(frozen=True, slots=True)

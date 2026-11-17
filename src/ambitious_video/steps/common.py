@@ -60,6 +60,15 @@ def readable_font(path: str) -> bool:
     return True
 
 
+def readable_image(path: Path) -> bool:
+    image_module, _draw, _font = pil()
+    try:
+        image_module.open(path).verify()
+    except Exception:
+        return False
+    return True
+
+
 def font_for(canvas: Canvas, size: int) -> PilFont:
     found = canvas.fonts.get(size)
     if found is not None:

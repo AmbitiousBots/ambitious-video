@@ -4,6 +4,7 @@ from ambitious_video.domain.clips import kind_of
 from ambitious_video.domain.types import (
     AudioClip,
     Clip,
+    GeneratedScene,
     ImageClip,
     ScreenRecording,
     Speech,
@@ -11,7 +12,16 @@ from ambitious_video.domain.types import (
     VideoClip,
     Voiceover,
 )
-from ambitious_video.steps import audio, image, screen_recording, speech, title_card, video, voiceover
+from ambitious_video.steps import (
+    audio,
+    generated_scene,
+    image,
+    screen_recording,
+    speech,
+    title_card,
+    video,
+    voiceover,
+)
 from ambitious_video.steps.common import Canvas
 
 COMPILE = {
@@ -22,6 +32,7 @@ COMPILE = {
     "voiceover": voiceover.compile,
     "speech": speech.compile,
     "audio": audio.compile,
+    "generated_scene": generated_scene.compile,
 }
 
 
@@ -40,11 +51,13 @@ def compile_clip(clip: Clip) -> dict[str, object]:
         return speech.compile(clip, None)
     if isinstance(clip, AudioClip):
         return audio.compile(clip, None)
+    if isinstance(clip, GeneratedScene):
+        return generated_scene.compile(clip, None)
     raise TypeError(kind_of(clip))
 
 
 def visual_frame(
-    clip: TitleCard | ImageClip | VideoClip | ScreenRecording,
+    clip: TitleCard | ImageClip | VideoClip | ScreenRecording | GeneratedScene,
     local: int,
     count: int,
     canvas: Canvas,
@@ -55,6 +68,8 @@ def visual_frame(
         return image.frame(clip, local, count, canvas)
     if isinstance(clip, VideoClip):
         return video.frame(clip, local, count, canvas)
+    if isinstance(clip, GeneratedScene):
+        return generated_scene.frame(clip, local, count, canvas)
     return screen_recording.frame(clip, local, count, canvas)
 
 

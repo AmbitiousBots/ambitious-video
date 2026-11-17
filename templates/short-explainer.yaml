@@ -26,6 +26,8 @@ budget: { maxUsd: 5 }
 speech: { provider: xai-speech, model: tts, voice: "{{voice}}" }
 music: { path: "{{music}}", gain_db: -18 }
 fallbacks: { speech: captions, music: none }
+# Drawn on every frame of a generated_scene, if you add one. It marks nothing else.
+disclosure: "AI-generated scenes"
 scenes:
   - id: opening
     show: { type: title_card, duration: 3.0, text: "{{business_name}}", subtitle: "{{tagline}}" }

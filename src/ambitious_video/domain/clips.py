@@ -3,6 +3,7 @@ from __future__ import annotations
 from ambitious_video.domain.types import (
     AudioClip,
     Clip,
+    GeneratedScene,
     ImageClip,
     ScreenRecording,
     Speech,
@@ -11,7 +12,7 @@ from ambitious_video.domain.types import (
     Voiceover,
 )
 
-VISUAL = frozenset({"title_card", "screen_recording", "video", "image"})
+VISUAL = frozenset({"title_card", "screen_recording", "video", "image", "generated_scene"})
 
 
 def kind_of(clip: Clip) -> str:
@@ -29,6 +30,8 @@ def kind_of(clip: Clip) -> str:
         return "speech"
     if isinstance(clip, AudioClip):
         return "audio"
+    if isinstance(clip, GeneratedScene):
+        return "generated_scene"
     raise TypeError(type(clip).__name__)
 
 

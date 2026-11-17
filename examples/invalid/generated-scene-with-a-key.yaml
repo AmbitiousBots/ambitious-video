@@ -1,0 +1,7 @@
+schemaVersion: 2
+disclosure: AI-generated scenes
+output: {path: out/example.mp4, width: 1280, height: 720, fps: 30}
+tracks:
+- id: main
+  clips:
+  - {type: generated_scene, provider: xai-video, model: grok-imagine-video, prompt: A quiet street, duration: 8, api_key: not-a-real-key, fallback: {type: title_card, text: Hello}}

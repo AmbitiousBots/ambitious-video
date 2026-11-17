@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from ambitious_kit.domain.envelope import JsonObject
 
 from ambitious_video.domain.money import Price
-from ambitious_video.domain.types import PaidClip, ProviderKind
+from ambitious_video.domain.types import GeneratedScene, PaidClip, ProviderKind, SceneOutput
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,11 +18,21 @@ class RunResult:
     path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class Patience:
+    poll_seconds: float
+    wait_seconds: float
+
+
 class ProviderError(Exception):
     def __init__(self, provider: str, status: int) -> None:
         super().__init__(provider)
         self.provider = provider
         self.status = status
+
+
+class RequestLost(ProviderError):
+    pass
 
 
 class Provider(Protocol):
@@ -50,3 +61,35 @@ class Provider(Protocol):
     def quote(self, params: JsonObject, units: Decimal) -> Decimal: ...
 
     def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult: ...
+
+
+@runtime_checkable
+class SceneMaker(Protocol):
+    @property
+    def output(self) -> SceneOutput: ...
+
+    def faults(self, step: GeneratedScene) -> tuple[tuple[str, str], ...]: ...
+
+
+@runtime_checkable
+class Deferred(Protocol):
+    @property
+    def patience(self) -> Patience: ...
+
+    def submit(self, params: JsonObject, inputs: Mapping[str, Path], secret: str) -> str: ...
+
+    def collect(self, request_id: str, secret: str, out: Path) -> RunResult | None: ...
+
+
+def await_result(provider: Deferred, request_id: str, secret: str, out: Path) -> RunResult | None:
+    patience = provider.patience
+    deadline = time.monotonic() + patience.wait_seconds
+    try:
+        while True:
+            found = provider.collect(request_id, secret, out)
+            if found is not None or time.monotonic() + patience.poll_seconds > deadline:
+                return found
+            time.sleep(patience.poll_seconds)
+    except BaseException:
+        del secret
+        raise
