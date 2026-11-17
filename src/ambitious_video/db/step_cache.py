@@ -119,6 +119,8 @@ def copy_entry(source: Entry, root: Path, label: Label) -> Entry:
 
 def remove_entry(root: Path, step_key: str) -> bool:
     folder = entry_dir(root, step_key)
+    if folder.is_symlink():
+        raise CacheDamaged(step_key)
     if not folder.is_dir():
         return False
     shutil.rmtree(folder)

@@ -337,8 +337,11 @@ def _fetch(
 ) -> tuple[Path, bool]:
     label = step_cache.Label(item.spec.kind, item.spec.provider, item.spec.model or "", item.spec.adapter_version)
     where = str(store)
-    hold = Hold(str(step_cache.lock_path(store, item.key)))
+    across = Hold(str(_db_path(db).parent / "locks" / ("step-" + item.key + ".lock")))
+    hold: Hold | None = None
     try:
+        across.lock()
+        hold = Hold(str(step_cache.lock_path(store, item.key)))
         hold.lock()
         entry = _entry(store, item.key)
         owed = False
@@ -366,7 +369,9 @@ def _fetch(
         commit(db)
         return entry.path, not owed
     finally:
-        hold.close()
+        if hold is not None:
+            hold.close()
+        across.close()
 
 
 @dataclass(frozen=True, slots=True)

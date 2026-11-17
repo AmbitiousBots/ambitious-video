@@ -46,7 +46,7 @@ Last confirmed in step with the code at commit `db9f60754fc597e1d564a0aff4fd47d3
 | `cached`, `calls` | the folders `<cache dir>/<step key>/` and the `step_cache` table; the provider calls made for a step key |
 | `Remove`, `removals` | `cache prune`, which takes the step key's file lock and skips an entry a render holds, and a cache folder deleted by hand |
 | `Claim` | the start of the `render` command: one transaction that reads the job's state and writes `rendering` |
-| `RunPaidStep` | one paid step of a render, under a file lock named after the step key: look in the cache, call the provider only on a miss, store the result, and add the line of that call in one transaction with the count of the lines the step key already has |
+| `RunPaidStep` | one paid step of a render, under two file locks named after the step key (one beside the database, then one in the cache folder): look in the cache, call the provider only on a miss, store the result, and add the line of that call in one transaction with the count of the lines the step key already has |
 | `Finish` | the end of `render`: one transaction that records the output and writes `rendered` |
 | `RenderFails`, `Crash` | a render that stops on an error, and a render process that dies |
 | `Recover` | marking a job `failed` when it is `rendering` and no render holds it |

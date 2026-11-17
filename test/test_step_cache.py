@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import wave
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -450,6 +451,57 @@ def test_a_second_cache_folder_reuses_the_result_and_bills_nothing(tmp_path: Pat
         assert copied == (folder / "kept" / key / "output.bin").read_bytes()
 
 
+def test_two_renders_at_once_with_two_cache_folders_call_once(tmp_path: Path, no_network: None) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    fake = FakeSpeech()
+    both_started = threading.Barrier(2, timeout=30)
+    overlap = threading.Event()
+    results: dict[str, dict[str, object]] = {}
+    failures: list[BaseException] = []
+
+    def slow(text: str, voice: str, key: str) -> bytes:
+        overlap.wait(0.3)
+        return fake(text, voice, key)
+
+    def work(job: str) -> None:
+        db = _open(home)
+        try:
+            both_started.wait()
+            env = {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+            output = {"path": "out/" + job + ".mp4", "width": 180, "height": 320, "fps": 5}
+            results[job] = _render(db, {**script, "output": output}, folder, job, FIRST, env, slow, tmp_path / job)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            db.close()
+
+    _open(home).close()
+    threads = [threading.Thread(target=work, args=(job,)) for job in ("job-a", "job-b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(120)
+    assert not failures, failures
+    spoken = _spoken(script)
+    assert sorted(fake.calls) == sorted((text, "default") for text in spoken)
+    renders = [results["job-a"], results["job-b"]]
+    db = _open(home)
+    try:
+        keys = _ledger_matches_costs(db, renders, len(spoken))
+        rows = step_cache.list_rows(db)
+        assert {row.state for row in rows} == {"ready"} and len(rows) == 2 * len(spoken)
+    finally:
+        db.close()
+    assert sorted(keys) == sorted(str(step["stepKey"]) for step in _steps(renders[0]))
+    for key in keys:
+        billed = [step["cached"] for data in renders for step in _steps(data) if step["stepKey"] == key]
+        assert sorted(billed) == [False, True]
+        assert (tmp_path / "job-a" / key / "output.bin").read_bytes() == (
+            tmp_path / "job-b" / key / "output.bin"
+        ).read_bytes()
+
+
 def test_a_damaged_result_in_another_folder_is_not_copied(tmp_path: Path) -> None:
     script, folder = _project(tmp_path)
     home = tmp_path / "home"
@@ -552,6 +604,29 @@ def test_prune_leaves_an_entry_that_a_render_holds(tmp_path: Path) -> None:
         assert [row.step_key for row in step_cache.list_rows(db)] == [keys[0]]
         assert (cache / keys[0] / "output.bin").is_file()
         assert step_cache.lock_path(cache, keys[1]).is_file()
+    finally:
+        db.close()
+
+
+def test_prune_refuses_an_entry_folder_that_is_a_link(tmp_path: Path) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    db = _open(home)
+    try:
+        first = _render(
+            db, script, folder, "job-one", FIRST, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}, FakeSpeech()
+        )
+        key = sorted(str(step["stepKey"]) for step in _steps(first))[0]
+        entry = home / "video" / "cache" / key
+        moved = tmp_path / "moved"
+        entry.rename(moved)
+        entry.symlink_to(moved, target_is_directory=True)
+        db.execute("BEGIN IMMEDIATE")
+        with pytest.raises(Failure) as refused:
+            engine.cache_prune(db, None, 0, LATER)
+        db.execute("ROLLBACK")
+        assert refused.value.errors[0].code == "E_CACHE"
+        assert (moved / "output.bin").is_file()
     finally:
         db.close()
 
