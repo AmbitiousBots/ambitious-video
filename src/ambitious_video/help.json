@@ -1,9 +1,10 @@
 {
   "help": {
-    "usage": "ambitious-video <command> [--in file] [--db path] [--cache dir] [--offline] [--now ISO8601] [--seed int] [--json]",
+    "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--offline] [--now ISO8601] [--seed int] [--json]",
     "summary": "Renders a video from a script written as YAML or JSON. Every command prints one JSON envelope on stdout and nothing else.",
     "commands": [
-      { "name": "guide", "summary": "Print an example script to copy, and the steps to render it." },
+      { "name": "guide", "summary": "Print an example script to copy, the starter templates with their inputs, and the steps to render." },
+      { "name": "expand", "summary": "Fill a template (--template <file or starter id>) with an inputs file and return the script in data.script. Reads the inputs." },
       { "name": "validate", "summary": "Check a script and the files it names. Reads a script." },
       { "name": "plan", "summary": "List the steps with their step keys, the captions, the assets and the keys still needed (secretsNeeded) of a script. Reads a script." },
       { "name": "estimate", "summary": "Price a script without calling a provider, and list the keys still needed (secretsNeeded). Reads a script." },
@@ -20,6 +21,8 @@
     ],
     "flags": [
       { "flag": "--in file", "meaning": "Read the script or other input from this file instead of stdin." },
+      { "flag": "--template file", "meaning": "For expand: the template to fill. A file, or the id of a starter template: announcement, short-explainer or welcome." },
+      { "flag": "--out file", "meaning": "For expand: also write the script to this file, as JSON when the name ends in .json and as YAML otherwise. Write it next to the inputs file, because paths in a script are relative to the script." },
       { "flag": "--db path", "meaning": "Use this SQLite file instead of $AMBITIOUS_HOME/video/video.sqlite." },
       { "flag": "--cache dir", "meaning": "For plan, estimate, render, cache list and cache prune: use this step cache folder instead of $AMBITIOUS_HOME/video/cache." },
       { "flag": "--offline", "meaning": "For plan, estimate and render: call no provider and need no key. Every paid step takes its free fallback (speech becomes captions only), is marked with fallback, and costs 0." },
@@ -45,6 +48,23 @@
       "ambitious-video render --in video.yaml",
       "Write { \"jobId\": \"<data.jobId from render>\" } to job.json, then: ambitious-video verify --in job.json"
     ],
+    "templates": {
+      "steps": [
+        "Pick a starter in data.templates.starters. Each one lists its inputs: name, type, whether it is required, and what it is for. text is the template itself, to save and change when the owner wants another layout.",
+        "In the owner's folder, write brand.yaml (colors: { bg, fg, accent } as #RRGGBB, an optional logo and font file) and inputs.yaml: { template: <starter id>, inputs: { <name>: <value>, ... } }. An image, video or audio input is the path of a file in that folder.",
+        "ambitious-video expand --template <starter id or file> --in inputs.yaml --out script.yaml",
+        "ambitious-video validate --in script.yaml, then estimate --in script.yaml. Show the owner the estimate and wait for a go-ahead before render.",
+        "ambitious-video render --in script.yaml, or with --offline to take the free fallback of every paid step."
+      ],
+      "notes": [
+        "A template is data that its owner keeps and changes: typed inputs (text, image, video, audio, color, voice, choice), a brand, ordered scenes with {{input}} slots, an optional endCard, and budget.maxUsd. Substitution is plain: a slot is replaced by one value, and there is no expression language.",
+        "expand is pure. The same template, inputs and brand file give the same script, byte for byte. An input the template does not have, a missing required input and a value of the wrong type are refused with E_INPUT_SCHEMA; data.problems names the document (in) and the place (at) of each.",
+        "inputs.yaml may also hold output: { path, width, height, fps, encode } to replace the template's output, for example an upright size.",
+        "A step whose slot has no value takes the fallback the template names: a scene shows its fallback clip, speech becomes captions only (fallbacks.speech: captions), and music is left out (fallbacks.music: none). data.fallbacks lists each one taken. Without a named fallback the missing value is an error.",
+        "The starters speak the lines only when the voice input is given, with the provider and model written in the template. Without a voice the lines are captions and the video costs nothing.",
+        "Each starter sets budget.maxUsd to 5. expand copies the budget into the script. This version records it and does not refuse a render that costs more, so compare the estimate with it before rendering."
+      ]
+    },
     "keys": [
       "Keys are bring-your-own. A paid step reads its provider's key from one environment variable, only for a call that is not in the step cache yet. The key value is never written to the database, the cache, the plan, the ledger, a log or any output.",
       "Before a render, run estimate (or plan) and read data.secretsNeeded. It has one entry per environment variable that is not set and that an uncached paid step needs: env, provider, steps and usd. It is empty when every key is set or every paid step is cached, and it never holds a key value.",

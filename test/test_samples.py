@@ -107,6 +107,7 @@ def test_sample_brand_file_matches_its_script(slug: str) -> None:
 def test_sample_says_it_is_fictional_sample_data(slug: str) -> None:
     readme = (SAMPLES / slug / "README.md").read_text(encoding="utf-8")
     assert "SAMPLE DATA" in readme and "fictional" in readme and NAMES[slug] in readme
+    assert "SAMPLE DATA" in (SAMPLES / slug / "inputs.yaml").read_text(encoding="utf-8")
     script = _yaml(SAMPLES / slug / "script.yaml")
     tracks = script["tracks"]
     assert isinstance(tracks, list)

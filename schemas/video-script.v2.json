@@ -8,6 +8,14 @@
   "required": ["schemaVersion", "output", "tracks"],
   "properties": {
     "schemaVersion": { "const": 2 },
+    "template": { "$ref": "#/$defs/template" },
+    "budget": { "$ref": "#/$defs/budget" },
+    "disclosure": {
+      "description": "The words that mark AI-generated scenes. The expand command copies them from the template.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
     "output": { "$ref": "#/$defs/output" },
     "brand": { "$ref": "#/$defs/brand" },
     "cache": { "$ref": "#/$defs/cache" },
@@ -37,6 +45,25 @@
     "startSeconds": { "type": "number", "minimum": 0 },
     "lengthSeconds": { "type": "number", "exclusiveMinimum": 0 },
     "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "template": {
+      "description": "The template this script was made from. The expand command writes it, and the plan repeats it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "templateVersion"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "templateVersion": { "const": 1 }
+      }
+    },
+    "budget": {
+      "description": "The most a render of this script should cost, in US dollars. The expand command copies it from the template.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxUsd"],
+      "properties": {
+        "maxUsd": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 }
+      }
+    },
     "output": {
       "type": "object",
       "additionalProperties": false,

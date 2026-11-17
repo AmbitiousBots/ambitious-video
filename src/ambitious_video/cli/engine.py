@@ -906,6 +906,8 @@ def plan_data(raw: object, root: Path, *, offline: bool = False) -> JsonObject:
         ),
         "encode": out.encode,
     }
+    if script.template is not None:
+        plan["template"] = {"id": script.template.id, "templateVersion": script.template.version}
     plan["planSha256"] = plan_sha(plan)
     return {name: sorted_json(plan[name]) for name in sorted(plan)}
 

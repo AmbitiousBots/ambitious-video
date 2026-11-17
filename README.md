@@ -8,7 +8,8 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`,
 
 | Command | Access | What it returns |
 |---|---|---|
-| `guide` | none | A short example script to copy from `data.example.script`, and the steps to render it. |
+| `guide` | none | A short example script to copy from `data.example.script`, the starter templates with their inputs in `data.templates`, and the steps to render. |
+| `expand` | none | The video script made from a template (`--template <file or starter id>`) and an inputs file, in `data.script`, with each fallback that was taken. `--out <file>` also writes it. |
 | `validate` | none | Whether the script is usable, its duration, and any problems. |
 | `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, `planSha256`, and `secretsNeeded`: the keys an uncached paid step still needs. With `--offline`, the plan in which every paid step takes its free fallback. |
 | `estimate` | none | A dry-run price from `pricing.json`. No provider is called. Each paid line names its provider, model, units, price and price source; a step already in the step cache is priced at 0. `secretsNeeded` lists the keys that are still needed. With `--offline` the price is 0. |
@@ -35,6 +36,78 @@ ambitious-video render --in video.yaml        # writes out/titles-and-captions.m
 ```
 
 A `voiceover` clip is a caption only. Use a `speech` clip, described below, only when you want a line spoken and have set the provider key in the environment. `estimate` lists the keys a script still needs, and `--offline` renders it without any.
+
+## Templates
+
+A template is a video with named inputs. It is data that its owner keeps and changes: the same template makes a video for any business once the inputs are filled in. `expand` fills a template and returns an ordinary video script, so everything after it (`validate`, `plan`, `estimate`, `render`, `verify`) works as for a script written by hand.
+
+```sh
+ambitious-video expand --template welcome --in inputs.yaml --out script.yaml
+ambitious-video validate --in script.yaml
+ambitious-video estimate --in script.yaml     # show the price before rendering
+ambitious-video render --in script.yaml
+```
+
+`--template` takes a template file, or the id of one of the three starter templates that ship with the binary. `guide` lists them in `data.templates.starters`, each with its inputs and its full text to save and change:
+
+| Starter | What it makes | Default size |
+|---|---|---|
+| `welcome` | The name, three pictures, one highlight and a closing card, about 20 seconds. | 1920 by 1080 |
+| `short-explainer` | One idea in three points, each with a picture or, without one, a card. About 20 seconds. | 1920 by 1080 |
+| `announcement` | One piece of news with three pictures, upright for a phone screen. About 16 seconds. | 1080 by 1920 |
+
+The starters name no business. Their words, pictures, colors and logo all come from the inputs and the brand file.
+
+An inputs file holds the values, and may replace the template's output:
+
+```yaml
+template: welcome                      # optional: expand refuses another template
+inputs:
+  business_name: "Example Plumbing Co."
+  picture_1: assets/still-1.png        # a file in the folder of the inputs file
+  # ... one value for each required input
+output: { path: out/plumbing.mp4, width: 1280, height: 720 }   # optional
+```
+
+A template looks like this (`schemas/video-template.v1.json` is its JSON Schema, and [schemas/README.md](schemas/README.md) explains every field):
+
+```yaml
+templateVersion: 1
+id: welcome
+title: Welcome video
+inputs:
+  business_name: { type: text, required: true, maxLength: 60 }
+  picture_1: { type: image, required: true }
+  voice: { type: voice }
+brand: { file: brand.yaml }             # the owner's brand file, next to the inputs
+output: { path: out/welcome.mp4, width: 1920, height: 1080, fps: 30 }
+budget: { maxUsd: 5 }
+speech: { provider: xai-speech, model: tts, voice: "{{voice}}" }
+fallbacks: { speech: captions }
+scenes:
+  - id: opening
+    show: { type: title_card, duration: 3.0, text: "{{business_name}}" }
+    say: [{ at: 0.5, duration: 2.0, text: "Welcome to {{business_name}}." }]
+    cut: { transition: crossfade, duration: 0.4 }
+  - id: picture-1
+    show: { type: image, path: "{{picture_1}}", duration: 4.0 }
+endCard: { duration: 3.0, text: "{{business_name}}" }
+```
+
+- **Inputs** have a type: `text`, `image`, `video`, `audio`, `color`, `voice` or `choice`. An input is `required`, or has a `default`, or may be left out.
+- **Substitution is plain.** `{{name}}` is replaced by the value of that input, once. There is no expression language: no conditions, loops, filters or arithmetic, and a value that itself holds `{{...}}` is not expanded again.
+- **Scenes** are shown in order. Each shows a title card, a picture or a part of a video file, may say lines (timed from the start of the scene), and may cut into the next scene with a crossfade. `expand` works out every time in the script.
+- **Fallbacks.** When a slot has no value, the step takes the fallback the template names: a scene shows its `fallback` clip, lines become captions only (`fallbacks.speech: captions`), and music is left out (`fallbacks.music: none`). `data.fallbacks` lists each one taken. Without a named fallback the missing value is an error.
+- **Provider and model are written in the template.** Nothing chooses one at render time. The starters speak the lines with `xai-speech` only when the `voice` input is given; without it the lines are captions and the video costs nothing.
+- **`budget.maxUsd`** is the most one video should cost. The starters set 5. `expand` copies it into the script; this version records it and does not yet refuse a render that costs more, so compare the estimate with it before rendering.
+
+`expand` is pure: it opens no database and calls no provider, and the same template, inputs and brand file give the same script byte for byte, whatever `--now` and `--seed` are. It prints the script in `data.script` with `data.scriptSha256`, and `--out` also writes it to a file, as JSON when the name ends in `.json` and as YAML otherwise. Write the script into the folder of the inputs file, because paths in a script are relative to the script. The script names its template in `template: { id, templateVersion }`, and `plan` repeats that.
+
+An input the template does not have, a missing required input, a value of the wrong type, a slot that names no input and a template that does not match the schema are all refused with `E_INPUT_SCHEMA`. `data.problems` has one entry for each, with the document it is in (`template`, `inputs`, `brand` or `script`), the place (`at`) and a message:
+
+```json
+{ "code": "E_INPUT_SCHEMA", "in": "inputs", "at": "/inputs", "message": "Input tagline is required." }
+```
 
 ## What a render does
 
@@ -117,7 +190,7 @@ The commands find providers only through that registry, so an adapter needs no c
 
 ## Plans, step keys and the step cache
 
-`plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. `render` returns the same `planSha256`. `secretsNeeded` is printed next to the plan and is not part of `planSha256`, because it depends on which keys are set and what the step cache holds; everything else in `data` is hashed.
+`plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. A script that `expand` made also has `template: { id, templateVersion }` in its plan. `render` returns the same `planSha256`. `secretsNeeded` is printed next to the plan and is not part of `planSha256`, because it depends on which keys are set and what the step cache holds; everything else in `data` is hashed.
 
 Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the model, the words, the voice and the adapter's language and format settings), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. For a provider that takes a seed, `provider_seed` derives it from `--seed` and the step key. Speech takes none, so `--seed` does not change a speech key, and no provider that takes a seed ships yet.
 
@@ -167,12 +240,15 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | Where | What |
 |---|---|
 | `schemas/video-script.v2.json` | The video script format. [schemas/README.md](schemas/README.md) explains it. |
+| `schemas/video-template.v1.json` | The template format that `expand` reads. The same README explains it. |
+| `templates/` | The three starter templates: `welcome.yaml`, `short-explainer.yaml` and `announcement.yaml`. A copy of each is inside the package, in `src/ambitious_video/templates/`, so the binary has them; a test keeps the copies the same. |
 | `examples/` | Three scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, and `all-clip-types.yaml` uses every clip type, including paid `speech`. `examples/invalid/` holds scripts that must be rejected. |
-| `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has a `brand.yaml`, a `script.yaml` and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
+| `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has an `inputs.yaml` for one starter template, a `brand.yaml`, the `script.yaml` that `expand` writes from them, and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
 | `src/ambitious_video/steps/` | One module per clip type. Each `compile` is pure. Register a new type in `steps/__init__.py`. |
 | `src/ambitious_video/providers/` | The `Provider` protocol, the registry, the price table reader, and one module per provider adapter. |
 | `spec/` | A TLA+ model of a render job: a retry never charges twice, the ledger holds one line per provider call, a step key is called again only if its result was removed, a verified video was rendered, one render per job. [spec/README.md](spec/README.md) explains it. |
 | `src/ambitious_video/domain/plan.py` | Canonical JSON, `step_key` and `planSha256`. |
+| `src/ambitious_video/domain/template.py` | Reading a template and filling it: pure, with no file or network access. |
 | `src/ambitious_video/db/step_cache.py` | The step cache: the folders and the `step_cache` table. |
 | `src/ambitious_video/domain/types.py` | The types the commands share: the script, jobs and their states, the cost ledger and assets. |
 | `verify/formal/SKILL.md` | For coding agents: when and how to rerun the checks, and how to read a failure. |

@@ -25,7 +25,7 @@ node scripts/check-standalone.mjs
 bash spec/check.sh && python3 scripts/check_schemas.py
 ```
 
-`verify/run` renders `examples/minimal.yaml` and the script that `guide` prints, which need no API key. Do not point a check at a paid speech call. `verify/run` removes `XAI_API_KEY` from the environment for that run.
+`verify/run` renders `examples/minimal.yaml`, the script that `guide` prints, and each sample project from its starter template, which need no API key. After changing a starter template in `templates/`, copy it to `src/ambitious_video/templates/` and run `expand` again for the samples that use it; the checks fail until both are done. Do not point a check at a paid speech call. `verify/run` removes `XAI_API_KEY` from the environment for that run.
 
 ## Secrets
 

@@ -30,6 +30,10 @@ RESTARTED = "AMBITIOUS_VIDEO_CHECK_RESTARTED"
 MINIMUM_PYTHON = (3, 13)
 
 SCHEMA = REPO / "schemas" / "video-script.v2.json"
+TEMPLATE_SCHEMA = REPO / "schemas" / "video-template.v1.json"
+TEMPLATES = REPO / "templates"
+PACKAGED_TEMPLATES = REPO / "src" / "ambitious_video" / "templates"
+REQUIRED_TEMPLATES = ("announcement", "short-explainer", "welcome")
 EXAMPLES = REPO / "examples"
 INVALID = EXAMPLES / "invalid"
 EXPECTED = INVALID / "EXPECTED.json"
@@ -173,6 +177,88 @@ def schema_matches_types(schema: Document, types: ModuleType) -> list[str]:
     return problems
 
 
+def template_schema_matches_types(schema: Document, script_schema: Document, types: ModuleType) -> list[str]:
+    problems = []
+
+    def same(what: str, in_schema: object, in_types: object) -> None:
+        if in_schema != in_types:
+            problems.append(
+                f"{what}: schemas/video-template.v1.json says {json.dumps(in_schema)} and "
+                f"src/ambitious_video/domain/types.py says {json.dumps(in_types)}. Change both together"
+            )
+
+    defs = schema["$defs"]
+    names = schema["properties"]["inputs"]["propertyNames"]["pattern"]
+    in_script = script_schema["$defs"]["template"]["properties"]
+    same("template version", schema["properties"]["templateVersion"]["const"], types.TEMPLATE_VERSION)
+    same("template version in a script", in_script["templateVersion"]["const"], types.TEMPLATE_VERSION)
+    same("pattern of a template id", defs["templateId"]["pattern"], types.TEMPLATE_ID_PATTERN)
+    same("pattern of a template id in a script", in_script["id"]["pattern"], types.TEMPLATE_ID_PATTERN)
+    same("pattern of an input name", names, types.INPUT_NAME_PATTERN)
+    same("input types", defs["input"]["properties"]["type"]["enum"], members(types.InputType))
+    same("what a scene can show", defs["shown"]["properties"]["type"]["enum"], members(types.SceneType))
+    same("pattern of a scene id", defs["sceneId"]["pattern"], types.TRACK_ID_PATTERN)
+    same("pattern of a color", defs["hexColor"]["pattern"], types.HEX_COLOR_PATTERN)
+    same("pattern of a provider id", defs["speech"]["properties"]["provider"]["pattern"], types.PROVIDER_ID_PATTERN)
+    same("pattern of a model id", defs["speech"]["properties"]["model"]["pattern"], types.MODEL_ID_PATTERN)
+    for name in ("path", "width", "height", "fps"):
+        in_template = defs["output"]["properties"][name]
+        same(f"output {name}", in_template, script_schema["$defs"]["output"]["properties"][name])
+    encodings = script_schema["$defs"]["output"]["properties"]["encode"]["enum"]
+    same("output encodings", defs["output"]["properties"]["encode"]["enum"], encodings)
+    return problems
+
+
+def check_templates(
+    validator: Draft202012Validator, script_validator: Draft202012Validator, load: Callable[[Path], Document]
+) -> tuple[list[str], int]:
+    from ambitious_video.domain.template import expand, load_template
+
+    problems = []
+    names = sorted(path.stem for path in TEMPLATES.glob("*.yaml"))
+    for name in REQUIRED_TEMPLATES:
+        if name not in names:
+            problems.append(f"templates/{name}.yaml is missing")
+    loaded = {}
+    for name in names:
+        where = f"templates/{name}.yaml"
+        template = load(TEMPLATES / f"{name}.yaml")
+        found = rejections(validator, template)
+        if found:
+            problems.append(f"{where}: must be accepted, but the schema rejects it by {told(found)}")
+            continue
+        parsed, faults = load_template(template)
+        if parsed is None:
+            problems.append(f"{where}: the schema accepts it, but expand refuses it: {faults[0].at} {faults[0].message}")
+            continue
+        if template["id"] != name:
+            problems.append(f"{where}: its id must be {name}, the name of the file")
+        packaged = PACKAGED_TEMPLATES / f"{name}.yaml"
+        if not packaged.is_file() or packaged.read_bytes() != (TEMPLATES / f"{name}.yaml").read_bytes():
+            problems.append(f"{where} and src/ambitious_video/templates/{name}.yaml differ. Copy one over the other")
+        loaded[name] = parsed
+    if sorted(path.stem for path in PACKAGED_TEMPLATES.glob("*.yaml")) != names:
+        problems.append("templates/ and src/ambitious_video/templates/ must hold the same files")
+    for slug in sorted(path.name for path in SAMPLES.iterdir() if path.is_dir()):
+        where = f"examples/samples/{slug}"
+        if not (SAMPLES / slug / "inputs.yaml").is_file() or not (SAMPLES / slug / "script.yaml").is_file():
+            problems.append(f"{where}: needs inputs.yaml")
+            continue
+        inputs = load(SAMPLES / slug / "inputs.yaml")
+        if inputs.get("template") not in loaded:
+            problems.append(f"{where}/inputs.yaml: template must name a starter template in templates/")
+            continue
+        made = expand(loaded[inputs["template"]], inputs, load(SAMPLES / slug / "brand.yaml"))
+        if made.script is None:
+            first = made.problems[0]
+            problems.append(f"{where}/inputs.yaml: expand refuses it: {first.document} {first.at} {first.message}")
+        elif rejections(script_validator, dict(made.script)):
+            problems.append(f"{where}: the expanded script does not match schemas/video-script.v2.json")
+        elif made.script != load(SAMPLES / slug / "script.yaml"):
+            problems.append(f"{where}/script.yaml is not what expand writes from inputs.yaml. Run expand again")
+    return problems, len(names)
+
+
 def model_matches_types(types: ModuleType) -> list[str]:
     text = MODEL.read_text(encoding="utf-8")
     states = re.search(r"^States == \{([^}]*)\}$", text, re.MULTILINE)
@@ -309,11 +395,19 @@ def main() -> None:
     jsonschema.Draft202012Validator.check_schema(schema)
     validator = jsonschema.Draft202012Validator(schema)
 
+    template_schema = json.loads(TEMPLATE_SCHEMA.read_text(encoding="utf-8"))
+    if template_schema.get("$schema") != DRAFT:
+        stop(f"schemas/video-template.v1.json must declare {DRAFT}")
+    jsonschema.Draft202012Validator.check_schema(template_schema)
+    template_validator = jsonschema.Draft202012Validator(template_schema)
+
     valid_problems, valid = check_valid(validator, load, types)
     sample_problems, samples = check_samples(validator, load)
     invalid_problems, invalid = check_invalid(validator, load, types)
+    template_problems, templates = check_templates(template_validator, validator, load)
     agreement = schema_matches_types(schema, types) + model_matches_types(types)
-    problems = agreement + valid_problems + sample_problems + invalid_problems
+    agreement += template_schema_matches_types(template_schema, schema, types)
+    problems = agreement + valid_problems + sample_problems + template_problems + invalid_problems
     for problem in problems:
         sys.stderr.write(f"FAIL: {problem}\n")
     if problems:
@@ -326,6 +420,9 @@ def main() -> None:
         "ok  the job states and moves in spec/RenderJob.tla and types.py agree",
         f"ok  {valid} examples accepted, and together they use every clip type",
         f"ok  {samples} sample projects accepted, each with the brand its brand.yaml names",
+        "ok  schemas/video-template.v1.json is a valid JSON Schema (draft 2020-12) and agrees with types.py",
+        f"ok  {templates} starter templates accepted, each the same as its packaged copy, "
+        "and every sample script is what expand writes from its inputs",
         f"ok  {invalid} invalid examples rejected, each for the reason in examples/invalid/EXPECTED.json",
         "check_schemas: ok",
     ]
