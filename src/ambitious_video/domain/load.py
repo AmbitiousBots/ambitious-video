@@ -5,6 +5,9 @@ from collections.abc import Mapping
 
 from ambitious_video.domain.types import (
     HEX_COLOR_PATTERN,
+    MODEL_ID_PATTERN,
+    PROVIDER_ID_PATTERN,
+    SCHEMA_VERSION,
     TRACK_ID_PATTERN,
     Action,
     AudioClip,
@@ -28,12 +31,12 @@ from ambitious_video.domain.types import (
     ScriptProblem,
     ScriptRule,
     Scroll,
+    Speech,
     TitleCard,
     Track,
     TrackId,
     UnknownStep,
     VideoClip,
-    Voice,
     Voiceover,
     Wait,
     WebAddress,
@@ -43,7 +46,10 @@ RELATIVE = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$)).+$")
 WEB = re.compile(r"^https?://[^\s]+$")
 TRACK = re.compile(TRACK_ID_PATTERN)
 COLOR = re.compile(HEX_COLOR_PATTERN)
-CLIP_TYPES = ("title_card", "screen_recording", "video", "image", "voiceover", "audio")
+PROVIDER = re.compile(PROVIDER_ID_PATTERN)
+MODEL = re.compile(MODEL_ID_PATTERN)
+CLIP_TYPES = ("title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio")
+SPOKEN = frozenset({"voiceover", "speech"})
 MAX_TEXT = 2000
 MAX_PATH = 1024
 MAX_URL = 2048
@@ -204,23 +210,6 @@ def _brand(bag: _Bag, value: object) -> Brand | None:
     return Brand(font, colors, logo)
 
 
-def _voice(bag: _Bag, value: object) -> Voice | None:
-    raw = _object(bag, value, "/voice")
-    if raw is None:
-        return None
-    _keys(bag, raw, {"provider", "voice"}, "/voice")
-    if not _need(bag, raw, ("provider", "voice"), "/voice"):
-        return None
-    provider = raw.get("provider")
-    if provider != "xai":
-        bag.schema("/voice/provider", "The voice provider must be xai.")
-        return None
-    name = _text(bag, raw.get("voice"), "/voice/voice", high=128)
-    if name is None:
-        return None
-    return Voice("xai", name)
-
-
 def _cache(bag: _Bag, value: object) -> RelativePath | None:
     raw = _object(bag, value, "/cache")
     if raw is None:
@@ -271,6 +260,7 @@ def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
         "video": {"type", "path", "in", "out"},
         "image": {"type", "path", "duration", "kenburns"},
         "voiceover": {"type", "at", "text", "duration"},
+        "speech": {"type", "at", "text", "duration", "provider", "model", "voice"},
         "audio": {"type", "path", "at", "gain_db", "duck_under"},
     }[kind]
     required = {
@@ -279,6 +269,7 @@ def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
         "video": ("path",),
         "image": ("path", "duration"),
         "voiceover": ("at", "text"),
+        "speech": ("at", "text", "provider", "model", "voice"),
         "audio": ("path", "at"),
     }[kind]
     _keys(bag, raw, allowed, at)
@@ -332,7 +323,7 @@ def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
         if path is None or duration is None:
             return None
         return ImageClip(path, duration, kenburns)
-    if kind == "voiceover":
+    if kind in SPOKEN:
         at_time = _number(bag, raw["at"], say(at, "/at"), low=0)
         text = _text(bag, raw["text"], say(at, "/text"))
         duration = None
@@ -340,7 +331,14 @@ def _clip(bag: _Bag, value: object, at: str) -> Clip | None:
             duration = _number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
         if at_time is None or text is None or ("duration" in raw and duration is None):
             return None
-        return Voiceover(at_time, text, duration)
+        if kind == "voiceover":
+            return Voiceover(at_time, text, duration)
+        provider = _text(bag, raw["provider"], say(at, "/provider"), pattern=PROVIDER, high=32)
+        model = _text(bag, raw["model"], say(at, "/model"), pattern=MODEL, high=64)
+        voice = _text(bag, raw["voice"], say(at, "/voice"), high=128)
+        if provider is None or model is None or voice is None:
+            return None
+        return Speech(at_time, text, duration, provider, model, voice)
     path = _path(bag, raw["path"], say(at, "/path"))
     at_time = _number(bag, raw["at"], say(at, "/at"), low=0)
     gain = _number(bag, raw["gain_db"], say(at, "/gain_db"), low=-60, high=12) if "gain_db" in raw else None
@@ -406,7 +404,7 @@ def _rules(bag: _Bag, script: Script) -> None:
         if isinstance(track, CaptionsTrack):
             source = by_id.get(track.source)
             clips = source.clips if isinstance(source, ClipTrack) else ()
-            if not any(isinstance(clip, Voiceover) for clip in clips):
+            if not any(isinstance(clip, Voiceover | Speech) for clip in clips):
                 bag.rule(
                     "captions-from-a-voiceover-track",
                     say("/tracks/", str(index), "/from"),
@@ -434,11 +432,11 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
     document = _object(bag, raw, "")
     if document is None:
         return None, tuple(bag.items)
-    _keys(bag, document, {"schemaVersion", "output", "brand", "voice", "cache", "tracks", "cuts"}, "")
+    _keys(bag, document, {"schemaVersion", "output", "brand", "cache", "tracks", "cuts"}, "")
     if "schemaVersion" not in document:
         bag.schema("", "Field schemaVersion is required.")
-    elif document.get("schemaVersion") != 1:
-        bag.schema("/schemaVersion", "schemaVersion must be 1.")
+    elif document.get("schemaVersion") != SCHEMA_VERSION:
+        bag.schema("/schemaVersion", "schemaVersion must be 2.")
     if "output" not in document or "tracks" not in document:
         if "output" not in document:
             bag.schema("", "Field output is required.")
@@ -447,7 +445,6 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
         return None, tuple(bag.items)
     output = _output(bag, document["output"])
     brand = _brand(bag, document["brand"]) if "brand" in document else None
-    voice = _voice(bag, document["voice"]) if "voice" in document else None
     cache_dir = _cache(bag, document["cache"]) if "cache" in document else None
     listed = _list(bag, document["tracks"], "/tracks", low=1, high=16)
     tracks: list[Track] = []
@@ -468,7 +465,7 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
                 cuts = [item for item in built_cuts if item is not None]
     if bag.items or output is None:
         return None, tuple(bag.items)
-    script = Script(output, brand, voice, tuple(tracks), tuple(cuts), cache_dir)
+    script = Script(output, brand, tuple(tracks), tuple(cuts), cache_dir)
     _rules(bag, script)
     if bag.items:
         return None, tuple(bag.items)

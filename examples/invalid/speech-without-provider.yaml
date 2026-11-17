@@ -4,3 +4,6 @@ tracks:
 - id: main
   clips:
   - {type: title_card, duration: 3.0, text: Hello}
+- id: voice
+  clips:
+  - {type: speech, at: 0.5, text: Hello, model: tts, voice: eve}

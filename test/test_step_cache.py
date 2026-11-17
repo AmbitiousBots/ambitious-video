@@ -9,8 +9,10 @@ import shutil
 import subprocess
 import sys
 import threading
+import urllib.error
 import wave
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -24,12 +26,13 @@ from ambitious_video.cli import engine
 from ambitious_video.db import step_cache
 from ambitious_video.db.lock import Hold
 from ambitious_video.db.store import list_ledger
+from ambitious_video.providers.base import ProviderError
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "examples" / "samples" / "example-bookshop"
 MIGRATIONS = load_migrations(ROOT / "src" / "ambitious_video" / "db" / "migrations")
 ENV_PATH = os.pathsep.join([str(ROOT / "src"), str(ROOT / "vendor")])
-RATE = Decimal("0.000015")
+Speaker = Callable[[str, str, str], bytes]
 SECRET = "not-a-real-key-0123456789"
 FIRST = datetime(2026, 1, 1, tzinfo=UTC)
 LATER = datetime(2026, 3, 1, 9, 30, tzinfo=UTC)
@@ -56,6 +59,30 @@ def _never(_text: str, _voice: str, _key: str) -> bytes:
     raise AssertionError("a cached step must not call the provider")
 
 
+class _Answer(io.BytesIO):
+    def __enter__(self) -> _Answer:
+        return self
+
+
+@contextmanager
+def _served(speaker: Speaker) -> Iterator[None]:
+    unwanted: list[str] = []
+
+    def opened(request: object, timeout: float = 0) -> _Answer:
+        assert getattr(request, "full_url", "") == "https://api.x.ai/v1/tts" and timeout > 0
+        sent = json.loads(getattr(request, "data", b""))
+        assert set(sent) == {"text", "voice_id", "language", "output_format"}
+        key = str(getattr(request, "headers", {}).get("Authorization")).removeprefix("Bearer ")
+        if speaker is _never:
+            unwanted.append(sent["text"])
+        return _Answer(speaker(sent["text"], sent["voice_id"], key))
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("urllib.request.urlopen", opened)
+        yield
+    assert unwanted == []
+
+
 @pytest.fixture
 def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def refuse(*_args: object, **_kwargs: object) -> object:
@@ -63,7 +90,6 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("socket.socket", refuse)
     monkeypatch.setattr("socket.create_connection", refuse)
-    monkeypatch.setattr("urllib.request.urlopen", refuse)
 
 
 def _project(dest: Path) -> tuple[dict[str, object], Path]:
@@ -71,7 +97,10 @@ def _project(dest: Path) -> tuple[dict[str, object], Path]:
     shutil.copytree(SAMPLE, folder)
     script = yaml.safe_load((folder / "script.yaml").read_text(encoding="utf-8"))
     assert isinstance(script, dict)
-    script["voice"] = {"provider": "xai", "voice": "default"}
+    for track in script["tracks"]:
+        for clip in track.get("clips", []):
+            if clip["type"] == "voiceover":
+                clip.update({"type": "speech", "provider": "xai-speech", "model": "tts", "voice": "eve"})
     script["output"] = {"path": "out/sample.mp4", "width": 180, "height": 320, "fps": 5}
     return script, folder
 
@@ -89,12 +118,13 @@ def _render(
     job: str,
     when: datetime,
     env: Mapping[str, str],
-    speaker: engine.Speaker,
+    speaker: Speaker,
     cache: Path | None = None,
 ) -> dict[str, object]:
     db.execute("BEGIN IMMEDIATE")
     try:
-        data = engine.render_new(db, dict(script), folder, job, when, RATE, env, speaker, cache)
+        with _served(speaker):
+            data = engine.render_new(db, dict(script), folder, job, when, env, cache)
         db.execute("COMMIT")
     except BaseException:
         if db.in_transaction:
@@ -112,7 +142,7 @@ def _steps(data: Mapping[str, object]) -> list[dict[str, object]]:
 def _spoken(script: Mapping[str, object]) -> list[str]:
     tracks = script["tracks"]
     assert isinstance(tracks, list)
-    return [clip["text"] for track in tracks for clip in track.get("clips", []) if clip["type"] == "voiceover"]
+    return [clip["text"] for track in tracks for clip in track.get("clips", []) if clip["type"] == "speech"]
 
 
 def _cli(home: Path, args: list[str], now: str) -> dict[str, object]:
@@ -152,7 +182,7 @@ def test_a_new_job_with_the_same_inputs_is_not_billed_again(tmp_path: Path, no_n
         first = _render(db, script, folder, "job-one", FIRST, env, fake)
         lines = list_ledger(db)
         spoken = _spoken(script)
-        assert [text for text, _voice in fake.calls] == spoken and len(set(spoken)) == len(spoken) > 1
+        assert fake.calls == [(text, "eve") for text in spoken] and len(set(spoken)) == len(spoken) > 1
         assert [step["cached"] for step in _steps(first)] == [False] * len(spoken)
         assert [line.idem_key for line in lines] == [step["stepKey"] for step in _steps(first)]
         assert {line.job_id for line in lines} == {"job-one"}
@@ -247,7 +277,8 @@ def test_cache_dir_comes_from_the_flag_then_the_script_then_home(tmp_path: Path)
     entry = flagged / sorted(keys)[0]
     assert sorted(path.name for path in entry.iterdir()) == ["meta.json", "output.bin"]
     meta = json.loads((entry / "meta.json").read_text(encoding="utf-8"))
-    assert meta["stepKey"] == entry.name and meta["provider"] == "xai" and meta["kind"] == "speech"
+    assert meta["stepKey"] == entry.name and meta["kind"] == "speech"
+    assert (meta["provider"], meta["model"]) == ("xai-speech", "tts")
     assert set(meta) == {"stepKey", "kind", "provider", "model", "adapterVersion", "file", "sha256", "bytes"}
 
 
@@ -292,15 +323,17 @@ def test_a_call_that_was_stored_but_not_yet_billed_is_billed_once(tmp_path: Path
 
 
 def test_a_failed_call_leaves_no_entry_no_row_and_no_ledger_line(tmp_path: Path) -> None:
-    def broken(_text: str, _voice: str, _key: str) -> bytes:
-        raise engine.SpeechError(500)
+    def broken(_text: str, _voice: str, key: str) -> bytes:
+        raise urllib.error.HTTPError("https://api.x.ai/v1/tts", 500, "broken", None, io.BytesIO(key.encode()))  # type: ignore[arg-type] # no headers
 
     script, folder = _project(tmp_path)
     home = tmp_path / "home"
     db = _open(home)
     try:
-        with pytest.raises(engine.SpeechError):
+        with pytest.raises(ProviderError) as caught:
             _render(db, script, folder, "job-one", FIRST, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}, broken)
+        assert (caught.value.provider, caught.value.status) == ("xai-speech", 500)
+        assert SECRET not in str(caught.value) and caught.value.__cause__ is None
         assert list_ledger(db) == () and step_cache.list_rows(db) == ()
         assert db.execute("SELECT state FROM jobs").fetchall() == [("failed",)]
     finally:
@@ -347,7 +380,7 @@ def test_cache_list_reads_and_cache_prune_removes_only_when_asked(tmp_path: Path
     assert isinstance(data, dict)
     assert [entry["stepKey"] for entry in data["entries"]] == keys
     assert all(entry["present"] and entry["state"] == "ready" for entry in data["entries"])
-    assert all(entry["dir"] == str(cache.resolve()) and entry["provider"] == "xai" for entry in data["entries"])
+    assert all(entry["dir"] == str(cache.resolve()) and entry["provider"] == "xai-speech" for entry in data["entries"])
     assert all(entry["createdAt"] == entry["usedAt"] == "2026-01-01T00:00:00.000Z" for entry in data["entries"])
     assert data["count"] == len(keys) and data["bytes"] == sum(entry["bytes"] for entry in data["entries"])
     assert database.read_bytes() == before
@@ -484,7 +517,7 @@ def test_two_renders_at_once_with_two_cache_folders_call_once(tmp_path: Path, no
         thread.join(120)
     assert not failures, failures
     spoken = _spoken(script)
-    assert sorted(fake.calls) == sorted((text, "default") for text in spoken)
+    assert sorted(fake.calls) == sorted((text, "eve") for text in spoken)
     renders = [results["job-a"], results["job-b"]]
     db = _open(home)
     try:

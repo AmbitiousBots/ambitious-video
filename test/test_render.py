@@ -89,7 +89,7 @@ def subprocess_verify(home: Path, cwd: Path, job_id: str) -> dict[str, object]:
 def test_a_cut_between_title_cards_matches(tmp_path: Path) -> None:
     script = "\n".join(
         [
-            "schemaVersion: 1",
+            "schemaVersion: 2",
             "output: { path: cut.mp4, width: 320, height: 180, fps: 10 }",
             "tracks:",
             "  - id: main",
@@ -116,19 +116,24 @@ def test_a_cut_between_title_cards_matches(tmp_path: Path) -> None:
     assert all(isinstance(item, dict) and item["ok"] is True for item in checks)
 
 
-def test_voice_without_a_key_is_refused(tmp_path: Path) -> None:
+def test_speech_without_a_key_is_refused(tmp_path: Path) -> None:
     script = "\n".join(
         [
-            "schemaVersion: 1",
+            "schemaVersion: 2",
             "output: { path: talk.mp4, width: 320, height: 180, fps: 10 }",
-            "voice: { provider: xai, voice: default }",
             "tracks:",
             "  - id: main",
             "    clips:",
             '      - { type: title_card, duration: 1.0, text: "Hi" }',
             "  - id: voice",
             "    clips:",
-            '      - { type: voiceover, at: 0, duration: 0.5, text: "Hi" }',
+            "      - type: speech",
+            "        at: 0",
+            "        duration: 0.5",
+            '        text: "Hi"',
+            "        provider: xai-speech",
+            "        model: tts",
+            "        voice: eve",
             "",
         ]
     )
@@ -136,7 +141,8 @@ def test_voice_without_a_key_is_refused(tmp_path: Path) -> None:
     assert rendered["exit"] == 1
     errors = rendered["errors"]
     assert isinstance(errors, list) and isinstance(errors[0], dict)
-    assert errors[0]["code"] == "E_NO_KEY"
+    assert errors[0]["code"] == "E_NO_KEY" and "XAI_API_KEY" in errors[0]["hint"]
+    assert rendered["data"] == {"env": "XAI_API_KEY", "provider": "xai-speech"}
 
 
 def test_all_clip_types_estimate_matches_the_price_table(tmp_path: Path) -> None:
@@ -145,5 +151,5 @@ def test_all_clip_types_estimate_matches_the_price_table(tmp_path: Path) -> None
     assert estimated["exit"] == 0, estimated
     data = estimated["data"]
     assert isinstance(data, dict)
-    assert data["usd"] == "0.004095"
+    assert data["usd"] == "0.003585"
     assert data["durationSec"] == 33

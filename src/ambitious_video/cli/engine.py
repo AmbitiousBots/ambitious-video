@@ -12,13 +12,13 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import partial
 from pathlib import Path
+from typing import NoReturn
 
 from ambitious_kit.domain.clock import format_instant
 from ambitious_kit.domain.envelope import ErrorEntry, Failure, JsonObject, JsonValue, failure
 from ambitious_kit.paths import ambitious_home, refuse_agent_data
 
-from ambitious_video.ai import speech
-from ambitious_video.ai.speech import SpeechError, speak
+from ambitious_video import providers
 from ambitious_video.db import step_cache
 from ambitious_video.db.lock import Hold
 from ambitious_video.db.store import (
@@ -35,7 +35,7 @@ from ambitious_video.db.store import (
 from ambitious_video.db.tx import begin, commit
 from ambitious_video.domain.clips import kind_of
 from ambitious_video.domain.load import RELATIVE, load_script, say
-from ambitious_video.domain.money import Quote, money_text, quotes, total_usd, units_text
+from ambitious_video.domain.money import Quote, money_text, paid_units, rate_text, total_usd, units_text
 from ambitious_video.domain.need import NeedTool
 from ambitious_video.domain.plan import (
     LOCAL,
@@ -53,24 +53,28 @@ from ambitious_video.domain.types import (
     AudioClip,
     CaptionsTrack,
     Clip,
+    ClipTrack,
     EncodeMode,
     ImageClip,
+    PaidClip,
     Script,
     ScriptProblem,
     Sha256Hex,
+    Speech,
     UnknownStep,
     VideoClip,
-    Voiceover,
     idem_key,
 )
 from ambitious_video.media.audio import Piece, write_wav
 from ambitious_video.media.film import STORED_AS, TO_RGB, canvas_for, encode, frame_at, matches, prepare
 from ambitious_video.media.probe import duration_of, frame_count, inspect, stored_as
+from ambitious_video.providers.base import Provider, ProviderError
+from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken
 from ambitious_video.steps import compile_clip
 from ambitious_video.steps.common import readable_font
 
-Speaker = Callable[[str, str, str], bytes]
 FONT_INPUT = "brand.font"
+PAID_KINDS = {Speech: "speech"}
 
 
 def as_json(value: object) -> JsonValue:
@@ -156,12 +160,43 @@ def font_faults(script: Script, root: Path) -> tuple[Fault, ...]:
     return ()
 
 
+def _provider_faults(script: Script) -> tuple[Fault, ...]:
+    rows: list[Fault] = []
+    for track_index, track in enumerate(script.tracks):
+        if not isinstance(track, ClipTrack):
+            continue
+        for clip_index, clip in enumerate(track.clips):
+            if not isinstance(clip, PaidClip):
+                continue
+            at = say("/tracks/", str(track_index), "/clips/", str(clip_index))
+            found = providers.find(clip.provider)
+            if found is None:
+                rows.append(Fault("E_INPUT_SCHEMA", say(at, "/provider"), "No provider has that id."))
+            elif found.kind != PAID_KINDS[type(clip)]:
+                rows.append(Fault("E_INPUT_SCHEMA", say(at, "/provider"), "That provider does not do this step."))
+            elif clip.model not in found.models:
+                rows.append(Fault("E_INPUT_SCHEMA", say(at, "/model"), "The provider has no such model."))
+    return tuple(rows)
+
+
+def _provider_of(clip: PaidClip) -> Provider:
+    found = providers.find(clip.provider)
+    if found is None:
+        raise failure("E_INPUT_SCHEMA", "No provider has that id.", "Fix the provider of the step.")
+    return found
+
+
+def _no_price() -> NoReturn:
+    raise failure("E_INTERNAL", "The price table is unreadable.", "Reinstall the video module.")
+
+
 def study(raw: object, root: Path, *, require_files: bool) -> tuple[Script, Timeline]:
     script, problems = load_script(raw)
     faults = _faults_of(problems)
     if script is None:
         raise_faults(faults, 0)
         raise failure("E_INPUT_SCHEMA", "The script is not valid.", "Fix the script field in data.problems.")
+    raise_faults(_provider_faults(script), 0)
     media = media_map(script, root) if require_files else None
     timeline = timeline_for(script, media, require_files=require_files)
     found = (*font_faults(script, root), *timeline.faults) if require_files else timeline.faults
@@ -189,10 +224,11 @@ def _hashes(script: Script, root: Path) -> dict[str, str | None]:
     return found
 
 
-def step_spec(script: Script, clip: Clip, hashes: Mapping[str, str | None]) -> StepSpec:
-    if isinstance(clip, Voiceover) and script.voice is not None:
-        params = speech.request_params(clip.text, script.voice.voice)
-        return StepSpec("speech", speech.PROVIDER, speech.MODEL, speech.ADAPTER_VERSION, params, None, ())
+def step_spec(clip: Clip, hashes: Mapping[str, str | None]) -> StepSpec:
+    if isinstance(clip, PaidClip):
+        found = _provider_of(clip)
+        params = sorted_json(found.params(clip))
+        return StepSpec(found.kind, found.id, clip.model, found.adapter_version, params, None, ())
     inputs: tuple[str | None, ...] = ()
     if isinstance(clip, VideoClip | ImageClip | AudioClip):
         inputs = (hashes.get(clip.path),)
@@ -243,20 +279,27 @@ def cache_root(env: Mapping[str, str], flag: Path | None, script: Script | None,
 @dataclass(frozen=True, slots=True)
 class Paid:
     span: Span
+    clip: PaidClip
+    provider: Provider
     spec: StepSpec
     key: str
     quote: Quote
 
 
-def paid_steps(script: Script, timeline: Timeline, rate: Decimal) -> tuple[Paid, ...]:
-    priced = {item.step_index: item for item in quotes(script, timeline, rate)}
-    found: list[Paid] = []
-    for span in timeline.spans:
-        spec = step_spec(script, span.clip, {})
-        quote = priced[span.step]
-        if spec.paid and quote.paid:
-            found.append(Paid(span, spec, step_key(spec), quote))
-    return tuple(found)
+def _paid(span: Span, clip: PaidClip) -> Paid:
+    found = _provider_of(clip)
+    spec = step_spec(clip, {})
+    units = paid_units(clip)
+    try:
+        price = found.price(clip.model)
+        usd = found.quote(spec.params if isinstance(spec.params, Mapping) else {}, units)
+    except (PriceMissing, PriceTableBroken):
+        _no_price()
+    return Paid(span, clip, found, spec, step_key(spec), Quote(span.step, span.kind, units, usd, price))
+
+
+def paid_steps(timeline: Timeline) -> tuple[Paid, ...]:
+    return tuple(_paid(span, span.clip) for span in timeline.spans if isinstance(span.clip, PaidClip))
 
 
 def _damaged(error: step_cache.CacheDamaged) -> Failure:
@@ -275,11 +318,12 @@ def _entry(store: Path, key: str) -> step_cache.Entry | None:
         raise _damaged(error) from None
 
 
-def _no_key() -> Failure:
+def _no_key(item: Paid) -> Failure:
     return failure(
         "E_NO_KEY",
         say("This command needs an AI call ", "and no key was set."),
-        say("Set ", speech.KEY_ENV, " in the environment", " for this call."),
+        say("Set ", item.provider.secret[:64], " in the environment", " for this call."),
+        {"env": item.provider.secret, "provider": item.provider.id},
     )
 
 
@@ -298,9 +342,24 @@ def _stored(db: sqlite3.Connection, store: Path, key: str) -> bool:
     return _entry(store, key) is not None or _elsewhere(db, store, key) is not None
 
 
-def _require_key(db: sqlite3.Connection, paid: tuple[Paid, ...], store: Path, key: str) -> None:
-    if key == "" and not all(_stored(db, store, item.key) for item in paid):
-        raise _no_key()
+def _keyless(db: sqlite3.Connection, store: Path, item: Paid, env: Mapping[str, str]) -> bool:
+    return env.get(item.provider.secret, "") == "" and not _stored(db, store, item.key)
+
+
+def _require_keys(db: sqlite3.Connection, paid: tuple[Paid, ...], store: Path, env: Mapping[str, str]) -> None:
+    for item in paid:
+        if _keyless(db, store, item, env):
+            raise _no_key(item)
+
+
+def _run(item: Paid, env: Mapping[str, str]) -> bytes:
+    work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
+    try:
+        params = item.spec.params if isinstance(item.spec.params, Mapping) else {}
+        result = item.provider.run(params, {}, env.get(item.provider.secret, ""), work / step_cache.BODY)
+        return result.path.read_bytes()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def _brought(db: sqlite3.Connection, store: Path, key: str, label: step_cache.Label) -> step_cache.Entry | None:
@@ -382,11 +441,9 @@ class Spoken:
 
 
 def _pieces(
-    script: Script,
     timeline: Timeline,
     root: Path,
-    key: str,
-    speaker: Speaker,
+    env: Mapping[str, str],
     db: sqlite3.Connection,
     job_id: str,
     paid: tuple[Paid, ...],
@@ -399,15 +456,11 @@ def _pieces(
     billed = Decimal(0)
     seen: dict[str, Path] = {}
     for item in paid:
-        clip = item.span.clip
-        if not isinstance(clip, Voiceover) or script.voice is None:
-            continue
         cached = item.key in seen
         if not cached:
-            if key == "" and not _stored(db, store, item.key):
-                raise _no_key()
-            call = partial(speaker, clip.text, script.voice.voice, key)
-            seen[item.key], cached = _fetch(db, store, item, job_id, stamp, call)
+            if _keyless(db, store, item, env):
+                raise _no_key(item)
+            seen[item.key], cached = _fetch(db, store, item, job_id, stamp, partial(_run, item, env))
         usd = Decimal(0) if cached else item.quote.usd
         billed += usd
         steps.append(
@@ -421,8 +474,9 @@ def _pieces(
                 "usd": money_text(usd),
             }
         )
-        pieces.append(Piece(seen[item.key], item.span.start, 0.0, ()))
-        ranges.append((item.span.start, item.span.end))
+        if isinstance(item.clip, Speech):
+            pieces.append(Piece(seen[item.key], item.span.start, 0.0, ()))
+            ranges.append((item.span.start, item.span.end))
     for span in timeline.spans:
         if isinstance(span.clip, AudioClip):
             ducks = tuple(ranges) if span.clip.duck_under is not None else ()
@@ -475,16 +529,13 @@ def render_new(
     root: Path,
     job_id: str,
     when: datetime,
-    rate: Decimal,
     env: Mapping[str, str],
-    speaker: Speaker,
     cache_flag: Path | None = None,
 ) -> JsonObject:
     script, timeline = study(raw, root, require_files=True)
-    key = env.get(speech.KEY_ENV, "")
     store = cache_root(env, cache_flag, script, root)
-    paid = paid_steps(script, timeline, rate)
-    _require_key(db, paid, store, key)
+    paid = paid_steps(timeline)
+    _require_keys(db, paid, store, env)
     plan = plan_data(raw, root)
     stamp = format_instant(when)
     output = _checked(root, str(script.output.path))
@@ -513,7 +564,7 @@ def render_new(
         if not hold.try_lock():
             raise failure("E_JOB_STATE", "A render already holds this job.", "Wait for it, or retry the job id.")
         try:
-            spoken = _pieces(script, timeline, root, key, speaker, db, job_id, paid, store, stamp)
+            spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp)
             digest = _produce(script, timeline, root, output, spoken.pieces)
             begin(db)
             _remember_assets(db, script, root)
@@ -536,9 +587,7 @@ def render_again(
     job_id: str,
     raw: object | None,
     when: datetime,
-    rate: Decimal,
     env: Mapping[str, str],
-    speaker: Speaker,
     cache_flag: Path | None = None,
 ) -> JsonObject:
     row = read_job(db, job_id)
@@ -549,10 +598,9 @@ def render_again(
         raise failure("E_INPUT_SCHEMA", "The script does not match the job.", "Retry with the same script.")
     root = Path(row.script_dir)
     script, timeline = study(stored, root, require_files=True)
-    key = env.get(speech.KEY_ENV, "")
     store = cache_root(env, cache_flag, script, root)
-    paid = paid_steps(script, timeline, rate)
-    _require_key(db, paid, store, key)
+    paid = paid_steps(timeline)
+    _require_keys(db, paid, store, env)
     plan = plan_data(stored, root)
     stamp = format_instant(when)
     commit(db)
@@ -584,7 +632,7 @@ def render_again(
             raise failure("E_JOB_STATE", "The job cannot make that move.", "Read the job state with jobs.")
         try:
             output = Path(row.output_path)
-            spoken = _pieces(script, timeline, root, key, speaker, db, job_id, paid, store, stamp)
+            spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp)
             digest = _produce(script, timeline, root, output, spoken.pieces)
             begin(db)
             _remember_assets(db, script, root)
@@ -745,7 +793,7 @@ def plan_data(raw: object, root: Path) -> JsonObject:
     steps: list[JsonValue] = []
     keys: list[str] = []
     for span in timeline.spans:
-        spec = step_spec(script, span.clip, hashes)
+        spec = step_spec(span.clip, hashes)
         key = step_key(spec)
         keys.append(key)
         step = compile_clip(span.clip)
@@ -861,18 +909,46 @@ def cache_prune(db: sqlite3.Connection, only: Path | None, days: int, when: date
     }
 
 
-def estimate_data(raw: object, root: Path, rate: Decimal) -> JsonObject:
+def _estimate_line(span: Span, timeline: Timeline, item: Paid | None, cached: bool) -> tuple[Quote, JsonObject]:
+    if item is None:
+        free = Quote(span.step, span.kind, Decimal(span.frames) / Decimal(timeline.fps), Decimal(0))
+        return free, {"step": free.step, "index": free.step_index, "units": units_text(free.units), "usd": "0.000000"}
+    price = item.quote.price
+    if price is None:
+        _no_price()
+    quote = Quote(span.step, span.kind, item.quote.units, Decimal(0) if cached else item.quote.usd, price)
+    return quote, {
+        "step": quote.step,
+        "index": quote.step_index,
+        "units": units_text(quote.units),
+        "usd": money_text(quote.usd),
+        "provider": item.provider.id,
+        "model": item.clip.model,
+        "unit": price.unit,
+        "usdPerUnit": rate_text(price.usd_per_unit),
+        "sourceUrl": price.source_url,
+        "checkedAt": price.checked_at,
+        "stepKey": item.key,
+        "cached": cached,
+    }
+
+
+def estimate_data(raw: object, root: Path, env: Mapping[str, str], cache_flag: Path | None = None) -> JsonObject:
     script, timeline = study(raw, root, require_files=False)
-    rows = quotes(script, timeline, rate)
+    store = cache_root(env, cache_flag, script, root)
+    paid = {item.span.step: item for item in paid_steps(timeline)}
+    rows: list[Quote] = []
+    lines: list[JsonObject] = []
+    for span in timeline.spans:
+        item = paid.get(span.step)
+        cached = item is not None and _entry(store, item.key) is not None
+        quote, line = _estimate_line(span, timeline, item, cached)
+        rows.append(quote)
+        lines.append(line)
     return {
-        "usd": money_text(total_usd(rows)),
+        "usd": money_text(total_usd(tuple(rows))),
         "durationSec": seconds_json(timeline.total, timeline.fps),
-        "breakdown": as_json(
-            [
-                {"step": row.step, "index": row.step_index, "units": units_text(row.units), "usd": money_text(row.usd)}
-                for row in rows
-            ]
-        ),
+        "breakdown": lines,
     }
 
 
@@ -916,10 +992,6 @@ def ledger_data(db: sqlite3.Connection) -> JsonObject:
     }
 
 
-def default_speaker(text: str, voice: str, key: str) -> bytes:
-    return speak(text, voice, key)
-
-
 def tool_failure(error: NeedTool) -> Failure:
     return failure(
         "E_TOOL",
@@ -928,10 +1000,11 @@ def tool_failure(error: NeedTool) -> Failure:
     )
 
 
-def speech_failure(_error: SpeechError) -> Failure:
+def provider_failure(error: ProviderError) -> Failure:
     return failure(
-        "E_SPEECH",
-        "The speech service rejected the call.",
-        "Check the voice name and the key.",
+        "E_PROVIDER",
+        "The provider rejected the call.",
+        "Check the model, the voice and the key.",
+        {"provider": error.provider, "status": error.status},
     )
 

@@ -4,4 +4,3 @@ tracks:
 - id: main
   clips:
   - {type: title_card, duration: 3.0, text: Hello}
-voice: {provider: xai, voice: default, api_key: not-a-real-key}

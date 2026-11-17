@@ -1,5 +1,5 @@
 # SAMPLE DATA. Example Plumbing Co. is a fictional business.
-schemaVersion: 1
+schemaVersion: 2
 output: { path: out/example-plumbing.mp4, width: 1280, height: 720, fps: 30 }
 brand:
   colors: { bg: "#0F2A3D", fg: "#F4F7FA", accent: "#2E9BD6" }

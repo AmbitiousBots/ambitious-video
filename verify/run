@@ -31,7 +31,7 @@ export AMBITIOUS_HOME="$HOME"
 
 echo "== fresh selfcheck, render, verify, estimate =="
 "$PY" dist/ambitious-video.pyz selfcheck --now 2026-01-01T00:00:00Z --seed 1
-"$PY" dist/ambitious-video.pyz render --in "$WORK/minimal.yaml" --now 2026-01-01T00:00:00Z --seed 1 >"$WORK/render.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/minimal.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/render.json"
 "$PY" - "$WORK/render.json" "$WORK/job.json" <<'PY'
 import json, sys
 body = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -40,8 +40,19 @@ if not body["ok"]:
 json.dump({"jobId": body["data"]["jobId"]}, open(sys.argv[2], "w", encoding="utf-8"))
 print(body["data"]["jobId"], body["data"]["durationSec"], body["data"]["costUsd"])
 PY
-"$PY" dist/ambitious-video.pyz verify --in "$WORK/job.json" --now 2026-01-01T00:00:00Z --seed 1
-"$PY" dist/ambitious-video.pyz estimate --in examples/all-clip-types.yaml --now 2026-01-01T00:00:00Z --seed 1
+"$PY" dist/ambitious-video.pyz verify --in "$WORK/job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null
+"$PY" dist/ambitious-video.pyz estimate --in examples/all-clip-types.yaml --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/estimate.json"
+"$PY" - "$WORK/estimate.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], encoding="utf-8"))
+if not body["ok"]:
+    raise SystemExit(body)
+paid = [line for line in body["data"]["breakdown"] if "provider" in line]
+named = ("provider", "model", "units", "usd", "sourceUrl", "checkedAt")
+if not paid or any(not line.get(name) for line in paid for name in named) or any(line["cached"] for line in paid):
+    raise SystemExit("a paid estimate line must name its provider, model, units, usd, sourceUrl and checkedAt")
+print("estimate", body["data"]["usd"], "usd,", len(paid), "paid lines from", paid[0]["provider"], paid[0]["sourceUrl"])
+PY
 
 echo "== plan is the same bytes on another day, and the cache commands answer =="
 "$PY" dist/ambitious-video.pyz plan --in "$WORK/minimal.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/plan-a.json"

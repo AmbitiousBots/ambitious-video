@@ -15,6 +15,7 @@ from ambitious_video.domain.types import (
     ImageClip,
     RelativePath,
     Script,
+    Speech,
     VideoClip,
     Voiceover,
 )
@@ -108,7 +109,7 @@ def _length(
     at: str,
     faults: list[Fault],
 ) -> int | None:
-    if isinstance(clip, Voiceover):
+    if isinstance(clip, Voiceover | Speech):
         if clip.duration is not None:
             return frames_of(clip.duration, fps, minimum=1)
         return speech_frames(clip.text, fps)

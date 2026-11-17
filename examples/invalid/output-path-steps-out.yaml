@@ -1,4 +1,4 @@
-schemaVersion: 1
+schemaVersion: 2
 output: {path: ../example.mp4, width: 1280, height: 720, fps: 30}
 tracks:
 - id: main

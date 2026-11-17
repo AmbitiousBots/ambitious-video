@@ -5,6 +5,7 @@ from ambitious_video.domain.types import (
     Clip,
     ImageClip,
     ScreenRecording,
+    Speech,
     TitleCard,
     VideoClip,
     Voiceover,
@@ -24,12 +25,14 @@ def kind_of(clip: Clip) -> str:
         return "image"
     if isinstance(clip, Voiceover):
         return "voiceover"
+    if isinstance(clip, Speech):
+        return "speech"
     if isinstance(clip, AudioClip):
         return "audio"
     raise TypeError(type(clip).__name__)
 
 
 def placed_at(clip: Clip) -> float | None:
-    if isinstance(clip, Voiceover | AudioClip):
+    if isinstance(clip, Voiceover | Speech | AudioClip):
         return clip.at
     return None

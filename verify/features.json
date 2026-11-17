@@ -4,6 +4,12 @@
     "validate accepts the minimal script and rejects an unknown step",
     "plan names each step, the ffmpeg graph and the assets",
     "estimate prices a script from pricing.json without calling a provider",
+    "each paid estimate line names its provider, model, units, usd, sourceUrl and checkedAt",
+    "a step that is already in the step cache is estimated at 0",
+    "pricing.json holds one entry per provider and model with unit, usdPerUnit, sourceUrl and checkedAt",
+    "a speech clip names its provider, model and voice; no voice is built in",
+    "a provider registered only in a test runs through plan, estimate, the step cache and render",
+    "a script that names an unknown provider or model is refused by validate",
     "render writes a video for a script that needs no key",
     "the same script, assets and seed render the same frames",
     "verify checks duration, frame count, resolution, audio and title frames",
@@ -11,7 +17,7 @@
     "a clip smaller or larger than the output fills its scheduled time",
     "a logo with transparency shows the background through it",
     "no command hangs when the caller leaves stdin open",
-    "a voice script without a key fails with E_NO_KEY",
+    "a speech step without its provider's key fails with E_NO_KEY and names the variable",
     "jobs and ledger read the database without changing it",
     "the four fictional sample projects validate and plan with no key",
     "a name scan keeps company names out of src, schemas, templates, examples and the docs",
@@ -29,6 +35,6 @@
     "selfcheck stays ok without Playwright and warns that only screen_recording needs it",
     "the default video is H.264 yuv420p for browsers, and output.encode: lossless keeps exact RGB",
     "brand.font is a font file next to the script, and a font name is refused",
-    "captions are drawn only by a from track, one voiceover segment at a time"
+    "captions are drawn only by a from track, one voiceover or speech segment at a time"
   ]
 }

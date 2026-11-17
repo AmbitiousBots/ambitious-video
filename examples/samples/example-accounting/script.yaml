@@ -1,5 +1,5 @@
 # SAMPLE DATA. Example Accounting Office is a fictional business.
-schemaVersion: 1
+schemaVersion: 2
 output: { path: out/example-accounting.mp4, width: 1920, height: 1080, fps: 30 }
 brand:
   colors: { bg: "#1F2933", fg: "#F5F1E8", accent: "#C9A227" }

@@ -1,6 +1,6 @@
 # Formal model of a render job
 
-Rendering a video can cost money: a step such as a voiceover is a paid call to an AI provider. A render can also fail or be killed half way, and then it is tried again. This folder holds a small model of the life of a render job and checks, for every order of steps, that a retry never charges twice, that the ledger holds one line per provider call, that a step key is called again only if its result was removed, that a job is never marked verified on an output it did not just render, and that two renders never work on one job at once. The model was written before the `render` and `verify` code, so the code is written against rules that are already checked.
+Rendering a video can cost money: a step such as speech is a paid call to an AI provider. A render can also fail or be killed half way, and then it is tried again. This folder holds a small model of the life of a render job and checks, for every order of steps, that a retry never charges twice, that the ledger holds one line per provider call, that a step key is called again only if its result was removed, that a job is never marked verified on an output it did not just render, and that two renders never work on one job at once. The model was written before the `render` and `verify` code, so the code is written against rules that are already checked.
 
 Run it from the repo root:
 
