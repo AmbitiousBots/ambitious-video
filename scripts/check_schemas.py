@@ -34,7 +34,9 @@ EXAMPLES = REPO / "examples"
 INVALID = EXAMPLES / "invalid"
 EXPECTED = INVALID / "EXPECTED.json"
 MODEL = REPO / "spec" / "RenderJob.tla"
-REQUIRED_EXAMPLES = ("minimal.yaml", "ambitious-marketing.yaml")
+REQUIRED_EXAMPLES = ("minimal.yaml", "all-clip-types.yaml")
+SAMPLES = EXAMPLES / "samples"
+REQUIRED_SAMPLES = ("example-accounting", "example-bookshop", "example-fitness", "example-plumbing")
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
 
@@ -209,6 +211,37 @@ def check_valid(
     return problems, len(names)
 
 
+def check_samples(validator: Draft202012Validator, load: Callable[[Path], Document]) -> tuple[list[str], int]:
+    problems = []
+    slugs = sorted(path.name for path in SAMPLES.iterdir() if path.is_dir())
+    for slug in REQUIRED_SAMPLES:
+        if slug not in slugs:
+            problems.append(f"examples/samples/{slug} is missing")
+    brand_only = {"$schema": DRAFT, "$ref": "#/$defs/brand", "$defs": validator.schema["$defs"]}
+    brand_validator = validator.evolve(schema=brand_only)
+    for slug in slugs:
+        where = f"examples/samples/{slug}"
+        missing = [name for name in ("script.yaml", "brand.yaml", "README.md") if not (SAMPLES / slug / name).is_file()]
+        if missing:
+            problems.append(f"{where}: needs {', '.join(missing)}")
+            continue
+        script = load(SAMPLES / slug / "script.yaml")
+        brand = load(SAMPLES / slug / "brand.yaml")
+        found = rejections(validator, script)
+        if found:
+            problems.append(f"{where}/script.yaml: must be accepted, but the schema rejects it by {told(found)}")
+            continue
+        if broken_rules(script):
+            problems.append(f"{where}/script.yaml: must be accepted, but breaks {', '.join(broken_rules(script))}")
+        if not isinstance(brand, dict) or list(brand_validator.iter_errors(brand)):
+            problems.append(f"{where}/brand.yaml: must be a brand as the schema describes one")
+        elif script.get("brand") != brand:
+            problems.append(f"{where}: the brand block of script.yaml and brand.yaml differ. Change both together")
+        if "SAMPLE DATA" not in (SAMPLES / slug / "README.md").read_text(encoding="utf-8"):
+            problems.append(f"{where}/README.md: must say that the project is SAMPLE DATA")
+    return problems, len(slugs)
+
+
 def check_invalid(
     validator: Draft202012Validator, load: Callable[[Path], Document], types: ModuleType
 ) -> tuple[list[str], int]:
@@ -275,8 +308,10 @@ def main() -> None:
     validator = jsonschema.Draft202012Validator(schema)
 
     valid_problems, valid = check_valid(validator, load, types)
+    sample_problems, samples = check_samples(validator, load)
     invalid_problems, invalid = check_invalid(validator, load, types)
-    problems = schema_matches_types(schema, types) + model_matches_types(types) + valid_problems + invalid_problems
+    agreement = schema_matches_types(schema, types) + model_matches_types(types)
+    problems = agreement + valid_problems + sample_problems + invalid_problems
     for problem in problems:
         sys.stderr.write(f"FAIL: {problem}\n")
     if problems:
@@ -288,6 +323,7 @@ def main() -> None:
         "providers, patterns and rules",
         "ok  the job states and moves in spec/RenderJob.tla and types.py agree",
         f"ok  {valid} examples accepted, and together they use every clip type",
+        f"ok  {samples} sample projects accepted, each with the brand its brand.yaml names",
         f"ok  {invalid} invalid examples rejected, each for the reason in examples/invalid/EXPECTED.json",
         "check_schemas: ok",
     ]

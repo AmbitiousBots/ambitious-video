@@ -8,6 +8,8 @@
     "the same script, assets and seed render the same frames",
     "verify checks duration, resolution, audio and title frames",
     "a voice script without a key fails with E_NO_KEY",
-    "jobs and ledger read the database without changing it"
+    "jobs and ledger read the database without changing it",
+    "the four fictional sample projects validate and plan with no key",
+    "a name scan keeps company names out of src, schemas, templates and examples"
   ]
 }

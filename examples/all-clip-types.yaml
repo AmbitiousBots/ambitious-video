@@ -1,0 +1,49 @@
+# SAMPLE DATA. Example Co. is fictional. This script uses every clip type and a voice.
+# Its video, audio and logo files are not in this repository, so it can be planned and
+# priced as it is, and rendered once those files and the voice provider's key are present.
+schemaVersion: 1
+output: { path: out/all-clip-types.mp4, width: 1920, height: 1080, fps: 30 }
+brand:
+  colors: { bg: "#0B0B0B", fg: "#FFFFFF", accent: "#3B82F6" }
+  logo: assets/logo.png
+voice: { provider: xai, voice: default }
+tracks:
+  - id: main
+    clips:
+      - { type: title_card, duration: 3.0, text: "Example Co.", subtitle: "A video written as data (SAMPLE DATA)" }
+      - type: screen_recording
+        url: "https://example.com"
+        duration: 8.0
+        actions:
+          - { wait: 1.5 }
+          - { scroll: 600 }
+          - { wait: 1.0 }
+          - { scroll: 600 }
+      - { type: title_card, duration: 2.5, text: "One page, step by step" }
+      - type: screen_recording
+        url: "https://example.com"
+        duration: 6.0
+        actions:
+          - { click: "a" }
+          - { wait: 2.0 }
+          - { scroll: 400 }
+      - { type: video, path: assets/broll.mp4, in: 2.0, out: 6.0 }
+      - { type: title_card, duration: 2.5, text: "Stills move slowly" }
+      - { type: image, path: assets/still.png, duration: 4.0, kenburns: { from: 1.0, to: 1.08 } }
+      - { type: title_card, duration: 3.0, text: "Example Co.", subtitle: "example.com" }
+  - id: voice
+    clips:
+      - { type: voiceover, at: 0.5, text: "Every kind of clip, in one short script." }
+      - { type: voiceover, at: 3.5, text: "A screen recording opens a page, waits, scrolls and clicks, as the script says." }
+      - { type: voiceover, at: 14.0, text: "A part of a video file plays between two title cards." }
+      - { type: voiceover, at: 24.5, text: "A still image zooms slowly while quiet music plays under the voice." }
+      - { type: voiceover, at: 30.5, text: "Change the words to make it yours." }
+  - id: captions
+    from: voice
+  - id: music
+    clips:
+      - { type: audio, path: assets/music-bed.mp3, at: 0, gain_db: -18, duck_under: voice }
+cuts:
+  - { at: 3.0, transition: crossfade, duration: 0.4 }
+  - { at: 19.5, transition: crossfade, duration: 0.4 }
+  - { at: 30.0, transition: crossfade, duration: 0.4 }

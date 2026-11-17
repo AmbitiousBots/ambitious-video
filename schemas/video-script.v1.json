@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/AmbitiousBots/ambitious-video/blob/main/schemas/video-script.v1.json",
+  "$id": "urn:ambitious-video:video-script:v1",
   "title": "Video script, version 1",
   "description": "A video described as data: what to show and say, on which track, and when. Written as YAML or JSON.",
   "type": "object",
