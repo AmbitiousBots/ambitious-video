@@ -9,16 +9,20 @@ from typing import TYPE_CHECKING
 
 from ambitious_video.domain.clips import VISUAL
 from ambitious_video.domain.need import NeedTool
-from ambitious_video.domain.timeline import Mark, Span, Timeline
+from ambitious_video.domain.timeline import Mark, Span, Timeline, heard
 from ambitious_video.domain.types import (
+    AudioClip,
     Brand,
     EncodeMode,
     GeneratedScene,
     ImageClip,
+    LipSync,
+    LocalMouth,
     ScreenRecording,
     TitleCard,
     VideoClip,
 )
+from ambitious_video.media.audio import Piece, levels, mixed
 from ambitious_video.media.probe import extract_frames
 from ambitious_video.steps.common import Canvas, fit, rgb_of
 
@@ -27,6 +31,8 @@ if TYPE_CHECKING:
 from ambitious_video.steps.generated_scene import FRAMES, STILL
 from ambitious_video.steps.generated_scene import frame as made_frame
 from ambitious_video.steps.image import frame as image_frame
+from ambitious_video.steps.lip_sync import frame as synced_frame
+from ambitious_video.steps.lip_sync import mouth_frame
 from ambitious_video.steps.screen_recording import frame as screen_frame
 from ambitious_video.steps.screen_recording import record
 from ambitious_video.steps.title_card import frame as title_frame
@@ -79,7 +85,7 @@ def prepare(
         made = None if media is None else media.get(span.step)
         if isinstance(span.clip, GeneratedScene) and made is not None and made.still:
             canvas.folders[STILL + str(span.step)] = str(made.path.resolve())
-        elif isinstance(span.clip, GeneratedScene) and made is not None:
+        elif isinstance(span.clip, GeneratedScene | LipSync) and made is not None:
             extract_frames(str(made.path), 0.0, span.frames, timeline.fps, folder)
             canvas.folders[FRAMES + str(span.step)] = str(folder)
         if isinstance(span.clip, VideoClip):
@@ -89,6 +95,17 @@ def prepare(
         elif isinstance(span.clip, ScreenRecording):
             record(span.clip, folder, timeline.width, timeline.height)
             canvas.folders["step:" + str(span.step)] = str(folder)
+        elif isinstance(span.clip, LocalMouth):
+            canvas.levels[span.step] = _mouth_levels(timeline, span, root)
+
+
+def _mouth_levels(timeline: Timeline, span: Span, root: Path) -> tuple[float, ...]:
+    pieces = tuple(
+        Piece(root / sound.clip.path, sound.start - span.start, sound.clip.gain_db or 0.0, ())
+        for sound in heard(timeline.spans, span)
+        if isinstance(sound.clip, AudioClip)
+    )
+    return levels(mixed(span.frames, timeline.fps, pieces), span.frames, timeline.fps)
 
 
 def _sample(span: Span, local: int, canvas: Canvas) -> PilImage:
@@ -104,6 +121,10 @@ def _sample(span: Span, local: int, canvas: Canvas) -> PilImage:
         return screen_frame(span.clip, clamped, span.frames, canvas)
     if isinstance(span.clip, GeneratedScene):
         return made_frame(span.clip, clamped, span.frames, canvas)
+    if isinstance(span.clip, LipSync):
+        return synced_frame(span.clip, clamped, span.frames, canvas)
+    if isinstance(span.clip, LocalMouth):
+        return mouth_frame(span.clip, clamped, span.frames, canvas)
     from ambitious_video.steps.common import pil
 
     image_module, _draw, _font = pil()
@@ -195,7 +216,7 @@ def _draw_tag(image: PilImage, text: str, canvas: Canvas) -> PilImage:
 
 
 def _is_made(span: Span | None) -> bool:
-    return span is not None and isinstance(span.clip, GeneratedScene)
+    return span is not None and isinstance(span.clip, GeneratedScene | LipSync)
 
 
 def frame_at(timeline: Timeline, index: int, canvas: Canvas) -> PilImage:

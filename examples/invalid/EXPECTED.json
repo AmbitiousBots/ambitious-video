@@ -223,5 +223,27 @@
   "generated-scene-fallback-of-another-kind.yaml": {
     "keyword": "enum",
     "at": "/tracks/0/clips/0/fallback/type"
+  },
+  "lip-sync-without-voice.yaml": {
+    "keyword": "required",
+    "at": "/tracks/0/clips/0"
+  },
+  "lip-sync-with-a-video-and-a-picture.yaml": {
+    "keyword": "oneOf",
+    "at": "/tracks/0/clips/0"
+  },
+  "lip-sync-fallback-of-another-kind.yaml": {
+    "keyword": "enum",
+    "at": "/tracks/0/clips/0/fallback/type"
+  },
+  "lip-sync-mouth-without-height.yaml": {
+    "keyword": "required",
+    "at": "/tracks/0/clips/0/fallback"
+  },
+  "lip-sync-voice-track-without-sound.yaml": {
+    "rule": "lip-sync-voice-is-a-sound-track"
+  },
+  "lip-sync-without-disclosure.yaml": {
+    "rule": "generated-scenes-need-disclosure"
   }
 }

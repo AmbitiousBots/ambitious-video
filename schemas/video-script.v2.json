@@ -11,7 +11,7 @@
     "template": { "$ref": "#/$defs/template" },
     "budget": { "$ref": "#/$defs/budget" },
     "disclosure": {
-      "description": "The words drawn on every frame of a generated scene, such as: AI-generated scenes. A script with a generated_scene clip needs them. The expand command copies them from the template.",
+      "description": "The words drawn on every frame of a generated scene or a lip_sync clip, such as: AI-generated scenes. A script with a generated_scene or lip_sync clip needs them. The expand command copies them from the template.",
       "type": "string",
       "minLength": 1,
       "maxLength": 200
@@ -127,7 +127,7 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "enum": ["title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio", "generated_scene"] }
+        "type": { "enum": ["title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio", "generated_scene", "lip_sync"] }
       },
       "allOf": [
         { "if": { "required": ["type"], "properties": { "type": { "const": "title_card" } } }, "then": { "$ref": "#/$defs/titleCard" } },
@@ -137,7 +137,8 @@
         { "if": { "required": ["type"], "properties": { "type": { "const": "voiceover" } } }, "then": { "$ref": "#/$defs/voiceover" } },
         { "if": { "required": ["type"], "properties": { "type": { "const": "speech" } } }, "then": { "$ref": "#/$defs/speech" } },
         { "if": { "required": ["type"], "properties": { "type": { "const": "audio" } } }, "then": { "$ref": "#/$defs/audio" } },
-        { "if": { "required": ["type"], "properties": { "type": { "const": "generated_scene" } } }, "then": { "$ref": "#/$defs/generatedScene" } }
+        { "if": { "required": ["type"], "properties": { "type": { "const": "generated_scene" } } }, "then": { "$ref": "#/$defs/generatedScene" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "lip_sync" } } }, "then": { "$ref": "#/$defs/lipSync" } }
       ]
     },
     "titleCard": {
@@ -263,6 +264,47 @@
         { "if": { "required": ["type"], "properties": { "type": { "const": "title_card" } } }, "then": { "additionalProperties": false, "required": ["text"], "properties": { "type": true, "text": { "$ref": "#/$defs/text" }, "subtitle": { "$ref": "#/$defs/text" } } } },
         { "if": { "required": ["type"], "properties": { "type": { "const": "image" } } }, "then": { "additionalProperties": false, "required": ["path"], "properties": { "type": true, "path": { "$ref": "#/$defs/relativePath" }, "kenburns": { "$ref": "#/$defs/zoom" } } } },
         { "if": { "required": ["type"], "properties": { "type": { "const": "video" } } }, "then": { "additionalProperties": false, "required": ["path"], "properties": { "type": true, "path": { "$ref": "#/$defs/relativePath" }, "in": { "$ref": "#/$defs/startSeconds" } } } }
+      ]
+    },
+    "lipSync": {
+      "description": "A presenter whose lips a provider moves to the sound of another track, paid for with the owner's key and priced per frame. The presenter is a video file or, for a model that takes one, a picture. voice names the track it speaks: every speech and audio clip on that track that sounds while this clip is shown. Every frame of it carries the disclosure text. When the provider is not called (--offline), the fallback is shown for the same time.",
+      "additionalProperties": false,
+      "required": ["provider", "model", "duration", "voice"],
+      "oneOf": [{ "required": ["video"] }, { "required": ["image"] }],
+      "properties": {
+        "type": true,
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+        "model": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "duration": { "$ref": "#/$defs/lengthSeconds" },
+        "video": { "description": "The presenter as a video file, at least as long as the clip.", "$ref": "#/$defs/relativePath" },
+        "image": { "description": "The presenter as a picture, for a model that takes one.", "$ref": "#/$defs/relativePath" },
+        "voice": { "description": "The id of the track this clip speaks.", "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+        "fallback": { "$ref": "#/$defs/lipFallback" }
+      }
+    },
+    "lipFallback": {
+      "description": "Shown instead of a lip_sync clip. none shows the presenter file as it is. mouth draws a mouth on a picture of the presenter and opens it with the loudness of the audio files on the voice track; x, y, width and height are parts of the frame from 0 to 1, with x and y at the middle of the mouth.",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "enum": ["none", "mouth"] } },
+      "allOf": [
+        { "if": { "required": ["type"], "properties": { "type": { "const": "none" } } }, "then": { "additionalProperties": false, "properties": { "type": true } } },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "mouth" } } },
+          "then": {
+            "additionalProperties": false,
+            "required": ["sprite", "x", "y", "width", "height"],
+            "properties": {
+              "type": true,
+              "sprite": { "$ref": "#/$defs/relativePath" },
+              "x": { "type": "number", "minimum": 0, "maximum": 1 },
+              "y": { "type": "number", "minimum": 0, "maximum": 1 },
+              "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+              "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+              "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+            }
+          }
+        }
       ]
     },
     "cut": {

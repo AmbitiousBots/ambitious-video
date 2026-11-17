@@ -14,7 +14,7 @@ def compile(clip: ImageClip, _ctx: object) -> dict[str, object]:
     return {"type": "image", "path": clip.path, "duration": clip.duration, "kenburns": zoom}
 
 
-def _cover(image: PilImage, width: int, height: int, zoom: float) -> PilImage:
+def cover(image: PilImage, width: int, height: int, zoom: float) -> PilImage:
     image_module, _draw, _font = pil()
     scale = max(width / image.width, height / image.height) * zoom
     resized_w = max(width, int(round(image.width * scale)))
@@ -33,4 +33,4 @@ def frame(clip: ImageClip, local: int, count: int, canvas: Canvas) -> PilImage:
         zoom = start
     else:
         zoom = start + (end - start) * (local / (count - 1))
-    return _cover(source, canvas.width, canvas.height, zoom)
+    return cover(source, canvas.width, canvas.height, zoom)

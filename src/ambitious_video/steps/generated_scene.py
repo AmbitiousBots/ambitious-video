@@ -56,6 +56,11 @@ def frame(clip: GeneratedScene, local: int, count: int, canvas: Canvas) -> PilIm
     if still is not None:
         shown = ImageClip(RelativePath(still), clip.duration, clip.kenburns)
         return image.frame(shown, local, count, canvas)
+    return stored_frame(local, canvas)
+
+
+def stored_frame(local: int, canvas: Canvas) -> PilImage:
+    image_module, _draw, _font = pil()
     folder = canvas.folders.get(FRAMES + str(canvas.step))
     held = 0 if folder is None else _counted(canvas, folder)
     if folder is None or held == 0:

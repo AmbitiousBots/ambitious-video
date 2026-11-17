@@ -25,21 +25,31 @@ PROVIDER_ID_PATTERN: Final = "^[a-z][a-z0-9-]{0,31}$"
 MODEL_ID_PATTERN: Final = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 TEMPLATE_ID_PATTERN: Final = "^[a-z][a-z0-9-]{0,63}$"
 INPUT_NAME_PATTERN: Final = "^[a-z][a-z0-9_]{0,31}$"
+MOUTH_COLOR: Final = "#1E1014"
 RESOLUTION_PATTERN: Final = "^[0-9]{1,4}[kp]$"
 ASPECT_RATIO_PATTERN: Final = "^[0-9.]{1,4}:[0-9.]{1,4}$"
 MAX_SEED: Final = 4294967295
 
 ClipType = Literal[
-    "title_card", "screen_recording", "video", "image", "voiceover", "speech", "audio", "generated_scene"
+    "title_card",
+    "screen_recording",
+    "video",
+    "image",
+    "voiceover",
+    "speech",
+    "audio",
+    "generated_scene",
+    "lip_sync",
 ]
 ActionKind = Literal["click", "wait", "scroll"]
 Transition = Literal["crossfade"]
 EncodeMode = Literal["web", "lossless"]
 ProviderKind = Literal["scene", "speech", "lipsync"]
 InputType = Literal["text", "image", "video", "audio", "color", "voice", "choice"]
-SceneType = Literal["title_card", "image", "video", "generated_scene"]
+SceneType = Literal["title_card", "image", "video", "generated_scene", "lip_sync"]
 FallbackType = Literal["title_card", "image", "video"]
 SceneOutput = Literal["video", "image"]
+LipFallbackType = Literal["none", "mouth"]
 
 ScriptRule = Literal[
     "track-ids-unique",
@@ -47,6 +57,7 @@ ScriptRule = Literal[
     "duck-under-another-track",
     "video-out-after-in",
     "generated-scenes-need-disclosure",
+    "lip-sync-voice-is-a-sound-track",
 ]
 
 JobState = Literal["queued", "rendering", "rendered", "verified", "failed", "retried"]
@@ -208,8 +219,47 @@ class GeneratedScene:
     fallback: SceneFallback
 
 
-type Clip = TitleCard | ScreenRecording | VideoClip | ImageClip | Voiceover | Speech | AudioClip | GeneratedScene
-PaidClip = Speech | GeneratedScene
+@dataclass(frozen=True, slots=True)
+class MouthShape:
+    sprite: RelativePath
+    x: float
+    y: float
+    width: float
+    height: float
+    color: HexColor
+
+
+@dataclass(frozen=True, slots=True)
+class LipSync:
+    duration: float
+    provider: str
+    model: str
+    video: RelativePath | None
+    image: RelativePath | None
+    voice: TrackId
+    mouth: MouthShape | None
+
+
+@dataclass(frozen=True, slots=True)
+class LocalMouth:
+    duration: float
+    voice: TrackId
+    shape: MouthShape
+
+
+type Clip = (
+    TitleCard
+    | ScreenRecording
+    | VideoClip
+    | ImageClip
+    | Voiceover
+    | Speech
+    | AudioClip
+    | GeneratedScene
+    | LipSync
+    | LocalMouth
+)
+PaidClip = Speech | GeneratedScene | LipSync
 
 
 @dataclass(frozen=True, slots=True)

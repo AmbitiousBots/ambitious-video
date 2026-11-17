@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-unset XAI_API_KEY ELEVENLABS_API_KEY
+unset XAI_API_KEY ELEVENLABS_API_KEY SYNC_API_KEY
 if [ -z "${PY:-}" ] && [ -x .venv/bin/python ]; then
   PY=".venv/bin/python"
 fi
@@ -311,6 +311,70 @@ print("scenes", estimate["usd"], "usd online,", one["costUsd"], "offline, manife
 PY
 "$PY" dist/ambitious-video.pyz verify --in "$WORK/scenes/job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/verify.json"
 "$PY" - "$WORK/scenes/verify.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], encoding="utf-8"))
+if not body["ok"] or not body["data"]["passed"]:
+    raise SystemExit(body)
+PY
+
+echo "== lip-sync: priced per frame, both keys asked, the drawn mouth offline =="
+mkdir -p "$WORK/lips/assets"
+cp examples/lip-sync.yaml "$WORK/lips/lips.yaml"
+cp examples/assets/still.png "$WORK/lips/assets/still.png"
+"$PY" - "$WORK/lips" <<'PY'
+import sys
+from pathlib import Path
+at = Path(sys.argv[1])
+text = (at / "lips.yaml").read_text(encoding="utf-8")
+small = text.replace("width: 1280, height: 720, fps: 25", "width: 320, height: 180, fps: 10")
+if small == text:
+    raise SystemExit("the example output line changed; update verify/run")
+(at / "small.yaml").write_text(small, encoding="utf-8")
+PY
+"$PY" dist/ambitious-video.pyz validate --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >/dev/null
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/estimate.json"
+XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz estimate --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/estimate-one.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/lips/lips.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/lips/plan-b.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/lips/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/refused.json" || true
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/lips/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/render-a.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/lips/small.yaml" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/lips/render-b.json"
+"$PY" - "$WORK/lips" <<'PY'
+import json, sys
+from pathlib import Path
+at = Path(sys.argv[1])
+def read(name, ok=True):
+    body = json.loads((at / f"{name}.json").read_text(encoding="utf-8"))
+    if body["ok"] is not ok:
+        raise SystemExit(body)
+    return body
+estimate, one, plan, again = (read(name)["data"] for name in ("estimate", "estimate-one", "plan-a", "plan-b"))
+lip = estimate["breakdown"][1]
+priced = (lip["provider"], lip["model"], lip["unit"], lip["units"], lip["usdPerUnit"], lip["usd"])
+if priced != ("sync-lipsync", "sync-3", "frame", "150", "0.00532", "0.798000"):
+    raise SystemExit("lip-sync is priced per frame of the clip at the output fps: 6 s at 25 fps is 150 frames")
+if not lip["sourceUrl"].startswith("https://") or not lip["checkedAt"]:
+    raise SystemExit("the lip-sync line must name its price source and the day it was read")
+if [entry["env"] for entry in estimate["secretsNeeded"]] != ["SYNC_API_KEY", "XAI_API_KEY"]:
+    raise SystemExit("with no key set, the lip-sync key and the speech key must both be listed")
+wanted = [{"env": "SYNC_API_KEY", "provider": "sync-lipsync", "steps": [1], "usd": "0.798000"}]
+if one["secretsNeeded"] != wanted or "not-a-real-key" in json.dumps(one):
+    raise SystemExit("with the speech key set, only the lip-sync key must be listed, and no key value printed")
+if plan != again or plan["steps"][1]["hears"] != [2]:
+    raise SystemExit("the plan must repeat on another day and name the speech step the lip-sync hears")
+refused = read("refused", ok=False)
+if [error["code"] for error in refused["errors"]] != ["E_NO_KEY", "E_NO_KEY"]:
+    raise SystemExit("a render without the keys must stop with E_NO_KEY before any call")
+first, second = (read(name)["data"] for name in ("render-a", "render-b"))
+if first["costUsd"] != "0.000000" or first["sha256"] != second["sha256"]:
+    raise SystemExit("two offline renders must cost nothing and write the same file")
+if [step["fallback"] for step in first["steps"]] != ["mouth", "captions"]:
+    raise SystemExit("offline, lip-sync must take the drawn mouth and speech the captions")
+json.dump({"jobId": second["jobId"]}, open(at / "job.json", "w", encoding="utf-8"))
+print("lip-sync", lip["units"], "frames,", estimate["usd"], "usd online,", first["costUsd"], "offline")
+PY
+"$PY" dist/ambitious-video.pyz verify --in "$WORK/lips/job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/verify.json"
+"$PY" - "$WORK/lips/verify.json" <<'PY'
 import json, sys
 body = json.load(open(sys.argv[1], encoding="utf-8"))
 if not body["ok"] or not body["data"]["passed"]:

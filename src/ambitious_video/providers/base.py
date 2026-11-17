@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 from ambitious_kit.domain.envelope import JsonObject
 
 from ambitious_video.domain.money import Price
-from ambitious_video.domain.types import GeneratedScene, PaidClip, ProviderKind, SceneOutput
+from ambitious_video.domain.types import GeneratedScene, LipSync, PaidClip, ProviderKind, SceneOutput
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +69,11 @@ class SceneMaker(Protocol):
     def output(self) -> SceneOutput: ...
 
     def faults(self, step: GeneratedScene) -> tuple[tuple[str, str], ...]: ...
+
+
+@runtime_checkable
+class LipSyncer(Protocol):
+    def lip_faults(self, step: LipSync) -> tuple[tuple[str, str], ...]: ...
 
 
 @runtime_checkable

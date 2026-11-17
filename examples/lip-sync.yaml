@@ -1,0 +1,34 @@
+# SAMPLE DATA. Example Co. is fictional. A picture of a presenter speaks one line: a `speech`
+# clip makes the sound, and a `lip_sync` clip sends the picture and that sound to a provider,
+# which moves the lips. Both are paid for with the owner's keys; lip-sync is priced per frame
+# of the clip at the output frame rate (6 s at 25 fps is 150 frames). Every frame of the
+# lip_sync clip carries the `disclosure` text. With `--offline` no provider is called: the
+# line becomes a caption and the `fallback` draws a mouth on the picture, which only moves
+# with audio files on the voice track, so here it stays closed.
+schemaVersion: 2
+disclosure: "AI-generated lip movement"
+output: { path: out/lip-sync.mp4, width: 1280, height: 720, fps: 25 }
+brand:
+  colors: { bg: "#0B0B0B", fg: "#FFFFFF", accent: "#3B82F6" }
+tracks:
+  - id: main
+    clips:
+      - { type: title_card, duration: 2.0, text: "Example Co.", subtitle: "SAMPLE DATA" }
+      - type: lip_sync
+        provider: sync-lipsync
+        model: sync-3
+        image: assets/still.png
+        voice: voice
+        duration: 6
+        fallback: { type: mouth, sprite: assets/still.png, x: 0.5, y: 0.62, width: 0.12, height: 0.08 }
+  - id: voice
+    clips:
+      - type: speech
+        at: 2.2
+        duration: 5.5
+        text: "Hello from Example Co. We are open every day, and we would love to see you."
+        provider: xai-speech
+        model: tts
+        voice: eve
+  - id: captions
+    from: voice

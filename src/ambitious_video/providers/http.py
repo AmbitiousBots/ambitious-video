@@ -28,13 +28,18 @@ class _Stay(urllib.request.HTTPRedirectHandler):
 
 
 def send(
-    url: str, payload: bytes | None, secret: str | None, timeout: float, carried: KeyHeader = BEARER
+    url: str,
+    payload: bytes | None,
+    secret: str | None,
+    timeout: float,
+    carried: KeyHeader = BEARER,
+    content_type: str = JSON_TYPE,
 ) -> bytes | int:
     headers: dict[str, str] = {}
     if secret is not None:
         headers[carried.name] = carried.prefix + secret
     if payload is not None:
-        headers["Content-Type"] = JSON_TYPE
+        headers["Content-Type"] = content_type
     method = "GET" if payload is None else "POST"
     request = urllib.request.Request(url, data=payload, method=method, headers=headers)
     opened = urllib.request.urlopen if secret is None else urllib.request.build_opener(_Stay).open

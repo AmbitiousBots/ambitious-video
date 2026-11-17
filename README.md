@@ -1,6 +1,6 @@
 # ambitious-video
 
-The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, speech, generated scenes, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
+The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, speech, generated scenes, lip-sync, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
 
 The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
@@ -113,7 +113,7 @@ An input the template does not have, a missing required input, a value of the wr
 
 ## Paid steps and providers
 
-A paid step is a clip that names a provider and one of its models. There are two: `speech`, a line spoken by a text-to-speech provider, and `generated_scene`, a scene a provider makes from a prompt ([Generated scenes](#generated-scenes)).
+A paid step is a clip that names a provider and one of its models. There are three: `speech`, a line spoken by a text-to-speech provider, `generated_scene`, a scene a provider makes from a prompt ([Generated scenes](#generated-scenes)), and `lip_sync`, a presenter whose lips a provider moves to the sound of a track ([Lip-sync](#lip-sync)).
 
 ```yaml
 - { type: speech, at: 0.5, text: "Narration line", provider: xai-speech, model: tts, voice: eve }
@@ -121,7 +121,7 @@ A paid step is a clip that names a provider and one of its models. There are two
 
 The provider, the model and the voice are always written in the script. Nothing picks one for you at render time and no voice is built in. A `voiceover` clip is the free form of the same line: it gives captions their words and timing, nothing is spoken and no key is needed.
 
-Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for the three xAI adapters, `ELEVENLABS_API_KEY` for `elevenlabs-speech`), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger, a log or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged. [Keys asked on demand](#keys-asked-on-demand) says how to find out which keys a script needs, and [Rendering offline](#rendering-offline) how to render without any.
+Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for the three xAI adapters, `ELEVENLABS_API_KEY` for `elevenlabs-speech`, `SYNC_API_KEY` for `sync-lipsync`), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger, a log or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged. [Keys asked on demand](#keys-asked-on-demand) says how to find out which keys a script needs, and [Rendering offline](#rendering-offline) how to render without any.
 
 | Provider id | Step | Models | Key | Unit |
 |---|---|---|---|---|
@@ -129,8 +129,9 @@ Keys are bring-your-own. Each provider reads its key from one environment variab
 | `elevenlabs-speech` | `speech` | `eleven-v4`, `eleven-flash` | `ELEVENLABS_API_KEY` | character |
 | `xai-video` | `generated_scene` | `grok-imagine-video`, `grok-imagine-video-1.5`, `grok-imagine-video-1.5-lite` | `XAI_API_KEY` | second |
 | `xai-image` | `generated_scene` (a still picture) | `grok-imagine-image`, `grok-imagine-image-2.0` | `XAI_API_KEY` | image |
+| `sync-lipsync` | `lip_sync` | `lipsync-2`, `lipsync-2-pro`, `sync-3` | `SYNC_API_KEY` | frame |
 
-`pricing.json` holds one entry per provider and model: `unit`, `usdPerUnit`, `sourceUrl` (the provider's public price page) and `checkedAt` (the day that page was read). These are list prices, not measured spend; check the source before relying on them. The table also holds prices for lip-sync, per output frame, which has no adapter yet; a script cannot use those until the adapter exists.
+`pricing.json` holds one entry per provider and model: `unit`, `usdPerUnit`, `sourceUrl` (the provider's public price page) and `checkedAt` (the day that page was read). These are list prices, not measured spend; check the source before relying on them. Lip-sync is priced per frame of the clip at the output frame rate; a plan fee that a provider charges your account each month is not in the table.
 
 `estimate` prices a script from that table without calling anyone. A paid line looks like this:
 
@@ -188,6 +189,39 @@ A moving scene takes the provider a while. `render` sends the request once, writ
 
 The two adapters follow the provider's public API documentation, and the tests run them against a local stand-in server. No test calls the provider, so check a first paid render with a short scene. The request and response shapes are kept in `providers/xai_video.py` and `providers/xai_image.py`, apart from everything else.
 
+### Lip-sync
+
+A `lip_sync` clip shows a presenter whose lips a provider moves to the sound of another track. It is never added for you: a video has lip-sync only when its script, or the template it came from, has such a clip.
+
+```yaml
+disclosure: "AI-generated lip movement"
+tracks:
+  - id: main
+    clips:
+      - type: lip_sync
+        provider: sync-lipsync
+        model: lipsync-2
+        video: assets/presenter.mp4
+        voice: voice
+        duration: 6
+        fallback: { type: mouth, sprite: assets/presenter.png, x: 0.5, y: 0.62, width: 0.12, height: 0.08 }
+  - id: voice
+    clips:
+      - { type: speech, at: 0.2, text: "Hello, and welcome.", provider: xai-speech, model: tts, voice: eve }
+```
+
+- **The presenter is your own file.** `video` is a video of the presenter at least as long as the clip. `image` is a picture instead, which only `sync-3` takes. Give exactly one of the two.
+- **`voice` names the track the presenter speaks.** The clip takes every `speech` and `audio` clip on that track that sounds while it is shown, mixes them into one sound file as long as the clip, and sends that file and the presenter to the provider. A sound that starts before the clip and runs into it is heard from the point the clip begins (the planned length of a `speech` line is used to tell). A `lip_sync` clip with no sound in it is refused with `E_INPUT_SCHEMA` at its `voice`, in `validate`, `plan`, `estimate` and `render`, before anything is sent or paid for. The plan lists those steps in the clip's `hears`. A `speech` step is made (or read from the step cache) first, so its key is still needed.
+- **The models** of `sync-lipsync` are `lipsync-2`, `lipsync-2-pro` and `sync-3`, and the script always names one.
+- **The price is per frame.** `estimate` counts the frames of the clip at the output frame rate: 30 seconds at 25 fps is 750 frames, which is $1.50 with `lipsync-2`, and the same 30 seconds at 30 fps is 900 frames. The provider counts the frames of the video it returns, which follow the frame rate of the presenter file, so a presenter recorded at another frame rate is billed a little differently from the estimate. A monthly plan fee that the provider charges your account is separate and is not in the estimate or the ledger.
+- **The key is yours.** The adapter reads `SYNC_API_KEY` from the environment for the call and sends it only to `api.sync.so`, in the `x-api-key` header. The result is downloaded without the key. The files are uploaded in the request itself, so nothing has to be hosted anywhere.
+- **Step key.** The key of a `lip_sync` step is made from the model, the hash of the presenter file, and the sound it hears: the step key of each `speech` clip, the hash of each `audio` file, and where each one starts in the clip. New words, another voice or another presenter file make a new key and a new charge. A change elsewhere in the video does not.
+- **Later answers.** Lip-sync takes the provider a while, and it works like a moving [generated scene](#generated-scenes): the request id is stored under the step key before the result is asked for, a render that runs out of time stops with `E_PENDING`, and a retry asks for the stored id and never uploads the files a second time. `render --resend` forgets the stored request and sends it again. A request the provider reports as failed or rejected is forgotten and gets no ledger line.
+- **Disclosure.** A script with a `lip_sync` clip needs `disclosure` text, and every frame of the clip carries it, as for a generated scene. `verify` skips those frames in the same way.
+- **Offline.** With `--offline` the provider is not called and the clip's `fallback` is shown for the same time. `{ type: none }`, which is also what a clip without `fallback` gets, shows the presenter file as it is. `{ type: mouth, sprite, x, y, width, height }` draws a mouth on a picture of the presenter and opens it with the loudness of the sound: `x` and `y` are the middle of the mouth and `width` and `height` its size when fully open, as parts of the frame from 0 to 1, and `color` is optional. The mouth is drawn on this computer from the `audio` files on the voice track, and the same files give the same frames every time. A `speech` clip is not spoken offline, so the mouth stays closed during it. No disclosure text is drawn on a fallback.
+
+The adapter follows the provider's public API documentation, and the tests run it against a local stand-in server. No test calls the provider, so check a first paid render with a short clip. The request and response shapes are kept in `providers/syncso_lipsync.py`.
+
 ### Keys asked on demand
 
 `estimate` and `plan` list the keys a render would still need, in `data.secretsNeeded`:
@@ -217,8 +251,9 @@ A program that renders for someone else, such as an assistant, should work in th
 |---|---|---|
 | `speech` | `captions` | Nothing is spoken. The line keeps its words and its time, so a captions track still shows it, exactly as a `voiceover` clip would. |
 | `generated_scene` | `image`, `video` or `title_card` | The clip's own `fallback` is shown for the same time: the owner's picture (with a slow zoom if it names one), a part of the owner's video file, or a title card in the brand colors. No disclosure text is drawn, because nothing was generated. |
+| `lip_sync` | `none` or `mouth` | `none` shows the presenter file as it is. `mouth` draws a mouth on the owner's picture of the presenter and opens it with the loudness of the `audio` files on the voice track. No disclosure text is drawn. |
 
-A replaced step is listed as the free step that stands in for it, with `"fallback": "captions"` (or `image`, `video`, `title_card` for a scene) and `"fallbackFor": { "type": "speech", "provider": "...", "model": "..." }`, in the steps of `plan` and `render` and in the lines of `estimate`. The offline plan has no paid step, so its estimate and its `costUsd` are `0.000000`, `secretsNeeded` is empty, the ledger gets no line and the step cache is not read or written. It is a different plan from the online one, with its own `planSha256`, and it is as repeatable as any free render: the same script and files give the same plan in every process and the same video file on the same machine and toolchain. `--offline` applies to the whole command, also when a key is set or a result is cached. With `{ "jobId": "..." }` it applies to that retry.
+A replaced step is listed as the free step that stands in for it, with `"fallback": "captions"` (or `image`, `video`, `title_card` for a scene, `none` or `mouth` for lip-sync) and `"fallbackFor": { "type": "speech", "provider": "...", "model": "..." }`, in the steps of `plan` and `render` and in the lines of `estimate`. The offline plan has no paid step, so its estimate and its `costUsd` are `0.000000`, `secretsNeeded` is empty, the ledger gets no line and the step cache is not read or written. It is a different plan from the online one, with its own `planSha256`, and it is as repeatable as any free render: the same script and files give the same plan in every process and the same video file on the same machine and toolchain. `--offline` applies to the whole command, also when a key is set or a result is cached. With `{ "jobId": "..." }` it applies to that retry.
 
 `--offline` replaces paid steps only. A `screen_recording` clip still opens the page it names.
 
@@ -236,7 +271,7 @@ A provider is one module in `src/ambitious_video/providers/` with a class that f
 | `price(model)`, `quote(params, units)` | The price entry and the price of that many units, from `pricing.json` only. |
 | `run(params, inputs, secret, out)` | The call. Writes the result to `out`. Uses only the standard library, and must not keep, log or raise the key. |
 
-A `scene` provider also follows `SceneMaker`: `output` says whether it returns a `video` or an `image` (a still picture, shown with the clip's `kenburns` zoom), and `faults(step)` names the fields of a clip it cannot make, such as a length or a size it does not offer, so `validate` refuses them before anything is sent. A provider that answers later follows `Deferred` instead of doing the work in `run`: `submit(params, inputs, secret)` starts the work and returns the provider's request id, `collect(request_id, secret, out)` returns the result or `None` while it is not ready, and `patience` gives the seconds between two polls and the longest wait. It raises `RequestLost` when the provider says the request failed, which is the only case in which a step is sent again.
+A `scene` provider also follows `SceneMaker`: `output` says whether it returns a `video` or an `image` (a still picture, shown with the clip's `kenburns` zoom), and `faults(step)` names the fields of a clip it cannot make, such as a length or a size it does not offer, so `validate` refuses them before anything is sent. A provider that answers later follows `Deferred` instead of doing the work in `run`: `submit(params, inputs, secret)` starts the work and returns the provider's request id, `collect(request_id, secret, out)` returns the result or `None` while it is not ready, and `patience` gives the seconds between two polls and the longest wait. It raises `RequestLost` when the provider says the request failed, which is the only case in which a step is sent again. A `lipsync` provider follows `Deferred` and `LipSyncer`: `lip_faults(step)` names the fields of a `lip_sync` clip it cannot make, and `submit` finds the presenter file in `inputs` under `video` or `image` and the mixed sound under `audio`.
 
 The commands find providers only through that registry, so an adapter needs no change to `plan`, `estimate`, the step cache or `render`. `test/test_providers.py` registers one inside a test and runs it through all four, and `test/test_generated_scenes.py` does the same with one that answers later. A script that names a provider id, a model or a kind of step the registry does not have is refused by `validate`.
 
@@ -244,7 +279,7 @@ The commands find providers only through that registry, so an adapter needs no c
 
 `plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. A script that `expand` made also has `template: { id, templateVersion }` in its plan. `render` returns the same `planSha256`. `secretsNeeded` is printed next to the plan and is not part of `planSha256`, because it depends on which keys are set and what the step cache holds; everything else in `data` is hashed.
 
-Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the model, the words, the voice and the adapter's language and format settings), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. The key of a generated scene names the model, the prompt, the length, the size and shape when given, and the hash of the reference picture. Its `fallback`, its `kenburns` zoom and the disclosure text are not sent to the provider, so they change only the output's key and never cause a second charge. A `generated_scene` clip can carry a `seed` for a provider that takes one, and it is then part of the key. None of the adapters that ship takes a seed, and `--seed` never changes a step key.
+Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the model, the words, the voice and the adapter's language and format settings), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. The key of a generated scene names the model, the prompt, the length, the size and shape when given, and the hash of the reference picture. Its `fallback`, its `kenburns` zoom and the disclosure text are not sent to the provider, so they change only the output's key and never cause a second charge. A `generated_scene` clip can carry a `seed` for a provider that takes one, and it is then part of the key. None of the adapters that ship takes a seed, and `--seed` never changes a step key. The key of a `lip_sync` step chains to the steps it hears: it holds the hash of the presenter file and, for the sound, the step key of each `speech` clip and the hash of each `audio` file, so changing a spoken line changes the key of the line and of the lip-sync that follows it, and nothing else.
 
 The result of a paid step is kept in `<cache dir>/<stepKey>/` (`output.bin` and a `meta.json` with its hash) and listed in the `step_cache` table. Before a paid call, `render` looks there. A hit calls nothing, needs no key, and adds no ledger line; a miss calls the provider once, stores the result and adds one ledger line whose idempotency key is the step key. When the chosen cache folder has no result but another cache folder this database has used does, the verified result is copied in instead: no call, no key and no line. Renders that use one database take turns on a step key, also when they run at the same time with different cache folders, so the second one copies the result of the first. A second job with the same words and voice therefore costs nothing, and two renders with every paid step cached write the same file on the same machine and toolchain. `render` lists each paid step with `cached` and the `usd` this call was charged, and `costUsd` is their sum.
 
@@ -307,7 +342,7 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `schemas/video-script.v2.json` | The video script format. [schemas/README.md](schemas/README.md) explains it. |
 | `schemas/video-template.v1.json` | The template format that `expand` reads. The same README explains it. |
 | `templates/` | The three starter templates: `welcome.yaml`, `short-explainer.yaml` and `announcement.yaml`. A copy of each is inside the package, in `src/ambitious_video/templates/`, so the binary has them; a test keeps the copies the same. |
-| `examples/` | Four scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, `all-clip-types.yaml` uses every free clip type and paid `speech`, and `generated-scenes.yaml` has two `generated_scene` clips with their fallbacks. `examples/invalid/` holds scripts that must be rejected. |
+| `examples/` | Five scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, `all-clip-types.yaml` uses every free clip type and paid `speech`, `generated-scenes.yaml` has two `generated_scene` clips with their fallbacks, and `lip-sync.yaml` has a `lip_sync` clip that speaks a `speech` line. `examples/invalid/` holds scripts that must be rejected. |
 | `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has an `inputs.yaml` for one starter template, a `brand.yaml`, the `script.yaml` that `expand` writes from them, and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
 | `src/ambitious_video/steps/` | One module per clip type. Each `compile` is pure. Register a new type in `steps/__init__.py`. |
 | `src/ambitious_video/providers/` | The `Provider` protocol, the registry, the price table reader, and one module per provider adapter. |

@@ -346,7 +346,7 @@ def test_lip_sync_is_priced_per_output_frame() -> None:
 
 def test_every_registered_provider_has_a_price_for_each_model() -> None:
     listed = providers.registered()
-    assert [item.id for item in listed] == ["elevenlabs-speech", "xai-image", "xai-speech", "xai-video"]
+    assert [item.id for item in listed] == ["elevenlabs-speech", "sync-lipsync", "xai-image", "xai-speech", "xai-video"]
     for item in listed:
         assert item.kind in {"scene", "speech", "lipsync"} and item.secret.isupper() and item.adapter_version >= 1
         for model in item.models:
@@ -390,7 +390,7 @@ def test_the_registry_refuses_a_second_adapter_with_the_same_id(fake_speech: Tes
     assert found is fake_speech and providers.find("no-such-provider") is None
     with pytest.raises(ValueError):
         providers.register(TestSpeech())
-    shipped = ["elevenlabs-speech", "xai-image", "xai-speech", "xai-video"]
+    shipped = ["elevenlabs-speech", "sync-lipsync", "xai-image", "xai-speech", "xai-video"]
     assert [item.id for item in providers.registered()] == sorted(["test-speech", *shipped])
     providers.unregister("test-speech")
     assert providers.find("test-speech") is None
