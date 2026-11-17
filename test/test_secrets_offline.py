@@ -562,7 +562,8 @@ def test_the_offline_flag_plans_prices_renders_and_verifies_with_no_key(tmp_path
 def test_the_offline_flag_is_refused_where_it_means_nothing(tmp_path: Path) -> None:
     home = tmp_path / "home"
     source = ["--in", str(SAMPLES / "example-bookshop" / "script.yaml")]
-    for args in (["validate", "--offline"], ["render", "--offline=yes"], ["ledger", "--offline"]):
+    wrong = (["plan", "--resend"], ["estimate", "--resend"], ["render", "--resend=yes"])
+    for args in (["validate", "--offline"], ["render", "--offline=yes"], ["ledger", "--offline"], *wrong):
         refused = _cli(home, [*args, *source] if args[0] != "ledger" else args)
         assert refused["exit"] == 1 and refused["errors"][0]["code"] == "E_USAGE", args
     assert not home.exists()
@@ -577,4 +578,5 @@ def test_the_guide_tells_a_bot_how_to_ask_for_a_key(tmp_path: Path) -> None:
         assert phrase in text, phrase
     shown = _cli(tmp_path / "home", ["--help"])["data"]
     assert any(row["flag"] == "--offline" for row in shown["flags"])
+    assert any(row["flag"] == "--resend" for row in shown["flags"])
     assert "--offline" in shown["usage"]

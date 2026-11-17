@@ -494,18 +494,32 @@ def _usable(item: Paid, path: Path) -> bool:
     return readable_image(path)
 
 
+def _stuck(item: Paid, request_id: str, status: int) -> Failure:
+    return failure(
+        "E_PROVIDER",
+        "The provider did not give the result.",
+        say("Check the key and retry the job id. ", "If it keeps failing, add --resend ", "to send the step again."),
+        {"provider": item.provider.id, "status": status, "stepKey": item.key, "requestId": request_id},
+    )
+
+
+def _submit(db: sqlite3.Connection, item: Paid, maker: Deferred, env: Mapping[str, str], stamp: str) -> str:
+    params = item.spec.params if isinstance(item.spec.params, Mapping) else {}
+    request_id = maker.submit(params, item.inputs, env.get(item.provider.secret, ""))
+    begin(db)
+    store_request(db, item.key, item.provider.id, item.spec.model or "", request_id, stamp)
+    commit(db)
+    return request_id
+
+
 def _later(
     db: sqlite3.Connection, item: Paid, maker: Deferred, env: Mapping[str, str], job_id: str, stamp: str
 ) -> bytes:
     work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
     try:
-        params = item.spec.params if isinstance(item.spec.params, Mapping) else {}
         request_id = stored_request(db, item.key)
         if request_id is None:
-            request_id = maker.submit(params, item.inputs, env.get(item.provider.secret, ""))
-            begin(db)
-            store_request(db, item.key, item.provider.id, item.spec.model or "", request_id, stamp)
-            commit(db)
+            request_id = _submit(db, item, maker, env, stamp)
         try:
             result = await_result(maker, request_id, env.get(item.provider.secret, ""), work / step_cache.BODY)
         except RequestLost:
@@ -513,6 +527,8 @@ def _later(
             forget_request(db, item.key)
             commit(db)
             raise _lost(item) from None
+        except ProviderError as error:
+            raise _stuck(item, request_id, error.status) from None
         if result is None:
             raise _waiting(item, job_id, request_id)
         if not _usable(item, result.path):
@@ -523,6 +539,35 @@ def _later(
         return result.path.read_bytes()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _send_ahead(
+    db: sqlite3.Connection, store: Path, paid: tuple[Paid, ...], env: Mapping[str, str], stamp: str, resend: bool
+) -> None:
+    for key, item in {item.key: item for item in paid}.items():
+        maker = item.provider
+        if not isinstance(maker, Deferred) or _stored(db, store, key):
+            continue
+        if _keyless(db, store, item, env):
+            raise _no_key(secrets_needed((item,), env))
+        across = Hold(str(_db_path(db).parent / "locks" / ("step-" + key + ".lock")))
+        hold: Hold | None = None
+        try:
+            across.lock()
+            hold = Hold(str(step_cache.lock_path(store, key)))
+            hold.lock()
+            if _stored(db, store, key):
+                continue
+            if resend:
+                begin(db)
+                forget_request(db, key)
+                commit(db)
+            if stored_request(db, key) is None:
+                _submit(db, item, maker, env, stamp)
+        finally:
+            if hold is not None:
+                hold.close()
+            across.close()
 
 
 def _run(db: sqlite3.Connection, item: Paid, env: Mapping[str, str], job_id: str, stamp: str) -> bytes:
@@ -630,7 +675,9 @@ def _pieces(
     paid: tuple[Paid, ...],
     store: Path,
     stamp: str,
+    resend: bool = False,
 ) -> Spoken:
+    _send_ahead(db, store, paid, env, stamp, resend)
     pieces: list[Piece] = []
     ranges: list[tuple[int, int]] = []
     steps: list[JsonObject] = []
@@ -797,6 +844,7 @@ def render_new(
     cache_flag: Path | None = None,
     *,
     offline: bool = False,
+    resend: bool = False,
 ) -> JsonObject:
     script, timeline, _taken = studied(raw, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
@@ -830,7 +878,7 @@ def render_new(
         if not hold.try_lock():
             raise failure("E_JOB_STATE", "A render already holds this job.", "Wait for it, or retry the job id.")
         try:
-            spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp)
+            spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp, resend)
             digest = _produce(script, timeline, root, output, spoken)
             _write_manifest(output, _manifest(job_id, output, script, spoken, plan, offline))
             begin(db)
@@ -858,6 +906,7 @@ def render_again(
     cache_flag: Path | None = None,
     *,
     offline: bool = False,
+    resend: bool = False,
 ) -> JsonObject:
     row = read_job(db, job_id)
     if row is None:
@@ -901,7 +950,7 @@ def render_again(
             raise failure("E_JOB_STATE", "The job cannot make that move.", "Read the job state with jobs.")
         try:
             output = Path(row.output_path)
-            spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp)
+            spoken = _pieces(timeline, root, env, db, job_id, paid, store, stamp, resend)
             digest = _produce(script, timeline, root, output, spoken)
             _write_manifest(output, _manifest(job_id, output, script, spoken, plan, offline))
             begin(db)

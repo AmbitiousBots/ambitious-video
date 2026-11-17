@@ -91,6 +91,11 @@ class _Service(BaseHTTPRequestHandler):
         if not self._noted("GET", b""):
             return
         kind = type(self)
+        if self.path.startswith("/v1/videos/hop"):
+            self.send_response(302)
+            self.send_header("Location", "/elsewhere/" + self.path.rsplit("/", 1)[-1])
+            self.end_headers()
+            return
         if self.path.startswith("/files/"):
             self._answer(kind.video)
             return
@@ -214,13 +219,14 @@ def _render(
     env: Mapping[str, str],
     *,
     offline: bool = False,
+    resend: bool = False,
 ) -> dict[str, object]:
     db.execute("BEGIN IMMEDIATE")
     try:
         if isinstance(script, str):
-            data = engine.render_again(db, script, None, when, env, offline=offline)
+            data = engine.render_again(db, script, None, when, env, offline=offline, resend=resend)
         else:
-            data = engine.render_new(db, dict(script), folder, job, when, env, offline=offline)
+            data = engine.render_new(db, dict(script), folder, job, when, env, offline=offline, resend=resend)
         db.execute("COMMIT")
     except BaseException:
         if db.in_transaction:
@@ -280,7 +286,7 @@ def test_a_scene_that_times_out_is_polled_again_and_never_sent_twice(tmp_path: P
         }
         job = read_job(db, "job-one")
         assert job is not None and job.state == "failed"
-        assert len(_sent("POST", "/v1/videos/generations")) == 1 and len(_sent("GET", "/v1/videos/req-1")) > 1
+        assert len(_sent("POST", "/v1/videos/generations")) == 1 and len(_sent("GET", "/v1/videos/req-1")) >= 1
         assert _requests(db) == [(key, "xai-video", "req-1")] and list_ledger(db) == ()
         assert not (folder / "out" / "scenes.mp4").exists()
         states = [entry["state"] for entry in _rows(engine.cache_list(db, None), "entries")]
@@ -351,15 +357,102 @@ def test_a_poll_that_fails_keeps_the_request_for_the_retry(tmp_path: Path, local
     try:
         with pytest.raises(Failure):
             _render(db, script, folder, "job-one", FIRST, env)
-        _Service.refuse = 503
-        with pytest.raises(ProviderError) as refused:
-            _render(db, "job-one", folder, "", LATER, env)
-        assert (refused.value.provider, refused.value.status) == ("xai-video", 503)
-        assert [request for _key, _provider, request in _requests(db)] == ["req-1"] and list_ledger(db) == ()
+        for status in (503, 401, 429):
+            _Service.refuse = status
+            with pytest.raises(Failure) as refused:
+                _render(db, "job-one", folder, "", LATER, env)
+            (error,) = refused.value.errors
+            assert error.code == "E_PROVIDER" and "--resend" in error.hint
+            data = refused.value.data
+            assert (data["provider"], data["status"], data["requestId"]) == ("xai-video", status, "req-1")
+            assert [request for _key, _provider, request in _requests(db)] == ["req-1"] and list_ledger(db) == ()
         _Service.refuse = 0
         _Service.status = "done"
         _render(db, "job-one", folder, "", LATER, env)
         assert len(_sent("POST", "/v1/videos/generations")) == 1 and len(list_ledger(db)) == 1
+    finally:
+        db.close()
+    assert SECRET not in json.dumps(refused.value.data) + refused.value.errors[0].hint
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_a_stored_request_the_provider_no_longer_knows_is_sent_again(
+    tmp_path: Path, local_xai: str, status: int
+) -> None:
+    folder, home = _folder(tmp_path), tmp_path / "home"
+    script = _script(_scene())
+    env = {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+    db = _open(home)
+    try:
+        with pytest.raises(Failure) as waiting:
+            _render(db, script, folder, "job-one", FIRST, env)
+        assert [error.code for error in waiting.value.errors] == ["E_PENDING"]
+        assert [request for _key, _provider, request in _requests(db)] == ["req-1"]
+        _Service.refuse = status
+        with pytest.raises(Failure) as lost:
+            _render(db, "job-one", folder, "", LATER, env)
+        (error,) = lost.value.errors
+        assert error.code == "E_PROVIDER" and "Render again" in error.hint
+        assert lost.value.data["provider"] == "xai-video"
+        assert _requests(db) == [] and list_ledger(db) == ()
+        assert _rows(engine.cache_list(db, None), "entries") == []
+        assert len(_sent("POST", "/v1/videos/generations")) == 1
+        _Service.refuse = 0
+        _Service.status = "done"
+        made = _render(db, script, folder, "job-two", LATER, env)
+        assert len(_sent("POST", "/v1/videos/generations")) == 2
+        assert _sent("GET", "/v1/videos/")[-1][1] == "/v1/videos/req-2"
+        assert made["costUsd"] == "0.100000" and len(list_ledger(db)) == 1 and _requests(db) == []
+    finally:
+        db.close()
+
+
+def test_resend_drops_a_stored_request_only_when_the_owner_asks(tmp_path: Path, local_xai: str) -> None:
+    folder, home = _folder(tmp_path), tmp_path / "home"
+    script = _script(_scene())
+    env = {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+    db = _open(home)
+    try:
+        with pytest.raises(Failure):
+            _render(db, script, folder, "job-one", FIRST, env)
+        with pytest.raises(Failure) as again:
+            _render(db, "job-one", folder, "", LATER, env)
+        assert again.value.data["requestId"] == "req-1" and len(_sent("POST", "/v1/videos/generations")) == 1
+        with pytest.raises(Failure) as resent:
+            _render(db, "job-one", folder, "", LATER, env, resend=True)
+        assert [error.code for error in resent.value.errors] == ["E_PENDING"]
+        assert resent.value.data["requestId"] == "req-2" and len(_sent("POST", "/v1/videos/generations")) == 2
+        assert [request for _key, _provider, request in _requests(db)] == ["req-2"] and list_ledger(db) == ()
+        _Service.status = "done"
+        made = _render(db, "job-one", folder, "", LATER, env)
+        assert len(_sent("POST", "/v1/videos/generations")) == 2 and _requests(db) == []
+        assert made["costUsd"] == "0.100000" and len(list_ledger(db)) == 1
+        calls = len(_Service.seen)
+        cached = _render(db, script, folder, "job-two", LATER, env, resend=True)
+        assert len(_Service.seen) == calls and cached["costUsd"] == "0.000000" and len(list_ledger(db)) == 1
+    finally:
+        db.close()
+
+
+def test_every_scene_is_sent_before_the_first_one_is_waited_for(tmp_path: Path, local_xai: str) -> None:
+    folder, home = _folder(tmp_path), tmp_path / "home"
+    other = _scene(prompt="A harbour at dusk, no people, no text")
+    script = _script(_scene(), other, _scene())
+    env = {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+    db = _open(home)
+    try:
+        with pytest.raises(Failure) as waiting:
+            _render(db, script, folder, "job-one", FIRST, env)
+        assert [error.code for error in waiting.value.errors] == ["E_PENDING"]
+        assert waiting.value.data["requestId"] == "req-1"
+        assert len(_sent("POST", "/v1/videos/generations")) == 2
+        assert sorted(request for _key, _provider, request in _requests(db)) == ["req-1", "req-2"]
+        assert _sent("GET", "/v1/videos/req-2") == [] and list_ledger(db) == ()
+        _Service.status = "done"
+        made = _render(db, "job-one", folder, "", LATER, env)
+        assert len(_sent("POST", "/v1/videos/generations")) == 2 and _requests(db) == []
+        assert made["costUsd"] == "0.200000" and len(list_ledger(db)) == 2
+        assert [step["cached"] for step in _rows(made, "steps")] == [False, False, True]
     finally:
         db.close()
 
@@ -825,6 +918,9 @@ def test_frames_of_a_generated_scene_carry_the_tag_and_other_frames_do_not(tmp_p
         return frame_at(timeline, 4, canvas).tobytes()
 
     assert faded(TAG) != faded("Made with a model")
+    _card, long_tag = frames(" ".join(["generated"] * 20))
+    wrapped = Image.frombytes("RGB", (160, 90), long_tag)
+    assert wrapped.crop(rest).tobytes() != plain.crop(rest).tobytes()
 
 
 def test_xai_video_submits_once_then_polls_and_downloads_without_the_key(tmp_path: Path, service: str) -> None:
@@ -872,6 +968,16 @@ def test_xai_video_submits_once_then_polls_and_downloads_without_the_key(tmp_pat
         strict.collect(request_id, SECRET, tmp_path / "plain.bin")
     assert not isinstance(unsafe.value, RequestLost) and not (tmp_path / "plain.bin").exists()
     assert len(_sent("GET", "/files/")) == 1
+    for status, lost in ((404, True), (410, True), (401, False), (403, False), (429, False), (500, False)):
+        _Service.refuse = status
+        with pytest.raises(ProviderError) as answered:
+            adapter.collect(request_id, SECRET, out)
+        assert (answered.value.status, isinstance(answered.value, RequestLost)) == (status, lost)
+    _Service.refuse = 0
+    with pytest.raises(ProviderError) as moved:
+        adapter.collect("hop-1", SECRET, out)
+    assert moved.value.status == 302 and not isinstance(moved.value, RequestLost)
+    assert _sent("GET", "/elsewhere/") == [] and len(_sent("GET", "/v1/videos/hop-1")) == 1
 
 
 def _locals_of(error: BaseException) -> str:

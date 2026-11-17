@@ -1,6 +1,6 @@
 {
   "help": {
-    "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--offline] [--now ISO8601] [--seed int] [--json]",
+    "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--offline] [--resend] [--now ISO8601] [--seed int] [--json]",
     "summary": "Renders a video from a script written as YAML or JSON. Every command prints one JSON envelope on stdout and nothing else.",
     "commands": [
       { "name": "guide", "summary": "Print an example script to copy, the starter templates with their inputs, and the steps to render." },
@@ -26,6 +26,7 @@
       { "flag": "--db path", "meaning": "Use this SQLite file instead of $AMBITIOUS_HOME/video/video.sqlite." },
       { "flag": "--cache dir", "meaning": "For plan, estimate, render, cache list and cache prune: use this step cache folder instead of $AMBITIOUS_HOME/video/cache." },
       { "flag": "--offline", "meaning": "For plan, estimate and render: call no provider and need no key. Every paid step takes its free fallback (speech becomes captions only, a generated scene shows its fallback clip), is marked with fallback, and costs 0." },
+      { "flag": "--resend", "meaning": "For render: forget the stored request of every unfinished scene of this video and send it again. Use it only when retries keep failing with E_PROVIDER; the provider may charge for the earlier request as well." },
       { "flag": "--older-than days", "meaning": "For cache prune: remove entries last used more than this many whole days ago, 0 to 36500." },
       { "flag": "--now ISO8601", "meaning": "Use this time instead of the clock, for example 2026-01-01T00:00:00Z." },
       { "flag": "--seed int", "meaning": "Use this seed for anything random, such as a job id." },
@@ -78,7 +79,7 @@
       "A generated_scene clip asks a provider for a scene: { type: generated_scene, provider: xai-video, model: grok-imagine-video, prompt, duration, fallback }. xai-video returns a moving scene priced per second (whole seconds, 1 to 15; models grok-imagine-video, grok-imagine-video-1.5, grok-imagine-video-1.5-lite). xai-image returns one still picture priced per picture (models grok-imagine-image, grok-imagine-image-2.0), shown with an optional kenburns zoom. Optional: resolution, aspect_ratio, and image, a reference picture next to the script.",
       "Every generated_scene needs a fallback that is shown for the same time when the provider is not called: { type: image, path, kenburns }, { type: video, path, in } or { type: title_card, text, subtitle }. The fallback has no duration of its own.",
       "A script with a generated_scene must set disclosure, for example disclosure: \"AI-generated scenes\". That text is drawn as a small tag on every frame of a generated scene. No wording is built in, and frames of other clips carry no tag.",
-      "A moving scene is sent once and then polled. If it is not ready in time, render stops with E_PENDING and data.jobId; nothing is charged yet. Retry with { \"jobId\": \"...\" } later: the stored request is asked for again and nothing is sent twice. A finished scene is in the step cache, so the next job that uses it costs nothing.",
+      "A moving scene is sent once and then polled. If it is not ready in time, render stops with E_PENDING and data.jobId; the ledger has no line for it yet, but the provider may still charge for the scene when it finishes. Retry with { \"jobId\": \"...\" } later: the stored request is asked for again and nothing is sent twice. Every scene of a video is sent before the first one is waited for. If the provider no longer knows the request (HTTP 404 or 410) or reports that it failed, the request is dropped and the next render sends the step again. If retries keep failing with E_PROVIDER for another reason, render with --resend. A finished scene is in the step cache, so the next job that uses it costs nothing.",
       "Every render writes <output file>.manifest.json next to the video (data.manifest): the template id and templateVersion, planSha256, and for each step its provider, model, stepKey, whether it came from the cache, and the usd charged. It holds no key.",
       "Captions are drawn only by a track with from: <id of a track with voiceover or speech clips>. Each such clip is shown during its own time, one sentence at a time. A script with no such track draws no captions.",
       "Paths in a script are relative to the folder that holds the script. The video is written to output.path in that folder.",

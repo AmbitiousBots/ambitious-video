@@ -25,6 +25,7 @@ SHAPES = ("1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "5:2")
 MIN_SECONDS = 1
 MAX_SECONDS = 15
 GONE = frozenset({"failed", "expired"})
+UNKNOWN = frozenset({404, 410})
 DONE = "done"
 REFERENCE = "image"
 FALLBACK_TYPE = "image/png"
@@ -113,6 +114,8 @@ class XaiVideo:
             raise RequestLost(self.id, 0)
         answer = send(self.config.status_url + request_id, None, secret, self.config.timeout_seconds)
         del secret
+        if isinstance(answer, int) and answer in UNKNOWN:
+            raise RequestLost(self.id, answer)
         if isinstance(answer, int):
             raise ProviderError(self.id, answer)
         body = as_object(answer)

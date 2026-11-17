@@ -173,18 +173,24 @@ def _draw_caption(image: PilImage, text: str, canvas: Canvas) -> PilImage:
 
 
 def _draw_tag(image: PilImage, text: str, canvas: Canvas) -> PilImage:
-    from ambitious_video.steps.common import font_for, measure, pil
+    from ambitious_video.steps.common import font_for, measure, pil, wrap
 
     _image, draw_module, _font = pil()
     frame = image.copy()
     draw = draw_module.Draw(frame)
     font = font_for(canvas, max(10, canvas.height // 40))
-    wide, high = measure(draw, text, font)
     pad = max(3, canvas.height // 120)
     edge = max(4, canvas.height // 60)
+    lines = wrap(draw, text, font, canvas.width - 2 * edge - 2 * pad) or (text,)
+    sizes = [measure(draw, line, font) for line in lines]
+    wide = max(size[0] for size in sizes)
+    high = sum(size[1] for size in sizes) + pad * (len(lines) - 1)
     left = max(0, canvas.width - edge - wide - 2 * pad)
     draw.rectangle((left, edge, canvas.width - edge, edge + high + 2 * pad), fill=canvas.bg)
-    draw.text((left + pad, edge + pad), text, fill=canvas.fg, font=font, anchor="lt")
+    top = edge + pad
+    for line, size in zip(lines, sizes, strict=True):
+        draw.text((left + pad, top), line, fill=canvas.fg, font=font, anchor="lt")
+        top += size[1] + pad
     return frame
 
 
