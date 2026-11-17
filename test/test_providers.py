@@ -211,7 +211,13 @@ def test_a_provider_registered_only_in_a_test_runs_plan_estimate_cache_and_rende
         with pytest.raises(Failure) as refused:
             _render(db, script, folder, "job-zero", FIRST, quiet)
         assert [error.code for error in refused.value.errors] == ["E_NO_KEY"]
-        assert refused.value.data == {"env": "TEST_SPEECH_KEY", "provider": "test-speech"}
+        owed = {
+            "env": "TEST_SPEECH_KEY",
+            "provider": "test-speech",
+            "steps": [step["index"] for step in spoken],
+            "usd": before["usd"],
+        }
+        assert refused.value.data == {"missing": [owed]} and before["secretsNeeded"] == [owed]
         assert fake_speech.calls == [] and list_ledger(db) == ()
 
         first = _render(db, script, folder, "job-one", FIRST, keyed)

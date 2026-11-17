@@ -142,7 +142,9 @@ def test_speech_without_a_key_is_refused(tmp_path: Path) -> None:
     errors = rendered["errors"]
     assert isinstance(errors, list) and isinstance(errors[0], dict)
     assert errors[0]["code"] == "E_NO_KEY" and "XAI_API_KEY" in errors[0]["hint"]
-    assert rendered["data"] == {"env": "XAI_API_KEY", "provider": "xai-speech"}
+    assert rendered["data"] == {
+        "missing": [{"env": "XAI_API_KEY", "provider": "xai-speech", "steps": [1], "usd": "0.000030"}]
+    }
 
 
 def test_all_clip_types_estimate_matches_the_price_table(tmp_path: Path) -> None:

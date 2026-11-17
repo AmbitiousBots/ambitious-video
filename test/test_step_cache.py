@@ -433,10 +433,12 @@ def test_using_an_entry_keeps_it_from_being_pruned(tmp_path: Path) -> None:
 def test_cache_flags_are_refused_where_they_mean_nothing(tmp_path: Path) -> None:
     home = tmp_path / "home"
     planned = _cli(
-        home, ["plan", "--cache", str(tmp_path / "cache"), "--in", str(SAMPLE / "script.yaml")], "2026-01-01T00:00:00Z"
+        home,
+        ["validate", "--cache", str(tmp_path / "cache"), "--in", str(SAMPLE / "script.yaml")],
+        "2026-01-01T00:00:00Z",
     )
     assert planned["exit"] == 1 and planned["errors"][0]["code"] == "E_USAGE"
-    assert planned["command"] == "plan"
+    assert planned["command"] == "validate"
     listed = _cli(home, ["cache", "list", "--older-than", "3"], "2026-01-01T00:00:00Z")
     assert listed["exit"] == 1 and listed["errors"][0]["code"] == "E_USAGE"
     assert not home.exists()

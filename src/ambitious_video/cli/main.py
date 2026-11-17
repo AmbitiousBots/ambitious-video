@@ -28,12 +28,14 @@ VERSION = "0.1.0"
 SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
 CACHE_DIR: ContextVar[Path | None] = ContextVar("cache_dir", default=None)
 OLDER_THAN: ContextVar[str | None] = ContextVar("older_than", default=None)
+OFFLINE: ContextVar[bool] = ContextVar("offline", default=False)
 KIT_VALUE_FLAGS = ("--in", "--db", "--now", "--seed")
 MAX_PRUNE_DAYS = 36500
 OWN_FLAGS = {
-    "--cache": ("estimate", "render", "cache list", "cache prune"),
+    "--cache": ("plan", "estimate", "render", "cache list", "cache prune"),
     "--older-than": ("cache prune",),
 }
+PLAIN_FLAGS = {"--offline": ("plan", "estimate", "render")}
 STDIN_WAIT_SECONDS = 2.0
 
 
@@ -91,7 +93,12 @@ def _own_flags(argv: list[str]) -> tuple[list[str], dict[str, str]]:
     kept: list[str] = []
     taken: dict[str, str] = {}
     for name, tokens, value in groups:
-        if name not in OWN_FLAGS:
+        if name in PLAIN_FLAGS:
+            if command in PLAIN_FLAGS[name] and tokens == [name]:
+                taken[name] = name
+            else:
+                kept.extend(tokens)
+        elif name not in OWN_FLAGS:
             kept.extend(tokens)
         elif command in OWN_FLAGS[name] and value != "" and name not in taken:
             taken[name] = value
@@ -190,11 +197,11 @@ def validate(context: Context[object]) -> JsonObject:
 
 
 def plan(context: Context[object]) -> JsonObject:
-    return engine.plan_data(context.input, SCRIPT_DIR.get())
+    return engine.plan_view(context.input, SCRIPT_DIR.get(), context.env, CACHE_DIR.get(), offline=OFFLINE.get())
 
 
 def estimate(context: Context[object]) -> JsonObject:
-    return engine.estimate_data(context.input, SCRIPT_DIR.get(), context.env, CACHE_DIR.get())
+    return engine.estimate_data(context.input, SCRIPT_DIR.get(), context.env, CACHE_DIR.get(), offline=OFFLINE.get())
 
 
 def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
@@ -212,8 +219,11 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
                 context.now,
                 context.env,
                 CACHE_DIR.get(),
+                offline=OFFLINE.get(),
             )
-        return engine.render_again(context.db, job_id, body, context.now, context.env, CACHE_DIR.get())
+        return engine.render_again(
+            context.db, job_id, body, context.now, context.env, CACHE_DIR.get(), offline=OFFLINE.get()
+        )
 
     return _guard(run)
 
@@ -296,6 +306,7 @@ def main() -> int:
     chosen = own.get("--cache")
     cache_token = CACHE_DIR.set(None if chosen is None else Path(chosen))
     days_token = OLDER_THAN.set(own.get("--older-than"))
+    offline_token = OFFLINE.set("--offline" in own)
     sys.argv = [original[0], *kept]
     try:
         return run_cli(
@@ -322,6 +333,7 @@ def main() -> int:
         )
     finally:
         sys.argv = original
+        OFFLINE.reset(offline_token)
         OLDER_THAN.reset(days_token)
         CACHE_DIR.reset(cache_token)
         SCRIPT_DIR.reset(token)

@@ -73,6 +73,74 @@ if not listed["ok"] or listed["data"]["entries"] != [] or not pruned["ok"] or pr
 print("planSha256", one["data"]["planSha256"], "cache entries", listed["data"]["count"])
 PY
 
+echo "== keys on demand: the estimate names the missing key, render stops before any call =="
+cat >"$WORK/spoken.yaml" <<'YAML'
+schemaVersion: 2
+output: { path: out/spoken.mp4, width: 320, height: 180, fps: 10 }
+tracks:
+  - id: main
+    clips:
+      - { type: title_card, duration: 2.0, text: "Spoken or shown" }
+  - id: voice
+    clips:
+      - { type: speech, at: 0.2, duration: 1.5, text: "A line for a voice.", provider: xai-speech, model: tts, voice: eve }
+  - id: captions
+    from: voice
+YAML
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-estimate.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-plan.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-render.json" || true
+"$PY" - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+estimate, plan, render = (
+    json.loads((work / f"keys-{name}.json").read_text(encoding="utf-8")) for name in ("estimate", "plan", "render")
+)
+wanted = [{"env": "XAI_API_KEY", "provider": "xai-speech", "steps": [1], "usd": "0.000285"}]
+if not estimate["ok"] or estimate["data"]["secretsNeeded"] != wanted or plan["data"]["secretsNeeded"] != wanted:
+    raise SystemExit("estimate and plan must list the one missing key")
+if render["ok"] or [error["code"] for error in render["errors"]] != ["E_NO_KEY"] or render["data"] != {"missing": wanted}:
+    raise SystemExit("render without the key must stop with E_NO_KEY and data.missing")
+if (work / "out" / "spoken.mp4").exists():
+    raise SystemExit("a refused render must write nothing")
+print("secretsNeeded", wanted[0]["env"], wanted[0]["usd"])
+PY
+
+echo "== --offline: fallbacks, 0.000000, the same plan and the same file twice =="
+"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/spoken.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/offline-plan-b.json"
+"$PY" dist/ambitious-video.pyz estimate --offline --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-estimate.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-render-a.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/spoken.yaml" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/offline-render-b.json"
+"$PY" dist/ambitious-video.pyz ledger --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-ledger.json"
+"$PY" - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+def read(name):
+    body = json.loads((work / f"offline-{name}.json").read_text(encoding="utf-8"))
+    if not body["ok"]:
+        raise SystemExit(body)
+    return body["data"]
+plan, again, estimate, one, two, ledger = (
+    read(name) for name in ("plan-a", "plan-b", "estimate", "render-a", "render-b", "ledger")
+)
+if plan != again or plan["secretsNeeded"] != [] or any(step["paid"] for step in plan["steps"]):
+    raise SystemExit("the offline plan must repeat, need no key and hold no paid step")
+if [step.get("fallback") for step in plan["steps"]] != [None, "captions"]:
+    raise SystemExit("the speech step must be marked with its fallback")
+if estimate["usd"] != "0.000000" or estimate["secretsNeeded"] != []:
+    raise SystemExit("the offline estimate must be 0.000000")
+if one["costUsd"] != "0.000000" or two["costUsd"] != "0.000000" or one["sha256"] != two["sha256"]:
+    raise SystemExit("two offline renders must cost nothing and write the same file")
+if [step["fallback"] for step in one["steps"]] != ["captions"] or one["planSha256"] != plan["planSha256"]:
+    raise SystemExit("the offline render must list the fallback and the offline plan")
+if ledger["lines"] != []:
+    raise SystemExit("an offline render must add no ledger line")
+print("offline", one["costUsd"], one["sha256"])
+PY
+
 echo "== sample projects: validate and plan, no key =="
 for sample in examples/samples/*/; do
   "$PY" dist/ambitious-video.pyz validate --in "${sample}script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/sample.json"
