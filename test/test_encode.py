@@ -85,7 +85,9 @@ def test_default_render_is_h264_yuv420p_and_verifies(tmp_path: Path) -> None:
     checked = subprocess_verify(tmp_path / "home", tmp_path, str(data["jobId"]))
     assert checked["exit"] == 0, checked
     assert checks_of(checked) == {
+        "readable": True,
         "duration": True,
+        "frames": True,
         "resolution": True,
         "audio": True,
         "encoding": True,
@@ -103,7 +105,9 @@ def test_a_web_render_of_a_noise_still_with_a_crossfade_verifies(tmp_path: Path)
     checked = subprocess_verify(tmp_path / "home", tmp_path, str(data["jobId"]))
     assert checked["exit"] == 0, checked
     assert checks_of(checked) == {
+        "readable": True,
         "duration": True,
+        "frames": True,
         "resolution": True,
         "audio": True,
         "encoding": True,

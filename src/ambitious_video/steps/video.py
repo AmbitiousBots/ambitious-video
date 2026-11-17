@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ambitious_video.domain.types import VideoClip
-from ambitious_video.steps.common import Canvas, pil
+from ambitious_video.steps.common import Canvas, fit, pil
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PilImage
@@ -21,7 +21,7 @@ def frame(clip: VideoClip, local: int, _count: int, canvas: Canvas) -> PilImage:
     if not path.is_file():
         image = image_module.new("RGB", (canvas.width, canvas.height), canvas.bg)
         return image
-    return image_module.open(path).convert("RGB")
+    return fit(image_module.open(path).convert("RGB"), canvas)
 
 
 def say_key(path: str) -> str:

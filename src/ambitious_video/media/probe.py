@@ -10,7 +10,7 @@ from ambitious_video.domain.need import NeedTool
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(args, capture_output=True, text=True, check=False)
+        return subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
     except FileNotFoundError as error:
         raise NeedTool("ffmpeg") from error
 
@@ -42,6 +42,7 @@ def extract_frames(source: str, start: float, count: int, fps: int, folder: Path
     result = _run(
         [
             "ffmpeg",
+            "-nostdin",
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -80,12 +81,11 @@ def inspect(path: str) -> tuple[int, int, float, bool]:
         ]
     )
     if result.returncode != 0:
-        sys.stderr.write(result.stderr)
-        raise NeedTool("ffprobe")
+        return 0, 0, -1.0, False
     payload = json.loads(result.stdout)
     streams = payload.get("streams") if isinstance(payload, dict) else None
     if not isinstance(streams, list):
-        raise NeedTool("ffprobe")
+        return 0, 0, -1.0, False
     width = 0
     height = 0
     audio = False
@@ -106,6 +106,26 @@ def inspect(path: str) -> tuple[int, int, float, bool]:
     except ValueError:
         duration = -1.0
     return width, height, duration, audio
+
+
+def frame_count(path: str) -> int:
+    result = _run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_packets",
+            "-show_entries",
+            "stream=nb_read_packets",
+            "-of",
+            "default=nw=1:nk=1",
+            path,
+        ]
+    )
+    text = result.stdout.strip()
+    return int(text) if result.returncode == 0 and text.isdigit() else -1
 
 
 def stored_as(path: str) -> tuple[str, str]:
@@ -137,7 +157,8 @@ def stored_as(path: str) -> tuple[str, str]:
 def decode_pcm(path: str) -> bytes:
     try:
         result = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "48000", "pipe:1"],
+            ["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "48000", "pipe:1"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             check=False,
         )

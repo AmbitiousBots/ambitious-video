@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import select
+import stat
 import sys
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -32,6 +35,7 @@ OWN_FLAGS = {
     "--cache": ("render", "cache list", "cache prune"),
     "--older-than": ("cache prune",),
 }
+STDIN_WAIT_SECONDS = 2.0
 
 
 _json_loads = json.loads
@@ -95,6 +99,51 @@ def _own_flags(argv: list[str]) -> tuple[list[str], dict[str, str]]:
         else:
             kept.append(name)
     return kept, taken
+
+
+def _input_source(argv: list[str]) -> tuple[list[str], str]:
+    kept: list[str] = []
+    source = "implicit"
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        value = argv[index + 1] if index + 1 < len(argv) else None
+        index += 1
+        if token == "--in=-" or (token == "--in" and value == "-"):
+            source = "stdin"
+            index += 1 if token == "--in" else 0
+            continue
+        if token.startswith("--in=") or (token == "--in" and value is not None):
+            source = "file"
+        kept.append(token)
+    return kept, source
+
+
+def _waiting_bytes(descriptor: int) -> bytes:
+    if stat.S_ISREG(os.fstat(descriptor).st_mode):
+        return sys.stdin.buffer.read()
+    if not select.select([descriptor], [], [], STDIN_WAIT_SECONDS)[0]:
+        return b""
+    held = bytearray()
+    while chunk := os.read(descriptor, 65536):
+        held += chunk
+    return bytes(held)
+
+
+def _stdin_reader(source: str) -> Callable[[], str]:
+    def read() -> str:
+        if source == "file" or sys.stdin is None or sys.stdin.closed:
+            return ""
+        if source == "stdin":
+            return sys.stdin.buffer.read().decode("utf-8", errors="replace")
+        if sys.stdin.isatty():
+            return ""
+        try:
+            return _waiting_bytes(sys.stdin.fileno()).decode("utf-8", errors="replace")
+        except (OSError, ValueError):
+            return ""
+
+    return read
 
 
 def _rate() -> Decimal:
@@ -256,6 +305,8 @@ def main() -> int:
     runner.selfcheck = _patched_selfcheck(runner.selfcheck)  # type: ignore[attr-defined,arg-type] # tools sit beside the kit report
     original = sys.argv
     kept, own = _own_flags(guide.builtin_command(sys.argv[1:]))
+    kept, source = _input_source(kept)
+    runner._read_stdin = _stdin_reader(source)
     token = SCRIPT_DIR.set(_directory(kept))
     chosen = own.get("--cache")
     cache_token = CACHE_DIR.set(None if chosen is None else Path(chosen))

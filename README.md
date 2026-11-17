@@ -2,9 +2,9 @@
 
 The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, voiceover, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
 
-The module follows the shared module contract, [MODULE_CONTRACT.md](https://github.com/AmbitiousBots/ambitious-kit/blob/kit-v0.1.1/MODULE_CONTRACT.md) in ambitious-kit at kit-v0.1.1: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`.
+The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
-Version 0.1.0. One binary, `ambitious-video`, reads a script on stdin or from `--in` and prints one JSON envelope. `--help` and `--version` print the usage and the version as envelope data and exit 0. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` and the step cache is `$AMBITIOUS_HOME/video/cache` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
+Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`, or from stdin with `--in -`, and prints one JSON envelope. `--help` and `--version` print the usage and the version as envelope data and exit 0. With `--in <file>` stdin is never read, and ffmpeg and ffprobe never see it, so a caller that leaves stdin open (a tool runner, for example) does not make a command hang. Without `--in`, a script piped on stdin is still read: the command waits at most two seconds for the first byte, and once any byte has arrived it reads to the end of stdin, so a slow writer never has its script cut short. A program that generates a script should send it with `--in -`, which waits for the end of stdin however long the first byte takes; on Windows the two-second wait is not available for pipes, so `--in -` is the only way to send a script on stdin there. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` and the step cache is `$AMBITIOUS_HOME/video/cache` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
 
 | Command | Access | What it returns |
 |---|---|---|
@@ -13,7 +13,7 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script on stdin or from `-
 | `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, and `planSha256`. |
 | `estimate` | none | A dry-run price from `pricing.json`. No provider is called. |
 | `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. |
-| `verify` | write | Checks duration, resolution, audio, encoding, and title and cut frames of a rendered job. |
+| `verify` | write | Checks duration, frame count, resolution, audio, encoding, and title and cut frames of a rendered job. |
 | `jobs` | read | The jobs in the database. |
 | `ledger` | read | The cost lines, exactly one per provider call. A line's idempotency key is the step key (`<stepKey>#2`, `#3`, ... when a removed result had to be called for again), so a retry or a new job with the same inputs does not add a line. |
 | `cache list` | read | The entries of the step cache: step key, folder, provider, size, when it was made and last used. |
@@ -50,6 +50,8 @@ The result of a paid step is kept in `<cache dir>/<stepKey>/` (`output.bin` and 
 
 The cache folder is `$AMBITIOUS_HOME/video/cache`. A script can name another with `cache: { dir: <folder below the script> }`, and `--cache <dir>` on `render`, `cache list` and `cache prune` overrides both. Entries are never removed automatically. `cache prune --older-than 90` removes the entries last used more than 90 days ago; an entry that a running render holds is left alone, and `--older-than` takes whole days from 0 to 36500. The ledger holds one line per provider call, and a step key is called again only if its result was removed: by `cache prune`, or by deleting its folder by hand. That next call is paid for and gets its own line, with the idempotency key `<stepKey>#2` (then `#3`, and so on), so the ledger total stays equal to what `render` reported as `costUsd`. An entry whose file no longer matches its recorded hash is refused with `E_CACHE`.
 
+A picture is scaled to cover the output size. A video clip of another size is scaled to fit inside the output size and centered on the brand background color, so every clip fills its scheduled time whatever the size of its source. A logo keeps its transparency: the background shows through it.
+
 Captions are drawn only by a track with `from: <id of a track with voiceover clips>`. Each voiceover clip is shown during its own time and not before or after. A clip with more than one sentence shows one sentence at a time, each for a share of the clip that matches its length in characters. A script with no such track draws no captions. `plan` lists the segments in `data.captions`.
 
 `brand.font` is the path of a font file next to the script, such as `fonts/name.ttf`, and is used for title cards and captions. Fonts installed on the computer are never searched, so the same script draws the same frames on every computer. `validate` and `render` fail with `E_MEDIA` when `brand.font` is a font name, a path outside the script folder, a missing file, or a file that is not a font. Without `brand.font`, the font built into Pillow is used.
@@ -80,9 +82,9 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `E_OVERLAP` | 1 | Two clips on one track overlap. | Move a clip or shorten it. |
 | `E_MEDIA` | 1 | A file is missing, `in` / `out` falls outside it, or `brand.font` is not a font file next to the script. | Put the file next to the script, or fix the times. |
 | `E_RANGE` | 1 | A cut is not on a clip boundary, or the video is longer than 1800 seconds. | Place the cut where one clip ends and the next begins. |
-| `E_TOOL` | 1 | ffmpeg or Pillow is not available. | Install the missing tool and run the command again. |
+| `E_TOOL` | 1 | ffmpeg, ffprobe, Pillow or Playwright is missing, or ffmpeg failed while rendering. | Install the missing tool and run the command again. |
 | `E_SPEECH` | 1 | The speech service rejected the call. | Check the voice name and the key. |
-| `E_VERIFY` | 1 | A rendered file failed a check. The job moves to `failed`. | Read `data.checks`. |
+| `E_VERIFY` | 1 | A rendered file failed a check. There is one error for each failed check, and its message says what differs: the duration or the frame count against the script's, how the video is stored against `output.encode`, a frame that is missing or that differs, or a file that is not a video. The job moves to `failed`. | Read `data.checks`: each check has `ok`, and `expected` and `actual` where they apply. |
 | `E_CACHE` | 1 | A step cache entry does not match its recorded hash. | Delete the folder named in `data.stepKey` and render again. |
 
 ## Layout
@@ -113,4 +115,4 @@ The model check (needs [mise](https://mise.jdx.dev) and `curl`):
 bash spec/check.sh && python3 scripts/check_schemas.py
 ```
 
-Part of [Ambitious](https://ambitiousbots.com). Licensed under the Apache License, Version 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).
+Maintained by the project contributors. Licensed under the Apache License, Version 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).
