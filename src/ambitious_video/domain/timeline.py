@@ -25,6 +25,7 @@ from ambitious_video.domain.types import (
 
 CHARACTERS_PER_SECOND = 18
 MAX_SECONDS = 1800
+SILENT = "No sound on that track is in this clip."
 
 
 def frames_of(seconds: float, fps: int, *, minimum: int) -> int:
@@ -202,7 +203,10 @@ def heard(spans: tuple[Span, ...], span: Span) -> tuple[Span, ...]:
     found = [
         item
         for item in spans
-        if item.track == track and isinstance(item.clip, Speech | AudioClip) and span.start <= item.start < span.end
+        if item.track == track
+        and isinstance(item.clip, Speech | AudioClip)
+        and item.start < span.end
+        and (item.start >= span.start or item.end > span.start)
     ]
     return tuple(sorted(found, key=lambda item: (item.start, item.index)))
 
@@ -214,6 +218,7 @@ def _place(script: Script, media: Mapping[str, float | None] | None, *, require:
         if known is None:
             faults.append(Fault("E_MEDIA", "/brand/logo", "The logo file is missing."))
     spans: list[Span] = []
+    synced: list[tuple[Span, str]] = []
     step = 0
     visual_track: str | None = None
     for track_index, track in enumerate(script.tracks):
@@ -234,6 +239,8 @@ def _place(script: Script, media: Mapping[str, float | None] | None, *, require:
             span = Span(track.id, clip_index, step, clip, start, count, kind_of(clip))
             placed.append(span)
             spans.append(span)
+            if isinstance(clip, LipSync):
+                synced.append((span, say(at, "/voice")))
             if visual_track is None and span.kind in VISUAL:
                 visual_track = track.id
             step += 1
@@ -248,6 +255,9 @@ def _place(script: Script, media: Mapping[str, float | None] | None, *, require:
                     )
                 )
                 break
+    for span, at in synced:
+        if not heard(tuple(spans), span):
+            faults.append(Fault("E_INPUT_SCHEMA", at, SILENT))
     total = max((span.end for span in spans), default=0)
     if total == 0 and not faults:
         faults.append(Fault("E_RANGE", "/tracks", "The video has no duration."))

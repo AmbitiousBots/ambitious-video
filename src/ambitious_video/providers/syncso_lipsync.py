@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import mimetypes
 import re
 import urllib.parse
 from collections.abc import Mapping
@@ -31,6 +30,19 @@ IMAGE = "image"
 AUDIO = "audio"
 SYNC_MODE = "cut_off"
 ANY_TYPE = "application/octet-stream"
+KINDS = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+}
 FORM_TYPE = "multipart/form-data; boundary="
 PART = "Content-Disposition: form-data; name="
 BREAK = b"\r\n"
@@ -49,7 +61,7 @@ class SyncLipsyncConfig:
 def _part(name: str, body: bytes, file_name: str | None = None) -> bytes:
     head = PART + json.dumps(name)
     if file_name is not None:
-        kind = mimetypes.guess_type(file_name)[0] or ANY_TYPE
+        kind = KINDS.get(Path(file_name).suffix, ANY_TYPE)
         head += "; filename=" + json.dumps(file_name) + "\r\nContent-Type: " + kind
     return head.encode() + BREAK + BREAK + body + BREAK
 

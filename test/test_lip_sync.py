@@ -457,7 +457,7 @@ def test_a_lip_synced_clip_is_made_once_from_the_presenter_and_the_speech_and_ca
         assert parts["model"][2] == b"lipsync-2" and json.loads(parts["options"][2]) == {"sync_mode": "cut_off"}
         assert parts["video"] == ("video.mp4", "video/mp4", (folder / "assets" / "presenter.mp4").read_bytes())
         name, kind, sound = parts["audio"]
-        assert name == "audio.wav" and kind in {"audio/wav", "audio/x-wav"} and sound[:4] == b"RIFF"
+        assert name == "audio.wav" and kind == "audio/wav" and sound[:4] == b"RIFF"
         assert len(sound) == 44 + 2 * 2 * RATE and any(sound[44 + 2 * RATE // 2 :])
         assert not any(sound[44 : 44 + 2 * RATE // 10])
         assert first["costUsd"] == "0.020375" and [step["cached"] for step in _rows(first, "steps")] == [False, False]
@@ -510,9 +510,50 @@ def test_the_step_key_of_a_lip_sync_follows_its_presenter_and_its_sound(tmp_path
     assert keys(_script(_lip(), RECORDED))[0] != recorded
     (folder / "assets" / "presenter.mp4").write_bytes(_clip_bytes(tmp_path, "green", 3))
     assert keys(_script(_lip()))[0] != lip and keys(_script(_lip()))[1] == speech
-    late = {**_line(), "at": 3.5}
-    plan_late = engine.plan_data(_script(_lip(), late), folder)
-    assert _rows(plan_late, "steps")[1]["hears"] == []
+    early = {**_line(), "at": 0.6, "duration": 1.0}
+    assert keys(_script(_lip(), early))[0] not in {lip, recorded}
+
+
+def test_a_lip_sync_that_hears_no_sound_is_refused_before_anything_is_priced(tmp_path: Path, no_network: None) -> None:
+    folder, home = _folder(tmp_path), tmp_path / "home"
+    env = {"AMBITIOUS_HOME": str(home), "SYNC_API_KEY": SYNC_SECRET, "XAI_API_KEY": SPEECH_SECRET}
+    silent = (
+        {**_line(), "at": 3.5},
+        {**_line(), "at": 0.2, "duration": 0.6},
+        {**_line(), "at": 0.4, "duration": 0.6},
+        {**RECORDED, "at": 3.0},
+    )
+    db = _open(home)
+    try:
+        for sound in silent:
+            script = _script(_lip(), sound)
+            for attempt in range(4):
+                with pytest.raises(Failure) as refused:
+                    if attempt == 0:
+                        engine.validate_data(dict(script), folder)
+                    elif attempt == 1:
+                        engine.plan_data(dict(script), folder)
+                    elif attempt == 2:
+                        engine.estimate_data(dict(script), folder, env)
+                    else:
+                        engine.render_new(db, dict(script), folder, "job-silent", FIRST, env)
+                assert [error.code for error in refused.value.errors] == ["E_INPUT_SCHEMA"], sound
+                assert _rows(refused.value.data, "problems") == [
+                    {
+                        "code": "E_INPUT_SCHEMA",
+                        "at": "/tracks/0/clips/1/voice",
+                        "message": "No sound on that track is in this clip.",
+                    }
+                ]
+        assert not list_ledger(db) and read_job(db, "job-silent") is None
+    finally:
+        db.close()
+    edge = _script(_lip(), {**_line(), "at": 2.8})
+    assert _rows(engine.plan_data(edge, folder), "steps")[1]["hears"] == [2]
+    running_in = _script(_lip(), {**_line(), "at": 0.6, "duration": 1.0})
+    assert _rows(engine.plan_data(running_in, folder), "steps")[1]["hears"] == [2]
+    offline = _script(_lip(fallback=MOUTH), {**RECORDED, "at": 3.0})
+    assert _rows(engine.plan_data(offline, folder, offline=True), "steps")[1]["hears"] == []
 
 
 def test_offline_shows_the_presenter_or_a_drawn_mouth_and_costs_nothing(tmp_path: Path, no_network: None) -> None:
@@ -715,9 +756,7 @@ def test_sync_lipsync_uploads_once_then_polls_and_downloads_without_the_key(tmp_
     request_id = adapter.submit(params, files, SYNC_SECRET)
     (posted,) = _sent("POST", "/v2/generate")
     assert request_id == "gen-1" and posted.api_key == SYNC_SECRET and SYNC_SECRET.encode() not in posted.body
-    assert _parts(posted)["audio"] == ("audio.wav", "audio/x-wav", files["audio"].read_bytes()) or _parts(posted)[
-        "audio"
-    ] == ("audio.wav", "audio/wav", files["audio"].read_bytes())
+    assert _parts(posted)["audio"] == ("audio.wav", "audio/wav", files["audio"].read_bytes())
     still, _none = load_script(_script(_lip(video=None, image="assets/still.png", model="sync-3")))
     assert still is not None
     picture = still.tracks[0].clips[1]  # type: ignore[union-attr] # the first track holds clips

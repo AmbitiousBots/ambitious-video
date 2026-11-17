@@ -254,7 +254,7 @@
       }
     },
     "lipSync": {
-      "description": "A presenter whose lips a provider moves to the sound of another track, paid for with the owner's key and priced per frame. The presenter is a video file or, for a model that takes one, a picture. voice names the track it speaks: every speech and audio clip on that track that starts while this clip is shown. Every frame of it carries the disclosure text. When the provider is not called (--offline), the fallback is shown for the same time.",
+      "description": "A presenter whose lips a provider moves to the sound of another track, paid for with the owner's key and priced per frame. The presenter is a video file or, for a model that takes one, a picture. voice names the track it speaks: every speech and audio clip on that track that sounds while this clip is shown. Every frame of it carries the disclosure text. When the provider is not called (--offline), the fallback is shown for the same time.",
       "additionalProperties": false,
       "required": ["provider", "model", "duration", "voice"],
       "oneOf": [{ "required": ["video"] }, { "required": ["image"] }],
