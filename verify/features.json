@@ -75,6 +75,11 @@
     "selfcheck stays ok without Playwright and warns that only screen_recording needs it",
     "the default video is H.264 yuv420p for browsers, and output.encode: lossless keeps exact RGB",
     "brand.font is a font file next to the script, and a font name is refused",
-    "captions are drawn only by a from track, one voiceover or speech segment at a time"
+    "captions are drawn only by a from track, one voiceover or speech segment at a time",
+    "estimate and render stop with E_BUDGET before any provider call when the uncached paid steps cost more than budget.maxUsd; data names estimate, cap and source",
+    "--max-usd on estimate and render lowers the cap for one run; the lower of it and budget.maxUsd applies",
+    "a step that is already in the step cache counts as 0 against the cap, so a cached rerun passes under a cap the first run would not",
+    "a refused render calls no provider, adds no ledger line, creates no job and writes no file",
+    "each of the four sample projects goes from its template and brand file through expand, validate, plan, estimate, a render with a fake provider and verify, and passes the name scan"
   ]
 }

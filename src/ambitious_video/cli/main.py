@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import select
 import stat
 import sys
 from collections.abc import Callable
 from contextvars import ContextVar
+from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
@@ -33,13 +35,17 @@ OFFLINE: ContextVar[bool] = ContextVar("offline", default=False)
 RESEND: ContextVar[bool] = ContextVar("resend", default=False)
 TEMPLATE: ContextVar[str | None] = ContextVar("template", default=None)
 OUT: ContextVar[str | None] = ContextVar("out", default=None)
+MAX_USD: ContextVar[str | None] = ContextVar("max_usd", default=None)
 KIT_VALUE_FLAGS = ("--in", "--db", "--now", "--seed")
 MAX_PRUNE_DAYS = 36500
+USD = re.compile(r"[0-9]{1,7}(\.[0-9]{1,6})?")
+MAX_CAP_USD = 1000000
 OWN_FLAGS = {
     "--cache": ("plan", "estimate", "render", "cache list", "cache prune"),
     "--older-than": ("cache prune",),
     "--template": ("expand",),
     "--out": ("expand",),
+    "--max-usd": ("estimate", "render"),
 }
 PLAIN_FLAGS = {"--offline": ("plan", "estimate", "render"), "--resend": ("render",)}
 STDIN_WAIT_SECONDS = 2.0
@@ -204,6 +210,19 @@ def _guard(action: Callable[[], JsonObject]) -> JsonObject:
         raise engine.provider_failure(error) from None
 
 
+def _max_usd() -> Decimal | None:
+    asked = MAX_USD.get()
+    if asked is None:
+        return None
+    if not asked.isascii() or USD.fullmatch(asked) is None or Decimal(asked) > MAX_CAP_USD:
+        raise failure(
+            "E_USAGE",
+            "--max-usd needs an amount in US dollars.",
+            "Give a plain number, such as 5 or 2.50.",
+        )
+    return Decimal(asked)
+
+
 def expand(context: Context[object]) -> JsonObject:
     chosen = OUT.get()
     out = None if chosen is None else Path(chosen)
@@ -219,11 +238,14 @@ def plan(context: Context[object]) -> JsonObject:
 
 
 def estimate(context: Context[object]) -> JsonObject:
-    return engine.estimate_data(context.input, SCRIPT_DIR.get(), context.env, CACHE_DIR.get(), offline=OFFLINE.get())
+    return engine.estimate_data(
+        context.input, SCRIPT_DIR.get(), context.env, CACHE_DIR.get(), offline=OFFLINE.get(), max_usd=_max_usd()
+    )
 
 
 def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
     job_id, body = context.input
+    max_usd = _max_usd()
 
     def run() -> JsonObject:
         if job_id is None:
@@ -239,6 +261,7 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
                 CACHE_DIR.get(),
                 offline=OFFLINE.get(),
                 resend=RESEND.get(),
+                max_usd=max_usd,
             )
         return engine.render_again(
             context.db,
@@ -249,6 +272,7 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
             CACHE_DIR.get(),
             offline=OFFLINE.get(),
             resend=RESEND.get(),
+            max_usd=max_usd,
         )
 
     return _guard(run)
@@ -336,6 +360,7 @@ def main() -> int:
     resend_token = RESEND.set("--resend" in own)
     template_token = TEMPLATE.set(own.get("--template"))
     out_token = OUT.set(own.get("--out"))
+    cap_token = MAX_USD.set(own.get("--max-usd"))
     sys.argv = [original[0], *kept]
     try:
         return run_cli(
@@ -363,6 +388,7 @@ def main() -> int:
         )
     finally:
         sys.argv = original
+        MAX_USD.reset(cap_token)
         OUT.reset(out_token)
         TEMPLATE.reset(template_token)
         RESEND.reset(resend_token)

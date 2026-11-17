@@ -86,6 +86,7 @@ ErrorCode = Literal[
     "E_VERIFY",
     "E_CACHE",
     "E_PENDING",
+    "E_BUDGET",
 ]
 
 

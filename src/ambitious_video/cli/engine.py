@@ -101,6 +101,8 @@ VOICE = "audio"
 VOICE_FILE = "voice.wav"
 MANIFEST_SUFFIX = ".manifest.json"
 MANIFEST_VERSION = 1
+BUDGET_FIELD = "budget.maxUsd"
+BUDGET_FLAG = "--max-usd"
 
 
 class Waiting(Failure):
@@ -491,6 +493,27 @@ def _no_key(missing: list[JsonObject]) -> Failure:
         for entry in missing[:20]
     ]
     return Failure(errors, {"missing": missing})
+
+
+def spend_cap(script: Script, flag: Decimal | None) -> tuple[Decimal, str] | None:
+    cap = script.budget_usd
+    if flag is not None and (cap is None or flag < cap):
+        return flag, BUDGET_FLAG
+    return None if cap is None else (cap, BUDGET_FIELD)
+
+
+def _within_budget(script: Script, flag: Decimal | None, owed: Iterable[Paid], shown: JsonObject | None = None) -> None:
+    cap = spend_cap(script, flag)
+    usd = sum((item.quote.usd for item in owed), start=Decimal(0))
+    if cap is None or usd <= cap[0]:
+        return
+    data: JsonObject = {"estimate": money_text(usd), "cap": money_text(cap[0]), "source": cap[1]}
+    raise failure(
+        "E_BUDGET",
+        "The estimate is above the spending cap.",
+        say("Make the paid steps cheaper, ", "run with --offline, ", "or have the owner raise ", cap[1], "."),
+        {**data, **(shown or {})},
+    )
 
 
 def _elsewhere(db: sqlite3.Connection, store: Path, key: str) -> step_cache.Entry | None:
@@ -953,10 +976,12 @@ def render_new(
     *,
     offline: bool = False,
     resend: bool = False,
+    max_usd: Decimal | None = None,
 ) -> JsonObject:
     script, timeline, _taken = studied(raw, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
     paid = paid_steps(timeline, root)
+    _within_budget(script, max_usd, (item for item in paid if not _stored(db, store, item.key)))
     _require_keys(db, paid, store, env)
     plan = plan_data(raw, root, offline=offline)
     stamp = format_instant(when)
@@ -1015,6 +1040,7 @@ def render_again(
     *,
     offline: bool = False,
     resend: bool = False,
+    max_usd: Decimal | None = None,
 ) -> JsonObject:
     row = read_job(db, job_id)
     if row is None:
@@ -1026,6 +1052,7 @@ def render_again(
     script, timeline, _taken = studied(stored, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
     paid = paid_steps(timeline, root)
+    _within_budget(script, max_usd, (item for item in paid if not _stored(db, store, item.key)))
     _require_keys(db, paid, store, env)
     plan = plan_data(stored, root, offline=offline)
     stamp = format_instant(when)
@@ -1390,7 +1417,13 @@ def plan_view(
 
 
 def estimate_data(
-    raw: object, root: Path, env: Mapping[str, str], cache_flag: Path | None = None, *, offline: bool = False
+    raw: object,
+    root: Path,
+    env: Mapping[str, str],
+    cache_flag: Path | None = None,
+    *,
+    offline: bool = False,
+    max_usd: Decimal | None = None,
 ) -> JsonObject:
     script, timeline, taken = studied(raw, root, require_files=False, offline=offline)
     store = cache_root(env, cache_flag, script, root)
@@ -1406,12 +1439,17 @@ def estimate_data(
         quote, line = _estimate_line(span, timeline, item, cached)
         rows.append(quote)
         lines.append({**line, **_fallback_mark(taken[span.step])} if span.step in taken else line)
-    return {
+    _within_budget(script, max_usd, owed, {"breakdown": lines})
+    priced: dict[str, JsonValue] = {
         "usd": money_text(total_usd(tuple(rows))),
         "durationSec": seconds_json(timeline.total, timeline.fps),
         "breakdown": lines,
         "secretsNeeded": secrets_needed(owed, env),
     }
+    cap = spend_cap(script, max_usd)
+    if cap is not None:
+        priced["budget"] = {"cap": money_text(cap[0]), "source": cap[1]}
+    return priced
 
 
 def validate_data(raw: object, root: Path) -> JsonObject:
