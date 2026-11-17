@@ -3,11 +3,21 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from email.message import Message
 from typing import IO
 
 JSON_TYPE = "application/json"
 MAX_BYTES = 256 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class KeyHeader:
+    name: str
+    prefix: str
+
+
+BEARER = KeyHeader("Authorization", "Bearer ")
 
 
 class _Stay(urllib.request.HTTPRedirectHandler):
@@ -17,10 +27,12 @@ class _Stay(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def send(url: str, payload: bytes | None, secret: str | None, timeout: float) -> bytes | int:
+def send(
+    url: str, payload: bytes | None, secret: str | None, timeout: float, carried: KeyHeader = BEARER
+) -> bytes | int:
     headers: dict[str, str] = {}
     if secret is not None:
-        headers["Authorization"] = "Bearer " + secret
+        headers[carried.name] = carried.prefix + secret
     if payload is not None:
         headers["Content-Type"] = JSON_TYPE
     method = "GET" if payload is None else "POST"

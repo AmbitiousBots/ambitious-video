@@ -121,15 +121,16 @@ A paid step is a clip that names a provider and one of its models. There are two
 
 The provider, the model and the voice are always written in the script. Nothing picks one for you at render time and no voice is built in. A `voiceover` clip is the free form of the same line: it gives captions their words and timing, nothing is spoken and no key is needed.
 
-Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for the three adapters that ship), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger, a log or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged. [Keys asked on demand](#keys-asked-on-demand) says how to find out which keys a script needs, and [Rendering offline](#rendering-offline) how to render without any.
+Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for the three xAI adapters, `ELEVENLABS_API_KEY` for `elevenlabs-speech`), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger, a log or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged. [Keys asked on demand](#keys-asked-on-demand) says how to find out which keys a script needs, and [Rendering offline](#rendering-offline) how to render without any.
 
 | Provider id | Step | Models | Key | Unit |
 |---|---|---|---|---|
 | `xai-speech` | `speech` | `tts` | `XAI_API_KEY` | character |
+| `elevenlabs-speech` | `speech` | `eleven-v4`, `eleven-flash` | `ELEVENLABS_API_KEY` | character |
 | `xai-video` | `generated_scene` | `grok-imagine-video`, `grok-imagine-video-1.5`, `grok-imagine-video-1.5-lite` | `XAI_API_KEY` | second |
 | `xai-image` | `generated_scene` (a still picture) | `grok-imagine-image`, `grok-imagine-image-2.0` | `XAI_API_KEY` | image |
 
-`pricing.json` holds one entry per provider and model: `unit`, `usdPerUnit`, `sourceUrl` (the provider's public price page) and `checkedAt` (the day that page was read). These are list prices, not measured spend; check the source before relying on them. The table also holds prices for providers that have no adapter yet (another speech provider and lip-sync, the last priced per output frame); a script cannot use those until their adapters exist.
+`pricing.json` holds one entry per provider and model: `unit`, `usdPerUnit`, `sourceUrl` (the provider's public price page) and `checkedAt` (the day that page was read). These are list prices, not measured spend; check the source before relying on them. The table also holds prices for lip-sync, per output frame, which has no adapter yet; a script cannot use those until the adapter exists.
 
 `estimate` prices a script from that table without calling anyone. A paid line looks like this:
 
@@ -140,6 +141,21 @@ Keys are bring-your-own. Each provider reads its key from one environment variab
 ```
 
 A step whose result is already in the step cache has `"cached": true` and `"usd": "0.000000"`, and `usd` at the top is the sum of what a render would still be charged. `--cache <dir>` tells `estimate` which cache to look in, as it does for `render`. `estimate` reads only that folder and not the database, so a result that `render` would copy from another cache folder is still shown at its price: a render can cost less than the estimate, never more.
+
+### Speech with ElevenLabs
+
+`elevenlabs-speech` speaks a line with a voice from your own ElevenLabs account:
+
+```yaml
+- { type: speech, at: 0.5, text: "Narration line", provider: elevenlabs-speech, model: eleven-v4, voice: "<voice id>" }
+```
+
+- **`voice` is a voice id**, the identifier ElevenLabs shows for a voice, not its display name. It can be one of the stock voices or a voice you cloned from your own recordings; the adapter sends whatever id the script names and has no voice of its own. In a template, leave it as the `voice` input so each owner supplies their own.
+- **Models.** `eleven-v4` is the expressive model (sent as `eleven_v4`) and `eleven-flash` the faster, cheaper one (sent as `eleven_flash_v2_5`). Both are priced per character of the line's text in `pricing.json`.
+- **The key is yours.** The adapter reads `ELEVENLABS_API_KEY` from the environment for the call and sends it only to `api.elevenlabs.io`, in the `xi-api-key` header. You pay ElevenLabs directly, on your own plan; this project is not part of that payment. The ledger records the list price of each call, which can differ from what your plan charges.
+- **Only that key is asked for.** A script can speak with ElevenLabs and make its scenes with another provider. `secretsNeeded` then lists `ELEVENLABS_API_KEY` for the speech steps alone, and nothing once those lines are in the step cache.
+
+The adapter follows the provider's public API documentation, and the tests run it against a local stand-in server. No test calls the provider, so check a first paid render with one short line. The request shape is kept in `providers/elevenlabs_speech.py`.
 
 ### Generated scenes
 
