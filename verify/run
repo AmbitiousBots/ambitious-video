@@ -107,6 +107,47 @@ if (work / "out" / "spoken.mp4").exists():
 print("secretsNeeded", wanted[0]["env"], wanted[0]["usd"])
 PY
 
+echo "== spending cap: an estimate above the cap stops estimate and render before any call =="
+"$PY" - "$WORK" <<'PY'
+import sys
+from pathlib import Path
+work = Path(sys.argv[1])
+spoken = (work / "spoken.yaml").read_text(encoding="utf-8")
+capped = spoken.replace("schemaVersion: 2\n", "schemaVersion: 2\nbudget: { maxUsd: 0.0002 }\n").replace("out/spoken.mp4", "out/capped.mp4")
+(work / "capped.yaml").write_text(capped, encoding="utf-8")
+PY
+"$PY" dist/ambitious-video.pyz jobs --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-before.json"
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-estimate.json" || true
+XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz render --in "$WORK/capped.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-render.json" || true
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.yaml" --max-usd 0.0001 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-flag.json" || true
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/spoken.yaml" --max-usd 1 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-under.json"
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.yaml" --offline --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-offline.json"
+"$PY" dist/ambitious-video.pyz jobs --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-jobs.json"
+"$PY" - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+estimate, render, flag, under, offline, before, jobs = (
+    json.loads((work / f"cap-{name}.json").read_text(encoding="utf-8"))
+    for name in ("estimate", "render", "flag", "under", "offline", "before", "jobs")
+)
+over = {"estimate": "0.000285", "cap": "0.000200", "source": "budget.maxUsd"}
+for body in (estimate, render, flag):
+    if body["ok"] or [error["code"] for error in body["errors"]] != ["E_BUDGET"]:
+        raise SystemExit("an estimate above the cap must stop with E_BUDGET")
+if render["data"] != over or {name: estimate["data"][name] for name in over} != over:
+    raise SystemExit("E_BUDGET must name the estimate, the cap and its source")
+if (flag["data"]["cap"], flag["data"]["source"]) != ("0.000100", "--max-usd"):
+    raise SystemExit("the lower of budget.maxUsd and --max-usd must apply")
+if not under["ok"] or under["data"]["budget"] != {"cap": "1.000000", "source": "--max-usd"}:
+    raise SystemExit("an estimate under the cap must pass and name the cap")
+if not offline["ok"] or offline["data"]["usd"] != "0.000000":
+    raise SystemExit("an offline estimate costs nothing and passes the cap")
+if (work / "out" / "capped.mp4").exists() or jobs["data"] != before["data"]:
+    raise SystemExit("a render refused for its cost must write nothing and create no job")
+print("E_BUDGET", over["estimate"], ">", over["cap"], over["source"])
+PY
+
 echo "== two providers: only the key that is not set is asked for =="
 cat >"$WORK/two-keys.yaml" <<'YAML'
 schemaVersion: 2

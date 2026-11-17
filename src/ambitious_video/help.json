@@ -1,13 +1,13 @@
 {
   "help": {
-    "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--offline] [--resend] [--now ISO8601] [--seed int] [--json]",
+    "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--max-usd amount] [--offline] [--resend] [--now ISO8601] [--seed int] [--json]",
     "summary": "Renders a video from a script written as YAML or JSON. Every command prints one JSON envelope on stdout and nothing else.",
     "commands": [
       { "name": "guide", "summary": "Print an example script to copy, the starter templates with their inputs, and the steps to render." },
       { "name": "expand", "summary": "Fill a template (--template <file or starter id>) with an inputs file and return the script in data.script. Reads the inputs." },
       { "name": "validate", "summary": "Check a script and the files it names. Reads a script." },
       { "name": "plan", "summary": "List the steps with their step keys, the captions, the assets and the keys still needed (secretsNeeded) of a script. Reads a script." },
-      { "name": "estimate", "summary": "Price a script without calling a provider, and list the keys still needed (secretsNeeded). Reads a script." },
+      { "name": "estimate", "summary": "Price a script without calling a provider, list the keys still needed (secretsNeeded) and check the price against the spending cap. Reads a script." },
       { "name": "render", "summary": "Render a script to a video file and write its provenance manifest next to it. Reads a script, or { \"jobId\": \"...\" } to retry a job." },
       { "name": "verify", "summary": "Check the video of a rendered job. Reads { \"jobId\": \"...\" }." },
       { "name": "jobs", "summary": "List the render jobs in the database." },
@@ -25,6 +25,7 @@
       { "flag": "--out file", "meaning": "For expand: also write the script to this file, as JSON when the name ends in .json and as YAML otherwise. Write it next to the inputs file, because paths in a script are relative to the script." },
       { "flag": "--db path", "meaning": "Use this SQLite file instead of $AMBITIOUS_HOME/video/video.sqlite." },
       { "flag": "--cache dir", "meaning": "For plan, estimate, render, cache list and cache prune: use this step cache folder instead of $AMBITIOUS_HOME/video/cache." },
+      { "flag": "--max-usd amount", "meaning": "For estimate and render: the most this run may cost in US dollars, such as 5 or 2.50. The lower of this and budget.maxUsd in the script applies. When the steps that are not in the step cache cost more, the command stops with E_BUDGET before any provider is called." },
       { "flag": "--offline", "meaning": "For plan, estimate and render: call no provider and need no key. Every paid step takes its free fallback (speech becomes captions only, a generated scene shows its fallback clip, lip-sync shows the presenter as it is or a drawn mouth), is marked with fallback, and costs 0." },
       { "flag": "--resend", "meaning": "For render: forget the stored request of every unfinished scene and lip-sync step of this video and send it again. Use it only when retries keep failing with E_PROVIDER; the provider may charge for the earlier request as well." },
       { "flag": "--older-than days", "meaning": "For cache prune: remove entries last used more than this many whole days ago, 0 to 36500." },
@@ -63,7 +64,8 @@
         "inputs.yaml may also hold output: { path, width, height, fps, encode } to replace the template's output, for example an upright size.",
         "A step whose slot has no value takes the fallback the template names: a scene shows its fallback clip, speech becomes captions only (fallbacks.speech: captions), and music is left out (fallbacks.music: none). data.fallbacks lists each one taken. Without a named fallback the missing value is an error.",
         "The starters speak the lines only when the voice input is given, with the provider and model written in the template. Without a voice the lines are captions and the video costs nothing.",
-        "Each starter sets budget.maxUsd to 5. expand copies the budget into the script. This version records it and does not refuse a render that costs more, so compare the estimate with it before rendering."
+        "Each starter sets budget.maxUsd to 5, the most one video may cost in US dollars, and expand copies it into the script. estimate and render add up the paid steps that are not in the step cache yet. When that is more than the cap they stop with E_BUDGET before any provider is called: nothing is sent, nothing is charged and no job is created. data holds estimate, cap and source (budget.maxUsd or --max-usd), and estimate adds the breakdown. A step that is already in the cache counts as 0.",
+        "The owner can set a lower cap for one run with --max-usd <amount> on estimate and render; the lower of the two applies, so the flag cannot raise the cap of the script. A higher cap is the owner's decision: change budget.maxUsd only when the owner says so."
       ]
     },
     "keys": [
@@ -71,7 +73,7 @@
       "Before a render, run estimate (or plan) and read data.secretsNeeded. It has one entry per environment variable that is not set and that an uncached paid step needs: env, provider, steps and usd. It is empty when every key is set or every paid step is cached, and it never holds a key value.",
       "An assistant that renders for an owner shows the estimate first and renders only after the owner agrees to the cost. It asks the owner once for each env in data.secretsNeeded, through the host's secure secret or environment mechanism, and sets the variable only in the environment of the render command.",
       "A key must never be put in a script, a file, a chat message, a page, a log or a command line. Do not ask for a key that data.secretsNeeded does not list.",
-      "render checks every paid step before the first call. If a key is missing it stops with E_NO_KEY, data.missing lists the same entries, no provider is called and nothing is charged.",
+      "render checks the spending cap first and then every paid step, before the first call. If a key is missing it stops with E_NO_KEY, data.missing lists the same entries, no provider is called and nothing is charged.",
       "If the owner declines a key, or nothing may leave the computer, run plan, estimate and render again with --offline. Every paid step then takes its free fallback (speech becomes captions only, a generated scene shows its fallback clip for the same time, lip-sync shows the presenter as it is or a drawn mouth), each such step is marked with fallback, the cost is 0.000000 and no provider is called. --offline replaces paid steps only: a screen_recording clip still opens the page it names."
     ],
     "notes": [

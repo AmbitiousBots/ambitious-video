@@ -12,8 +12,8 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`,
 | `expand` | none | The video script made from a template (`--template <file or starter id>`) and an inputs file, in `data.script`, with each fallback that was taken. `--out <file>` also writes it. |
 | `validate` | none | Whether the script is usable, its duration, and any problems. |
 | `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, `planSha256`, and `secretsNeeded`: the keys an uncached paid step still needs. With `--offline`, the plan in which every paid step takes its free fallback. |
-| `estimate` | none | A dry-run price from `pricing.json`. No provider is called. Each paid line names its provider, model, units, price and price source; a step already in the step cache is priced at 0. `secretsNeeded` lists the keys that are still needed. With `--offline` the price is 0. |
-| `render` | write | Renders the script and writes a provenance manifest next to the video. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. Stops with `E_NO_KEY` before any call when a key is missing, and with `E_PENDING` when a provider has not finished in time (the retry asks for the same request again and sends nothing new). With `--offline`, calls no provider and marks each replaced step with `fallback`. |
+| `estimate` | none | A dry-run price from `pricing.json`. No provider is called. Each paid line names its provider, model, units, price and price source; a step already in the step cache is priced at 0. `secretsNeeded` lists the keys that are still needed. Stops with `E_BUDGET` when the uncached steps cost more than the spending cap (`budget.maxUsd`, or a lower `--max-usd`). With `--offline` the price is 0. |
+| `render` | write | Renders the script and writes a provenance manifest next to the video. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. Stops before any call with `E_BUDGET` when the uncached steps cost more than the spending cap, and with `E_NO_KEY` when a key is missing, and with `E_PENDING` when a provider has not finished in time (the retry asks for the same request again and sends nothing new). With `--offline`, calls no provider and marks each replaced step with `fallback`. |
 | `verify` | write | Checks duration, frame count, resolution, audio, encoding, and title and cut frames of a rendered job. |
 | `jobs` | read | The jobs in the database. |
 | `ledger` | read | The cost lines, exactly one per provider call. A line's idempotency key is the step key (`<stepKey>#2`, `#3`, ... when a removed result had to be called for again), so a retry or a new job with the same inputs does not add a line. |
@@ -99,7 +99,7 @@ endCard: { duration: 3.0, text: "{{business_name}}" }
 - **Scenes** are shown in order. Each shows a title card, a picture or a part of a video file, may say lines (timed from the start of the scene), and may cut into the next scene with a crossfade. `expand` works out every time in the script.
 - **Fallbacks.** When a slot has no value, the step takes the fallback the template names: a scene shows its `fallback` clip, lines become captions only (`fallbacks.speech: captions`), and music is left out (`fallbacks.music: none`). `data.fallbacks` lists each one taken. Without a named fallback the missing value is an error.
 - **Provider and model are written in the template.** Nothing chooses one at render time. The starters speak the lines with `xai-speech` only when the `voice` input is given; without it the lines are captions and the video costs nothing.
-- **`budget.maxUsd`** is the most one video should cost. The starters set 5. `expand` copies it into the script; this version records it and does not yet refuse a render that costs more, so compare the estimate with it before rendering.
+- **`budget.maxUsd`** is the most one video may cost, in US dollars. The starters set 5. `expand` copies it into the script, and `estimate` and `render` refuse to go above it: see [Spending caps](#spending-caps).
 
 `expand` is pure: it opens no database and calls no provider, and the same template, inputs and brand file give the same script byte for byte, whatever `--now` and `--seed` are. It prints the script in `data.script` with `data.scriptSha256`, and `--out` also writes it to a file, as JSON when the name ends in `.json` and as YAML otherwise. Write the script into the folder of the inputs file, because paths in a script are relative to the script. The script names its template in `template: { id, templateVersion }`, and `plan` repeats that.
 
@@ -108,6 +108,26 @@ An input the template does not have, a missing required input, a value of the wr
 ```json
 { "code": "E_INPUT_SCHEMA", "in": "inputs", "at": "/inputs", "message": "Input tagline is required." }
 ```
+
+## Templates and providers
+
+The short version of what the sections below explain in full.
+
+- **Templates belong to their owner.** A template is data: typed inputs, a brand, scenes with `{{input}}` slots, a spending cap and the provider and model of every paid step. The three starters and the four sample projects in `examples/samples/` (made-up businesses, SAMPLE DATA) are there to copy and change. See [Templates](#templates).
+- **Recommended providers.** Nothing is chosen for you: a script or template names the provider and model of each paid step. The adapters that ship are a reasonable place to start:
+
+  | Step | Start with | Alternatives |
+  |---|---|---|
+  | `speech` | `xai-speech`, model `tts` (`XAI_API_KEY`) | `elevenlabs-speech` (`ELEVENLABS_API_KEY`), which can speak with a voice from the owner's own account, such as a cloned one |
+  | `generated_scene` | `xai-video`, model `grok-imagine-video` (`XAI_API_KEY`) | `grok-imagine-video-1.5` and `grok-imagine-video-1.5-lite`, or `xai-image` for one still picture with a slow zoom |
+  | `lip_sync` | `sync-lipsync`, model `lipsync-2` (`SYNC_API_KEY`) | `lipsync-2-pro`, `sync-3`; offline, a mouth drawn on this computer |
+
+  Lip-sync runs only where a script has a `lip_sync` clip; no starter template has one. There is no adapter for other scene models such as Google Veo; a clip made elsewhere is an ordinary `video` clip, and [Adding a provider](#adding-a-provider) says how to write an adapter. See [Paid steps and providers](#paid-steps-and-providers).
+- **Bring your own key.** Each provider reads its key from one environment variable, only for a call that is not in the step cache. The owner pays the provider directly. A key value is never written to the database, the cache, the plan, the manifest, the ledger, a log or any output. `estimate` and `plan` list the variables still needed in `secretsNeeded`. See [Keys asked on demand](#keys-asked-on-demand).
+- **Estimates before spending.** `estimate` calls no provider. It prices each paid step from `pricing.json` with six decimal places and names the provider, model, units and the source of the price. `render` is the only command that spends, so show the estimate and get a go-ahead before every render.
+- **Spending caps.** `budget.maxUsd` in the script (5 in the starters) and `--max-usd` on the command line cap what one run may cost, and the lower of the two applies. Above the cap, `estimate` and `render` stop with `E_BUDGET` before any provider is called. See [Spending caps](#spending-caps).
+- **The step cache.** A paid result is stored under its step key and is never paid for twice: the next render that needs the same step takes it from the cache, calls nothing and counts it as 0. The cache is `$AMBITIOUS_HOME/video/cache` unless `cache.dir` or `--cache` names another folder, and nothing is removed from it except by `cache prune --older-than <days>`. See [Plans, step keys and the step cache](#plans-step-keys-and-the-step-cache).
+- **Offline.** `--offline` on `plan`, `estimate` and `render` calls no provider and needs no key. Every paid step takes its free fallback and the cost is 0.000000. See [Rendering offline](#rendering-offline).
 
 ## What a render does
 
@@ -243,6 +263,33 @@ A program that renders for someone else, such as an assistant, should work in th
 
 `guide` prints the same rules in `data.keys`.
 
+### Spending caps
+
+A script can say the most one run may cost, and so can the command line:
+
+```yaml
+budget: { maxUsd: 5 }
+```
+
+```sh
+ambitious-video estimate --in script.yaml --max-usd 2.50
+ambitious-video render --in script.yaml --max-usd 2.50
+```
+
+The lower of `budget.maxUsd` and `--max-usd` applies, so the flag can tighten the cap of a script for one run and cannot raise it. Without either there is no cap. `--max-usd` takes a plain amount in US dollars from 0 to 1000000 with at most six decimal places.
+
+`estimate` and `render` add up the paid steps that are not in the step cache yet. A cached step counts as 0, and so does every step with `--offline`. When the sum is more than the cap, the command stops with `E_BUDGET`:
+
+```json
+{ "estimate": "6.400000", "cap": "5.000000", "source": "budget.maxUsd" }
+```
+
+`estimate` is the uncached sum, `cap` the cap that applied and `source` where it came from: `budget.maxUsd` or `--max-usd`. `estimate` also returns its usual `breakdown`, so the lines that cost the most can be seen. A sum equal to the cap passes. A passing `estimate` reports the cap it was checked against in `data.budget` as `{ cap, source }`.
+
+`render` makes this check before the key check and before the first call, for a new job and for the retry of a job id. When it stops, no provider has been called, nothing has been charged, no job has been created and no file has been written. Because cached steps count as 0, a render that stopped half way can be run again under the same cap: only the steps that are still missing are counted.
+
+The cap is checked against list prices from `pricing.json`, not against a provider's invoice, and a monthly plan fee that a provider charges the owner's account is not part of it. Raising a cap is the owner's decision.
+
 ### Rendering offline
 
 `--offline` on `plan`, `estimate` and `render` calls no provider and needs no key. Every paid step takes its free fallback instead:
@@ -333,6 +380,7 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `E_PROVIDER` | 1 | A provider rejected the call. `data.provider` names it and `data.status` is the HTTP status (0 when there was no answer). For a scene the provider gave up on or no longer knows, or returned bytes that are not a video or a picture, `data.stepKey` names the step, nothing is stored, the ledger gets no line, and the next render sends the step again. When a poll for a stored request fails for another reason, `data.requestId` names the request and it is kept. | Check the model, the voice and the key. For a kept request, retry the job id; if that keeps failing, render with `--resend`. |
 | `E_PENDING` | 1 | A provider that answers later had not finished within the wait. The job moves to `failed`, the request id is kept, and the ledger has no line yet (the provider may still charge when the scene finishes). `data` holds `jobId`, `index`, `stepKey`, `provider` and `requestId`. | Retry with `{ "jobId": "..." }` later. The same request is asked for again and nothing is sent twice. |
 | `E_VERIFY` | 1 | A rendered file failed a check. There is one error for each failed check, and its message says what differs: the duration or the frame count against the script's, how the video is stored against `output.encode`, a frame that is missing or that differs, or a file that is not a video. The job moves to `failed`. | Read `data.checks`: each check has `ok`, and `expected` and `actual` where they apply. |
+| `E_BUDGET` | 1 | The paid steps that are not in the step cache cost more than the spending cap. Nothing was called or charged. `data` holds `estimate`, `cap` and `source` (`budget.maxUsd` or `--max-usd`); `estimate` adds `breakdown`. | Make the paid steps cheaper, render with `--offline`, or have the owner raise the cap. |
 | `E_CACHE` | 1 | A step cache entry does not match its recorded hash. | Delete the folder named in `data.stepKey` and render again. |
 
 ## Layout
