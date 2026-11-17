@@ -9,7 +9,9 @@ from ambitious_kit.domain.envelope import JsonObject
 def _version(command: str) -> str:
     if shutil.which(command) is None:
         return ""
-    result = subprocess.run([command, "-version"], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [command, "-version"], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False
+    )
     lines = result.stdout.splitlines()
     return lines[0] if lines else ""
 

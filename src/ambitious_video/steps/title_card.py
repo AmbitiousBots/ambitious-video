@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ambitious_video.domain.types import TitleCard
-from ambitious_video.steps.common import Canvas, font_for, measure, open_image, pil, wrap
+from ambitious_video.steps.common import Canvas, font_for, measure, open_logo, pil, wrap
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PilImage
@@ -45,8 +45,8 @@ def frame(clip: TitleCard, _local: int, _count: int, canvas: Canvas) -> PilImage
         draw.text(((canvas.width - wide) // 2, top), line, fill=canvas.fg, font=subtitle_font)
         top += sub_h
     if canvas.logo is not None:
-        logo = open_image(canvas, canvas.logo)
+        logo = open_logo(canvas, canvas.logo)
         fitted = logo.copy()
         fitted.thumbnail((canvas.width // 8, canvas.height // 8))
-        image.paste(fitted, (canvas.width // 24, canvas.height // 24))
+        image.paste(fitted, (canvas.width // 24, canvas.height // 24), fitted)
     return image

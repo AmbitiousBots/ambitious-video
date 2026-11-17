@@ -8,7 +8,7 @@ Run it from the repo root:
 bash spec/check.sh
 ```
 
-The script needs [mise](https://mise.jdx.dev) (it installs the Java and Python pinned in `.mise.toml`) and `curl`. It downloads TLC, the model checker for the TLA+ language, as `tla2tools.jar` (a build of the 1.8.0 line, the same one [ambitious-kit](https://github.com/AmbitiousBots/ambitious-kit) pins) from the address pinned in `.mise.toml`, keeps it in `~/.cache/ambitious/` and refuses a file whose SHA-256 differs from the pin. A run takes a few seconds.
+The script needs [mise](https://mise.jdx.dev) (it installs the Java and Python pinned in `.mise.toml`) and `curl`. It downloads TLC, the model checker for the TLA+ language, as `tla2tools.jar` (a build of the 1.8.0 line, the same one the vendored kit, `ambitious_kit`, pins) from the address pinned in `.mise.toml`, keeps it in `~/.cache/ambitious/` and refuses a file whose SHA-256 differs from the pin. A run takes a few seconds.
 
 ## `RenderJob.tla`: the model
 
@@ -70,7 +70,7 @@ Each file in `spec/broken/` is the model with one line changed to a plausible mi
 | `ClaimWithoutStateCheck` | A render takes a job without checking that it is waiting. | `OneActiveRenderPerJob` |
 | `RecoverWithoutLockCheck` | Recovery marks a `rendering` job `failed` without checking that its render has stopped. | `OneActiveRenderPerJob` |
 
-`EXPECTED.json` has one entry per variant: `{ "<variant>": { "invariant": "<rule>", "because": "<plain sentence>" } }`. This is the shape the shared TLC runner in ambitious-kit reads, and each variant sits next to a `.cfg` of the same name as that runner expects, so it can replace `check.sh` without changes here.
+`EXPECTED.json` has one entry per variant: `{ "<variant>": { "invariant": "<rule>", "because": "<plain sentence>" } }`. This is the shape the shared TLC runner of the kit, `ambitious_kit`, reads, and each variant sits next to a `.cfg` of the same name as that runner expects, so it can replace `check.sh` without changes here.
 
 The three extra checks have no file in `broken/`, because the shared runner only expects broken invariants. Each was seen to fail once by hand: dropping `Recover` gives a stuck state, dropping the fairness of `Retry` breaks `EveryJobSettles`, and dropping a pair from `Moves` breaks `OnlyDeclaredMoves`.
 

@@ -79,3 +79,28 @@ def wrap(draw: PilDraw, text: str, font: PilFont, width: int) -> tuple[str, ...]
             current = word
     lines.append(current)
     return tuple(lines)
+
+
+def open_logo(canvas: Canvas, path: str) -> PilImage:
+    image_module, _draw, _font = pil()
+    key = "logo:" + path
+    found = canvas.pictures.get(key)
+    if found is not None:
+        return found
+    image = image_module.open(canvas.root / path).convert("RGBA")
+    canvas.pictures[key] = image
+    return image
+
+
+def fit(image: PilImage, canvas: Canvas) -> PilImage:
+    image_module, _draw, _font = pil()
+    size = (canvas.width, canvas.height)
+    if image.size == size:
+        return image
+    scale = min(canvas.width / image.width, canvas.height / image.height)
+    wide = min(canvas.width, max(1, int(round(image.width * scale))))
+    high = min(canvas.height, max(1, int(round(image.height * scale))))
+    resized = image.resize((wide, high), image_module.Resampling.LANCZOS)
+    framed = image_module.new("RGB", size, canvas.bg)
+    framed.paste(resized, ((canvas.width - wide) // 2, (canvas.height - high) // 2))
+    return framed

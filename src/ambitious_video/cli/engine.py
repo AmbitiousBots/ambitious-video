@@ -45,7 +45,7 @@ from ambitious_video.domain.types import (
 )
 from ambitious_video.media.audio import Piece, write_wav
 from ambitious_video.media.film import canvas_for, encode, frame_at, prepare
-from ambitious_video.media.probe import duration_of, inspect
+from ambitious_video.media.probe import duration_of, frame_count, inspect
 from ambitious_video.steps import compile_clip
 
 Speaker = Callable[[str, str, str], bytes]
@@ -384,9 +384,12 @@ def _samples(timeline: Timeline) -> tuple[tuple[str, int], ...]:
 def _grab(video: str, index: int, dest: Path) -> None:
     import subprocess
 
-    result = subprocess.run(
+    if shutil.which("ffmpeg") is None:
+        raise NeedTool("ffmpeg")
+    subprocess.run(
         [
             "ffmpeg",
+            "-nostdin",
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -399,12 +402,35 @@ def _grab(video: str, index: int, dest: Path) -> None:
             "1",
             str(dest),
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
     )
-    if result.returncode != 0 or not dest.is_file():
-        raise NeedTool("ffmpeg")
+
+
+def _seconds_text(value: float) -> str:
+    return format(value, ".3f").rstrip("0").rstrip(".")
+
+
+def _why(check: Mapping[str, object]) -> str:
+    name = str(check.get("name"))
+    if name == "file":
+        return "The rendered file is missing."
+    if name == "readable":
+        return "The rendered file is not a video."
+    expected, actual = check.get("expected"), check.get("actual")
+    if name == "duration" and isinstance(expected, float) and isinstance(actual, float):
+        return say("The video lasts ", _seconds_text(actual), " s, not ", _seconds_text(expected), " s.")
+    if name == "frames":
+        return say("The video has ", str(actual), " frames, not ", str(expected), ".")
+    if name == "resolution":
+        return say("The video is ", str(actual), ", not ", str(expected), ".")
+    if name == "audio":
+        return "The video has no audio track."
+    if check.get("found") is False:
+        return say("Frame ", str(check.get("frame")), " (", name, ") is missing from the video.")
+    return say("Frame ", str(check.get("frame")), " (", name, ") differs from the script.")
 
 
 def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObject:
@@ -423,8 +449,15 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
     else:
         width, height, duration, audio = inspect(str(output))
         expected = float(row.duration_sec)
-        checks.append({"name": "duration", "ok": abs(duration - expected) <= 0.05})
-        checks.append({"name": "resolution", "ok": width == row.width and height == row.height})
+        counted = frame_count(str(output))
+        size, wanted = say(str(width), "x", str(height)), say(str(row.width), "x", str(row.height))
+        checks.append({"name": "readable", "ok": duration >= 0 and width > 0})
+        checks.append(
+            {"name": "duration", "ok": abs(duration - expected) <= 0.05, "expected": expected, "actual": duration}
+        )
+        total = timeline.total
+        checks.append({"name": "frames", "ok": counted == total, "expected": total, "actual": counted})
+        checks.append({"name": "resolution", "ok": size == wanted, "expected": wanted, "actual": size})
         checks.append({"name": "audio", "ok": audio})
         work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
         try:
@@ -436,7 +469,9 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
                 _grab(str(output), index, shot)
                 from ambitious_video.media.film import pixels
 
-                checks.append({"name": name, "ok": pixels(shot) == painted})
+                found = shot.is_file()
+                same = found and pixels(shot) == painted
+                checks.append({"name": name, "ok": same, "frame": index, "found": found})
         finally:
             shutil.rmtree(work, ignore_errors=True)
     passed = all(item.get("ok") is True for item in checks)
@@ -445,8 +480,12 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
     if passed:
         return {"jobId": job_id, "passed": True, "checks": as_json(checks)}
     commit(db)
+    hint = "Read data.checks for the failed check."
+    failed = [item for item in checks if item.get("ok") is not True]
+    if failed[0].get("name") == "readable":
+        failed = failed[:1]
     raise Failure(
-        [ErrorEntry("E_VERIFY", "The rendered video failed a check.", "Read data.checks for the failed check.")],
+        [ErrorEntry("E_VERIFY", _why(item), hint) for item in failed[:20]],
         {"jobId": job_id, "passed": False, "checks": as_json(checks)},
     )
 

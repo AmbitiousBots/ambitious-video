@@ -6,8 +6,12 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCANNED = ("src", "schemas", "templates", "examples")
-SKIPPED_PARTS = frozenset({"__pycache__"})
+SCANNED = ("src", "schemas", "templates", "examples", ".github")
+DOCUMENT_SUFFIXES = frozenset({".md"})
+SKIPPED_PARTS = frozenset(
+    {"__pycache__", ".git", ".venv", "venv", "vendor", "dist", "node_modules", ".mypy_cache", ".ruff_cache"}
+)
+SCAN_ITSELF = Path(__file__).resolve()
 
 ALLOWED: dict[str, str] = {
     "ambitious_video": "The Python package name. Renaming it would break every import and the built binary.",
@@ -15,6 +19,11 @@ ALLOWED: dict[str, str] = {
     "AMBITIOUS_HOME": "The environment variable the module contract defines for the data directory.",
     "ambitious_kit": "The vendored kit package this module imports its command runner from.",
     "/workspace/ambitious": "The default of AMBITIOUS_HOME that the module contract pins.",
+    ".cache/ambitious": "The cache folder where spec/check.sh keeps the pinned model checker download.",
+    "https://github.com/AmbitiousBots/ambitious-video/security/advisories/new": (
+        "The private security report form. A GitHub issue template contact link must be an absolute address, "
+        "so this one address stays, and only in .github/ISSUE_TEMPLATE/config.yml."
+    ),
 }
 
 REFUSED: dict[str, re.Pattern[str]] = {
@@ -39,16 +48,17 @@ def hits(text: str) -> list[str]:
     return [name for name, pattern in REFUSED.items() if pattern.search(cleaned)]
 
 
+def kept(path: Path) -> bool:
+    return path.is_file() and path != SCAN_ITSELF and not SKIPPED_PARTS & set(path.relative_to(ROOT).parts)
+
+
 def scanned_files() -> list[Path]:
-    found: list[Path] = []
+    found: set[Path] = set()
     for top in SCANNED:
-        base = ROOT / top
-        if not base.is_dir():
-            continue
-        for path in sorted(base.rglob("*")):
-            if path.is_file() and not SKIPPED_PARTS & set(path.relative_to(ROOT).parts):
-                found.append(path)
-    return found
+        found.update(path for path in (ROOT / top).rglob("*") if kept(path))
+    found.update(path for path in ROOT.iterdir() if kept(path))
+    found.update(path for path in ROOT.rglob("*") if path.suffix in DOCUMENT_SUFFIXES and kept(path))
+    return sorted(found)
 
 
 def readable(path: Path) -> str:
@@ -77,6 +87,29 @@ def test_the_scan_covers_the_shipped_folders() -> None:
     assert sum(1 for path in files if readable(path) != "") > 50
 
 
+def test_the_scan_covers_the_documents() -> None:
+    names = {path.relative_to(ROOT).as_posix() for path in scanned_files()}
+    top_level = {"README.md", "NOTICE", "LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"}
+    elsewhere = {"spec/README.md", "schemas/README.md", ".github/pull_request_template.md"}
+    assert top_level | elsewhere | {"pyproject.toml", ".github/ISSUE_TEMPLATE/config.yml"} <= names
+    assert not any(name.startswith(("vendor/", ".venv/", ".git/")) for name in names)
+
+
+def test_the_security_form_is_named_in_one_file_only() -> None:
+    form = next(name for name in ALLOWED if name.startswith("https://"))
+    holders = [path.relative_to(ROOT).as_posix() for path in scanned_files() if form in readable(path)]
+    assert holders == [".github/ISSUE_TEMPLATE/config.yml"]
+
+
+def test_the_documents_name_no_company_as_author() -> None:
+    notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "The ambitious-video contributors" in notice
+    assert "Corporation" not in notice and "Corporation" not in readme
+    assert "the project contributors" in readme
+    assert "Apache License" in (ROOT / "LICENSE").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -90,6 +123,9 @@ def test_the_scan_covers_the_shipped_folders() -> None:
         "HAL",
         "the hal-9 unit",
         "Part of Ambitious",
+        "Copyright 2026 Ambitious Corporation",
+        "github.com/AmbitiousBots/ambitious-video",
+        "the ambitious-kit repository",
         "Made for you by a robot",
     ],
 )
@@ -107,6 +143,8 @@ def test_the_scan_refuses(text: str) -> None:
         "AMBITIOUS_HOME defaults to /workspace/ambitious",
         "a dashboard, a shall, a halt and a chalk line",
         "Example Plumbing Co.",
+        "Copyright 2026 The ambitious-video contributors",
+        "keeps it in ~/.cache/ambitious/",
     ],
 )
 def test_the_scan_allows(text: str) -> None:
