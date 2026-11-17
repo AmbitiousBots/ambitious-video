@@ -27,8 +27,8 @@ def test_invalid_examples_are_rejected() -> None:
         assert problems, name
 
 
-def test_marketing_timeline_without_files() -> None:
-    raw = yaml.safe_load((EXAMPLES / "ambitious-marketing.yaml").read_text(encoding="utf-8"))
+def test_all_clip_types_timeline_without_files() -> None:
+    raw = yaml.safe_load((EXAMPLES / "all-clip-types.yaml").read_text(encoding="utf-8"))
     script, problems = load_script(raw)
     assert script is not None and problems == ()
     timeline = timeline_for(script, None, require_files=False)

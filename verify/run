@@ -41,5 +41,19 @@ json.dump({"jobId": body["data"]["jobId"]}, open(sys.argv[2], "w", encoding="utf
 print(body["data"]["jobId"], body["data"]["durationSec"], body["data"]["costUsd"])
 PY
 "$PY" dist/ambitious-video.pyz verify --in "$WORK/job.json" --now 2026-01-01T00:00:00Z --seed 1
-"$PY" dist/ambitious-video.pyz estimate --in examples/ambitious-marketing.yaml --now 2026-01-01T00:00:00Z --seed 1
+"$PY" dist/ambitious-video.pyz estimate --in examples/all-clip-types.yaml --now 2026-01-01T00:00:00Z --seed 1
+
+echo "== sample projects: validate and plan, no key =="
+for sample in examples/samples/*/; do
+  "$PY" dist/ambitious-video.pyz validate --in "${sample}script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/sample.json"
+  "$PY" dist/ambitious-video.pyz plan --in "${sample}script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >>"$WORK/sample.json"
+  "$PY" - "$WORK/sample.json" "$sample" <<'PY'
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    body = json.loads(line)
+    if not body["ok"]:
+        raise SystemExit(body)
+print(sys.argv[2], body["data"]["durationSec"], len(body["data"]["steps"]), "steps")
+PY
+done
 echo "verify/run: ok"

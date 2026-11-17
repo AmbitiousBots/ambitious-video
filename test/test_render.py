@@ -139,11 +139,11 @@ def test_voice_without_a_key_is_refused(tmp_path: Path) -> None:
     assert errors[0]["code"] == "E_NO_KEY"
 
 
-def test_marketing_estimate_matches_the_price_table(tmp_path: Path) -> None:
-    script = (ROOT / "examples" / "ambitious-marketing.yaml").read_text(encoding="utf-8")
+def test_all_clip_types_estimate_matches_the_price_table(tmp_path: Path) -> None:
+    script = (ROOT / "examples" / "all-clip-types.yaml").read_text(encoding="utf-8")
     estimated = run(tmp_path / "home", tmp_path, ["estimate"], script)
     assert estimated["exit"] == 0, estimated
     data = estimated["data"]
     assert isinstance(data, dict)
-    assert data["usd"] == "0.006045"
+    assert data["usd"] == "0.004095"
     assert data["durationSec"] == 33

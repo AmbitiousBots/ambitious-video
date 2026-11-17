@@ -1,0 +1,4 @@
+# SAMPLE DATA. Example Plumbing Co. is a fictional business.
+# An optional `font` may be added here; it is left unset in this sample.
+colors: { bg: "#0F2A3D", fg: "#F4F7FA", accent: "#2E9BD6" }
+logo: assets/logo.png

@@ -1,6 +1,6 @@
 # Schemas
 
-`video-script.v1.json` is the JSON Schema (draft 2020-12) for a video script: the YAML or JSON document that describes a video as data. `examples/minimal.yaml` and `examples/ambitious-marketing.yaml` are two such documents.
+`video-script.v1.json` is the JSON Schema (draft 2020-12) for a video script: the YAML or JSON document that describes a video as data. `examples/minimal.yaml` and `examples/all-clip-types.yaml` are two such documents, and each folder under `examples/samples/` holds one more.
 
 ```yaml
 schemaVersion: 1
@@ -26,7 +26,7 @@ cuts: [{ at: 11.0, transition: crossfade, duration: 0.4 }]
 ## What the schema says
 
 - **`output`**: where the video is written, its size in pixels (even numbers, as common video encoders need) and its frames per second.
-- **`brand`** (optional): a font, three colors as `#RRGGBB`, and a logo file.
+- **`brand`** (optional): a font, three colors as `#RRGGBB`, and a logo file. Nothing about a business is built in: without `brand.colors`, title cards are drawn in neutral colors (background `#111111`, text `#FFFFFF`, accent `#336699`), text is set in the drawing library's built-in font, and no logo is shown.
 - **`voice`** (optional): the provider and voice that speak `voiceover` clips. Speaking needs the provider's key in the environment when the video is rendered; a key never goes in a script, and the schema rejects one. Without `voice`, nothing is spoken and no key is needed; `voiceover` clips still give captions their words and timing.
 - **`tracks`**: each track has an `id` and either `clips` or `from`. A track with `from: <track id>` shows captions made from the `voiceover` clips of that track.
 - **Clips.** Six types. An unknown `type` is rejected.
@@ -60,7 +60,8 @@ Rules that need the media files or the computed timeline (clips on a track do no
 
 ## Examples
 
-- `examples/*.yaml` must be accepted and break no rule. Together they must use every clip type.
+- `examples/*.yaml` must be accepted and break no rule. Together they must use every clip type. `all-clip-types.yaml` does so by itself; it names a voice, so it shows a price in `estimate`.
+- `examples/samples/<name>/` holds four sample projects for four made-up businesses (a plumber, an accounting office, a fitness studio and a bookshop). Everything in them is SAMPLE DATA. Each has a `script.yaml` that must be accepted and break no rule, a `brand.yaml` with the same colors and logo as the script's `brand` block, a `README.md`, and placeholder pictures in `assets/`. They need no key and no network. `python3 scripts/make_sample_assets.py` draws the pictures again; it uses only the Python standard library.
 - `examples/invalid/*.yaml` must each be rejected for the reason listed for it in `examples/invalid/EXPECTED.json`: `{ "keyword", "at" }` names the schema keyword that rejects it and where, and `{ "rule" }` names the one rule above that it breaks while passing the schema.
 
 ## Check

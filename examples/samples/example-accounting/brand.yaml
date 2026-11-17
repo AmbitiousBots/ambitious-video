@@ -1,0 +1,4 @@
+# SAMPLE DATA. Example Accounting Office is a fictional business.
+# An optional `font` may be added here; it is left unset in this sample.
+colors: { bg: "#1F2933", fg: "#F5F1E8", accent: "#C9A227" }
+logo: assets/logo.png

@@ -1,6 +1,6 @@
 # Contributing
 
-ambitious-video is a command-line renderer. A script is data, so the same tool can make a video for any industry. Keep it that way: do not build a business, a brand, or an industry into the program.
+ambitious-video is a command-line renderer. A script is data, so the same tool can make a video for any industry. Keep it that way: do not build a business, a brand, or an industry into the program. `test/test_name_scan.py` fails when a company's or a person's name appears in `src/`, `schemas/`, `templates/` or `examples/`; sample content there is fictional and says SAMPLE DATA.
 
 ## Set up
 

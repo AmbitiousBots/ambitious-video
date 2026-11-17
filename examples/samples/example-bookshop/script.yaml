@@ -1,0 +1,26 @@
+# SAMPLE DATA. Example Bookshop is a fictional business.
+schemaVersion: 1
+output: { path: out/example-bookshop.mp4, width: 1280, height: 720, fps: 24 }
+brand:
+  colors: { bg: "#2D2A26", fg: "#FBF6EC", accent: "#7A9E7E" }
+  logo: assets/logo.png
+tracks:
+  - id: main
+    clips:
+      - { type: title_card, duration: 3.0, text: "Example Bookshop", subtitle: "New and second-hand books (SAMPLE DATA)" }
+      - { type: image, path: assets/still-1.png, duration: 4.0, kenburns: { from: 1.0, to: 1.06 } }
+      - { type: title_card, duration: 2.5, text: "This month: an evening with a local author" }
+      - { type: image, path: assets/still-2.png, duration: 4.0 }
+      - { type: image, path: assets/still-3.png, duration: 4.0, kenburns: { from: 1.06, to: 1.0 } }
+      - { type: title_card, duration: 3.0, text: "Come by and browse", subtitle: "bookshop.example.com" }
+  - id: voice
+    clips:
+      - { type: voiceover, at: 0.5, duration: 2.0, text: "A good book is waiting on our shelves." }
+      - { type: voiceover, at: 3.5, duration: 3.0, text: "We stock new titles and well-kept second-hand ones." }
+      - { type: voiceover, at: 7.5, duration: 2.0, text: "Join us for this month's author evening." }
+      - { type: voiceover, at: 10.0, duration: 3.0, text: "Ask us for a recommendation; we like to be asked." }
+      - { type: voiceover, at: 18.0, duration: 2.0, text: "We are open every day." }
+  - id: captions
+    from: voice
+cuts:
+  - { at: 3.0, transition: crossfade, duration: 0.5 }
