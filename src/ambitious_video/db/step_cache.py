@@ -110,11 +110,15 @@ def write_entry(root: Path, step_key: str, label: Label, data: bytes) -> Entry:
     return Entry(step_key, folder / BODY, digest, len(data))
 
 
+def copy_entry(source: Entry, root: Path, label: Label) -> Entry:
+    data = source.path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != source.sha256:
+        raise CacheDamaged(source.step_key)
+    return write_entry(root, source.step_key, label, data)
+
+
 def remove_entry(root: Path, step_key: str) -> bool:
     folder = entry_dir(root, step_key)
-    lock = lock_path(root, step_key)
-    if lock.is_file():
-        lock.unlink()
     if not folder.is_dir():
         return False
     shutil.rmtree(folder)
@@ -139,7 +143,8 @@ def mark_calling(db: sqlite3.Connection, step_key: str, where: str, label: Label
             "created_at, used_at) ",
             "VALUES (?, ?, ?, ?, ?, 'calling', ?, ?) ",
             "ON CONFLICT (step_key, dir) DO UPDATE ",
-            "SET state = 'calling', used_at = ?",
+            "SET state = 'calling', ",
+            "used_at = max(used_at, ?)",
         ),
         (step_key, where, label.kind, label.provider, label.model, when, when, when),
     )
@@ -155,7 +160,7 @@ def mark_ready(db: sqlite3.Connection, entry: Entry, where: str, label: Label, w
             "?, ?, ?, ?) ",
             "ON CONFLICT (step_key, dir) DO UPDATE ",
             "SET state = 'ready', sha256 = ?, ",
-            "bytes = ?, used_at = ?",
+            "bytes = ?, used_at = max(used_at, ?)",
         ),
         (
             entry.step_key,
@@ -179,6 +184,22 @@ def delete_row(db: sqlite3.Connection, step_key: str, where: str) -> None:
         _sql("DELETE FROM step_cache ", "WHERE step_key = ? AND dir = ?"),
         (step_key, where),
     )
+
+
+def ready_elsewhere(db: sqlite3.Connection, step_key: str, where: str) -> tuple[tuple[str, str], ...]:
+    rows = db.execute(
+        _sql(
+            "SELECT dir, sha256 FROM step_cache ",
+            "WHERE step_key = ? AND dir != ? ",
+            "AND state = 'ready' ORDER BY dir",
+        ),
+        (step_key, where),
+    ).fetchall()
+    found: list[tuple[str, str]] = []
+    for value in rows:
+        if isinstance(value, tuple) and isinstance(value[0], str) and isinstance(value[1], str):
+            found.append((value[0], value[1]))
+    return tuple(found)
 
 
 def _row(value: object) -> CacheRow:

@@ -292,5 +292,7 @@ class Asset:
     kind: AssetKind
 
 
-def idem_key(step_key: Sha256Hex) -> IdemKey:
-    return IdemKey(step_key)
+def idem_key(step_key: Sha256Hex, call: int = 1) -> IdemKey:
+    if call <= 1:
+        return IdemKey(step_key)
+    return IdemKey(step_key + "#" + str(call))

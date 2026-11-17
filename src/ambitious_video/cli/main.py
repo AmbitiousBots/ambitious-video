@@ -27,6 +27,7 @@ SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
 CACHE_DIR: ContextVar[Path | None] = ContextVar("cache_dir", default=None)
 OLDER_THAN: ContextVar[str | None] = ContextVar("older_than", default=None)
 KIT_VALUE_FLAGS = ("--in", "--db", "--now", "--seed")
+MAX_PRUNE_DAYS = 36500
 OWN_FLAGS = {
     "--cache": ("render", "cache list", "cache prune"),
     "--older-than": ("cache prune",),
@@ -201,11 +202,12 @@ def cache_list(context: DbContext[None]) -> JsonObject:
 
 def cache_prune(context: DbContext[None]) -> JsonObject:
     asked = OLDER_THAN.get()
-    if asked is None or not asked.isascii() or not asked.isdigit() or len(asked) > 6:
+    valid = asked is not None and asked.isascii() and asked.isdigit() and len(asked) <= 6
+    if asked is None or not valid or int(asked) > MAX_PRUNE_DAYS:
         raise failure(
             "E_USAGE",
             "cache prune needs --older-than <days>.",
-            "Give a whole number of days, such as 90.",
+            "Give whole days, 0 to 36500, such as 90.",
         )
     return engine.cache_prune(context.db, CACHE_DIR.get(), int(asked), context.now)
 

@@ -23,6 +23,7 @@ from ambitious_video.db import step_cache
 from ambitious_video.db.lock import Hold
 from ambitious_video.db.store import (
     JobRow,
+    count_calls,
     insert_asset,
     insert_job,
     insert_ledger,
@@ -247,9 +248,48 @@ def _no_key() -> Failure:
     )
 
 
-def _require_key(paid: tuple[Paid, ...], store: Path, key: str) -> None:
-    if key == "" and any(_entry(store, item.key) is None for item in paid):
+def _elsewhere(db: sqlite3.Connection, store: Path, key: str) -> step_cache.Entry | None:
+    for folder, digest in step_cache.ready_elsewhere(db, key, str(store)):
+        try:
+            found = step_cache.read_entry(Path(refuse_agent_data(folder)), key)
+        except (step_cache.CacheDamaged, Failure, OSError):
+            continue
+        if found is not None and found.sha256 == digest:
+            return found
+    return None
+
+
+def _stored(db: sqlite3.Connection, store: Path, key: str) -> bool:
+    return _entry(store, key) is not None or _elsewhere(db, store, key) is not None
+
+
+def _require_key(db: sqlite3.Connection, paid: tuple[Paid, ...], store: Path, key: str) -> None:
+    if key == "" and not all(_stored(db, store, item.key) for item in paid):
         raise _no_key()
+
+
+def _brought(db: sqlite3.Connection, store: Path, key: str, label: step_cache.Label) -> step_cache.Entry | None:
+    other = _elsewhere(db, store, key)
+    if other is None:
+        return None
+    try:
+        return step_cache.copy_entry(other, store, label)
+    except (step_cache.CacheDamaged, OSError):
+        return None
+
+
+def _add_line(db: sqlite3.Connection, item: Paid, job_id: str) -> None:
+    call = count_calls(db, item.key) + 1
+    while not insert_ledger(
+        db,
+        job_id=job_id,
+        step=item.span.kind,
+        step_index=item.span.step,
+        units=units_text(item.quote.units),
+        usd=money_text(item.quote.usd),
+        idem_key=str(idem_key(Sha256Hex(item.key), call)),
+    ):
+        call += 1
 
 
 def _fetch(
@@ -266,6 +306,11 @@ def _fetch(
     try:
         hold.lock()
         entry = _entry(store, item.key)
+        owed = False
+        if entry is None:
+            entry = _brought(db, store, item.key, label)
+        else:
+            owed = step_cache.row_state(db, item.key, where) == "calling"
         if entry is None:
             begin(db)
             step_cache.mark_calling(db, item.key, where, label, stamp)
@@ -279,19 +324,9 @@ def _fetch(
                 raise
             entry = step_cache.write_entry(store, item.key, label, body)
             owed = True
-        else:
-            owed = step_cache.row_state(db, item.key, where) == "calling"
         begin(db)
         if owed:
-            insert_ledger(
-                db,
-                job_id=job_id,
-                step=item.span.kind,
-                step_index=item.span.step,
-                units=units_text(item.quote.units),
-                usd=money_text(item.quote.usd),
-                idem_key=str(idem_key(Sha256Hex(item.key))),
-            )
+            _add_line(db, item, job_id)
         step_cache.mark_ready(db, entry, where, label, stamp)
         commit(db)
         return entry.path, not owed
@@ -329,7 +364,7 @@ def _pieces(
             continue
         cached = item.key in seen
         if not cached:
-            if key == "" and _entry(store, item.key) is None:
+            if key == "" and not _stored(db, store, item.key):
                 raise _no_key()
             call = partial(speaker, clip.text, script.voice.voice, key)
             seen[item.key], cached = _fetch(db, store, item, job_id, stamp, call)
@@ -409,7 +444,7 @@ def render_new(
     key = env.get(speech.KEY_ENV, "")
     store = cache_root(env, cache_flag, script, root)
     paid = paid_steps(script, timeline, rate)
-    _require_key(paid, store, key)
+    _require_key(db, paid, store, key)
     plan = plan_data(raw, root)
     stamp = format_instant(when)
     output = _checked(root, str(script.output.path))
@@ -477,7 +512,7 @@ def render_again(
     key = env.get(speech.KEY_ENV, "")
     store = cache_root(env, cache_flag, script, root)
     paid = paid_steps(script, timeline, rate)
-    _require_key(paid, store, key)
+    _require_key(db, paid, store, key)
     plan = plan_data(stored, root)
     stamp = format_instant(when)
     commit(db)
@@ -690,6 +725,22 @@ def cache_list(db: sqlite3.Connection, only: Path | None) -> JsonObject:
     }
 
 
+def _pruned(db: sqlite3.Connection, row: step_cache.CacheRow) -> bool:
+    root = Path(refuse_agent_data(row.dir))
+    if not root.is_dir():
+        step_cache.delete_row(db, row.step_key, row.dir)
+        return True
+    hold = Hold(str(step_cache.lock_path(root, row.step_key)))
+    try:
+        if not hold.try_lock():
+            return False
+        step_cache.remove_entry(root, row.step_key)
+        step_cache.delete_row(db, row.step_key, row.dir)
+        return True
+    finally:
+        hold.close()
+
+
 def cache_prune(db: sqlite3.Connection, only: Path | None, days: int, when: datetime) -> JsonObject:
     cutoff = format_instant(when - timedelta(days=days))
     rows = _cache_rows(db, only)
@@ -699,10 +750,10 @@ def cache_prune(db: sqlite3.Connection, only: Path | None, days: int, when: date
         if row.used_at >= cutoff:
             continue
         try:
-            step_cache.remove_entry(Path(refuse_agent_data(row.dir)), row.step_key)
+            if not _pruned(db, row):
+                continue
         except step_cache.CacheDamaged as error:
             raise _damaged(error) from None
-        step_cache.delete_row(db, row.step_key, row.dir)
         removed.append({"stepKey": row.step_key, "dir": row.dir, "bytes": row.size})
         freed += row.size or 0
     return {

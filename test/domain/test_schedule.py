@@ -7,6 +7,7 @@ from ambitious_video.domain.schedule import (
     finish,
     invariants_hold,
     recover,
+    remove,
     render_fails,
     retry,
     run_paid_step,
@@ -43,6 +44,23 @@ def test_a_second_job_with_the_same_step_key_is_not_charged() -> None:
     assert invariants_hold(state)
 
 
+def test_a_removed_result_is_called_again_and_charged_once_per_call() -> None:
+    state = world()
+    assert claim(state, "red", "job-a")
+    assert run_paid_step(state, "red", 0)
+    assert run_paid_step(state, "red", 1)
+    assert finish(state, "red")
+    assert remove(state, 0)
+    assert not remove(state, 0)
+    assert claim(state, "blue", "job-b")
+    assert run_paid_step(state, "blue", 0)
+    assert run_paid_step(state, "blue", 1)
+    assert (state.call_count(0), state.line_count(0)) == (2, 2)
+    assert (state.call_count(1), state.line_count(1)) == (1, 1)
+    assert len({line.idem_key for line in state.lines.values()}) == 3
+    assert invariants_hold(state)
+
+
 def test_verify_refuses_a_job_that_is_not_rendered() -> None:
     state = world()
     assert not verify_passes(state, "job-a")
@@ -61,6 +79,8 @@ def test_random_orders_keep_the_rules() -> None:
         "retry",
         "pass",
         "reject",
+        "remove0",
+        "remove1",
     )
     seed = 1
     for _case in range(80):
@@ -90,6 +110,10 @@ def test_random_orders_keep_the_rules() -> None:
                 retry(state, job)
             elif action == "pass":
                 verify_passes(state, job)
+            elif action == "remove0":
+                remove(state, 0)
+            elif action == "remove1":
+                remove(state, 1)
             else:
                 verify_rejects(state, job)
             assert invariants_hold(state)

@@ -1,6 +1,6 @@
 # Formal model of a render job
 
-Rendering a video can cost money: a step such as a voiceover is a paid call to an AI provider. A render can also fail or be killed half way, and then it is tried again. This folder holds a small model of the life of a render job and checks, for every order of steps, that a retry never charges twice, that a paid step with the same step key is called and charged at most once across jobs, that a job is never marked verified on an output it did not just render, and that two renders never work on one job at once. The model was written before the `render` and `verify` code, so the code is written against rules that are already checked.
+Rendering a video can cost money: a step such as a voiceover is a paid call to an AI provider. A render can also fail or be killed half way, and then it is tried again. This folder holds a small model of the life of a render job and checks, for every order of steps, that a retry never charges twice, that the ledger holds one line per provider call, that a step key is called again only if its result was removed, that a job is never marked verified on an output it did not just render, and that two renders never work on one job at once. The model was written before the `render` and `verify` code, so the code is written against rules that are already checked.
 
 Run it from the repo root:
 
@@ -27,7 +27,8 @@ queued -> rendering -> rendered -> verified
 | Step in the model | What it stands for |
 |---|---|
 | `Claim` | A render takes a waiting job (`queued` or `retried`) and marks it `rendering`. |
-| `RunPaidStep` | The render needs one paid step. If the cache holds no result for its step key, the provider is called once and the result is stored. Its line is added to the cost ledger, unless the ledger already holds that step's idempotency key. The key is the step key: a hash of what the step asks the provider for. It does not name the job or the attempt, so it is the same on every attempt and in every job with the same inputs. |
+| `RunPaidStep` | The render needs one paid step. If the cache holds no result for its step key, the provider is called once and the result is stored. The line of the latest call is added to the cost ledger, unless the ledger already holds that call's idempotency key. The key is the step key plus the number of the call: the step key is a hash of what the step asks the provider for, and the number is 1 unless the result was removed and called for again. It does not name the job or the attempt, so it is the same on every attempt and in every job with the same inputs. |
+| `Remove` | The stored result of a step key is removed, by `cache prune` or by deleting its folder by hand, at any moment. |
 | `Finish` | The render has run every step. It records the output and marks the job `rendered`. |
 | `RenderFails` | The render hits an error at any point and marks the job `failed`. |
 | `Crash` | The render process dies at any point and writes nothing. The job is left `rendering`. |
@@ -35,15 +36,15 @@ queued -> rendering -> rendered -> verified
 | `Retry` | A `failed` job is put back in line as `retried`. |
 | `VerifyPasses`, `VerifyRejects` | `verify` checks the output of a `rendered` job and marks it `verified` or `failed`. |
 
-The model keeps three things that are only there to state the rules: `ledgerLines`, the number of ledger lines for each step key, `calls`, the number of provider calls for each step key, and `renderedAttempt`, the attempt whose render last finished. The code needs no column for any of them. `cached` is the set of step keys with a stored result: the folders of the step cache.
+The model keeps four things that are only there to state the rules: `ledgerLines`, the number of ledger lines for each step key, `calls`, the number of provider calls for each step key, `removals`, the number of times its result was removed, and `renderedAttempt`, the attempt whose render last finished. The code needs no column for any of them; it reads the number of the call from the ledger lines the step key already has. `cached` is the set of step keys with a stored result: the folders of the step cache.
 
-The rules, checked in every reachable state (22,824 distinct states):
+The rules, checked in every reachable state (189,355 distinct states):
 
 | Rule | In plain words | Harm if it breaks |
 |---|---|---|
-| `NoDoubleCharge` | The ledger never holds two lines for the same step key, however often a job is retried and however many jobs need that step. | The recorded cost is higher than what was paid. |
-| `OneCallPerStepKey` | The provider is called at most once for a step key, across retries and across jobs. | The owner pays the provider again for a result that is already stored. |
-| `RenderedIsFullyCharged` | Every paid step of a job that is `rendered` or `verified` has exactly one ledger line, written by the job that made the call. | A cost goes missing from the ledger. |
+| `NoDoubleCharge` | The ledger never holds more lines for a step key than provider calls were made for it, however often a job is retried and however many jobs need that step. | The recorded cost is higher than what was paid. |
+| `CalledAgainOnlyAfterRemoval` | The provider is called once for a step key, across retries and across jobs, and once more only each time its stored result was removed. | The owner pays the provider again for a result that is already stored. |
+| `RenderedIsFullyCharged` | Once a job is `rendered` or `verified`, every paid step was called for and has exactly one ledger line per provider call, written by the job that made the call. | A cost goes missing from the ledger. |
 | `VerifiedImpliesRendered` | A `verified` job was rendered to the end on its latest attempt, and that output is the one that was checked. | A video is reported as checked when the file that was checked is stale, or the render never finished. |
 | `OneActiveRenderPerJob` | At most one render works on a job, and only while the job is `rendering`. | Two renders write the same output file, or a job changes state under a render that is still running. |
 
@@ -57,7 +58,7 @@ Three more checks run on the same model:
 
 ### Bounds
 
-Two jobs, two renders that can run at the same time, two step keys, and three attempts per job. Both jobs need both step keys: two jobs with the same inputs is the case where sharing matters. Steps that cost nothing do not touch the ledger and are left out. The limit of three attempts keeps the model finite; nothing in the rules depends on the number.
+Two jobs, two renders that can run at the same time, two step keys, three attempts per job, and one removal per step key. Both jobs need both step keys: two jobs with the same inputs is the case where sharing matters. Steps that cost nothing do not touch the ledger and are left out. The limits on attempts and removals keep the model finite; nothing in the rules depends on the numbers.
 
 ## `broken/`: showing that each rule can fail
 
@@ -67,8 +68,9 @@ Each file in `spec/broken/` is the model with one line changed to a plausible mi
 |---|---|---|
 | `AppendWithoutIdemKey` | A paid step adds its ledger line without looking for its idempotency key. | `NoDoubleCharge` |
 | `IdemKeyWithoutStep` | The idempotency key does not name the step key. | `RenderedIsFullyCharged` |
-| `IdemKeyWithJob` | The idempotency key names the job as well as the step key, so a second job adds a second line for a step served from the cache. | `NoDoubleCharge` |
-| `CallWithoutCacheCheck` | A paid step calls the provider without looking in the cache for its step key. | `OneCallPerStepKey` |
+| `IdemKeyWithJob` | The idempotency key names the job as well as the step key and the call, so a second job adds a line for a step served from the cache. | `NoDoubleCharge` |
+| `IdemKeyWithoutCall` | The idempotency key names the step key but not the call, so the call made after a result was removed is never recorded. | `RenderedIsFullyCharged` |
+| `CallWithoutCacheCheck` | A paid step calls the provider without looking in the cache for its step key. | `CalledAgainOnlyAfterRemoval` |
 | `VerifyWithoutStateCheck` | `verify` accepts any job that has an output file, without checking that the job is `rendered`. | `VerifiedImpliesRendered` |
 | `ClaimWithoutStateCheck` | A render takes a job without checking that it is waiting. | `OneActiveRenderPerJob` |
 | `RecoverWithoutLockCheck` | Recovery marks a `rendering` job `failed` without checking that its render has stopped. | `OneActiveRenderPerJob` |
@@ -85,20 +87,21 @@ The commands live in `src/ambitious_video/cli/engine.py`. The moves and the idem
 |---|---|
 | `JOB_TRANSITIONS` in `src/ambitious_video/domain/types.py` | `Moves`; the two are compared on every check |
 | `step_key` in `src/ambitious_video/domain/plan.py` | The members of `StepKeys`: a SHA-256 of the step's kind, provider, model, adapter version, parameters, seed and input hashes. Nothing about the job, the attempt, the clock or the machine goes in. |
-| `idem_key` in `types.py` | `IdemKey`: the step key alone, never the job or the attempt |
+| `idem_key` in `types.py` | `IdemKey`: the step key and the number of the call (`<step key>` for the first call, `<step key>#2` for the next), never the job or the attempt |
 | A paid step in `cli/engine.py` | One `RunPaidStep`. The render holds a file lock named after the step key while it looks in the cache, calls the provider and stores the result, so two renders never call for one step key at the same time. |
-| Adding a ledger line | Insert the line only if no line has its `idem_key`, in one database transaction. The `UNIQUE` constraint on `idem_key` is what makes this hold when two writers race. The code adds the line in the render that made the call and adds nothing on a cache hit; in the model a cached step key always has its line already, so both say the same. |
+| Adding a ledger line | Count the lines the step key already has and insert the line of the next call, in one database transaction. The `UNIQUE` constraint on `idem_key` is what makes this hold when two writers race. The code adds the line in the render that made the call and adds nothing on a cache hit; in the model a cached step key always has the line of its latest call already, so both say the same. |
 | `step_cache` table and `<cache dir>/<step key>/` | `cached`. A row is written as `calling` before the provider call and as `ready` in the transaction that adds the ledger line. A later render that finds a stored result whose row is still `calling` adds the missing line. |
+| `cache prune` and a deleted cache folder | `Remove`. `cache prune` takes the step key's file lock first and skips an entry that a render holds. |
 | Taking a job | One `Claim`: read the state and write `rendering` in one transaction, so that only one render wins |
 | A running render | Holds something for the whole render that the operating system releases when the process dies, such as a file lock. `Recover` must take the same thing before it marks the job `failed`. |
 | `verify` | Refuses a job that is not `rendered`, even when an output file exists |
 
 ## What is not covered
 
-- The model checks the design, not the Python. Tests tie the code to it: `test/domain/test_schedule.py` is the property test that drives the job functions with generated orders of claim, step, fail, crash, recover, retry and verify, and checks the same four rules.
-- Money spent at the provider. If a render dies after a paid call returns and before its result is stored, the next attempt calls the provider again. The ledger still holds one line, so the ledger can be lower than the provider's bill by that one call. Closing this needs the provider to accept an idempotency key, which is outside this module.
-- Removing cache entries. `cache prune` and deleting a cache folder by hand are not steps in the model. A step whose result was removed is called again when a later render needs it, and the ledger keeps its one line for that step key.
-- Two databases that share one cache folder, or one database used with several cache folders. The model has one ledger and one cache.
+- The model checks the design, not the Python. Tests tie the code to it: `test/domain/test_schedule.py` is the property test that drives the job functions with generated orders of claim, step, remove, fail, crash, recover, retry and verify, and checks the same rules.
+- Money spent at the provider. If a render dies after a paid call returns and before its result is stored, the next attempt calls the provider again. No line is written for that lost call, so the ledger can be lower than the provider's bill by that one call. Closing this needs the provider to accept an idempotency key, which is outside this module.
+- Two databases that share one cache folder, or one database used with several cache folders. The model has one ledger and one cache. In the code, a render that misses in its own folder copies a verified result from another folder the same database has used instead of calling; `test/test_step_cache.py` covers that, the model does not.
+- More than one removal per step key.
 - More than two jobs, renders or step keys, and more than three attempts.
 - The content of a render: what `verify` checks, the ffmpeg graph and the script are not modeled. `verify` is a step that passes or rejects.
 - Crashes in the middle of a database write; each step is one transaction.

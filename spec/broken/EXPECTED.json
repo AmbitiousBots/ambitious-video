@@ -1,19 +1,23 @@
 {
   "AppendWithoutIdemKey": {
     "invariant": "NoDoubleCharge",
-    "because": "A paid step adds its ledger line without looking for its idempotency key, so a retry or a second job with the same step key adds a second line for one provider call."
+    "because": "A paid step adds its ledger line without looking for its idempotency key, so a retry or a second job that is served from the cache adds a line for a provider call that was never made."
   },
   "IdemKeyWithoutStep": {
     "invariant": "RenderedIsFullyCharged",
-    "because": "The idempotency key does not name the step key, so the second paid step of a job looks already charged and its cost is never recorded."
+    "because": "The idempotency key does not name the step key, so the first call for a second paid step looks already charged and its cost is never recorded."
   },
   "IdemKeyWithJob": {
     "invariant": "NoDoubleCharge",
-    "because": "The idempotency key names the job as well as the step key, so a second job with the same inputs adds a second ledger line for a step that was served from the cache."
+    "because": "The idempotency key names the job as well as the step key and the call, so a second job with the same inputs adds a ledger line for a step that was served from the cache."
+  },
+  "IdemKeyWithoutCall": {
+    "invariant": "RenderedIsFullyCharged",
+    "because": "The idempotency key names the step key but not which call it was, so when a result is removed and the provider is called again, the second call looks already charged and its cost is never recorded."
   },
   "CallWithoutCacheCheck": {
-    "invariant": "OneCallPerStepKey",
-    "because": "A paid step calls the provider without looking in the cache for its step key, so a retry or a second job with the same inputs pays the provider again."
+    "invariant": "CalledAgainOnlyAfterRemoval",
+    "because": "A paid step calls the provider without looking in the cache for its step key, so a retry or a second job with the same inputs pays the provider again while the result is still stored."
   },
   "VerifyWithoutStateCheck": {
     "invariant": "VerifiedImpliesRendered",

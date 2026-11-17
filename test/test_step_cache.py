@@ -21,6 +21,7 @@ from ambitious_kit.domain.envelope import Failure
 
 from ambitious_video.cli import engine
 from ambitious_video.db import step_cache
+from ambitious_video.db.lock import Hold
 from ambitious_video.db.store import list_ledger
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -355,6 +356,10 @@ def test_cache_list_reads_and_cache_prune_removes_only_when_asked(tmp_path: Path
     assert refused["exit"] == 1 and refused["errors"][0]["code"] == "E_USAGE"
     wrong = _cli(home, ["cache", "prune", "--older-than", "soon"], "2027-01-01T00:00:00Z")
     assert wrong["exit"] == 1 and wrong["errors"][0]["code"] == "E_USAGE"
+    for days in ("36501", "740000", "999999", "1000000"):
+        huge = _cli(home, ["cache", "prune", "--older-than", days], "2027-01-01T00:00:00Z")
+        assert huge["exit"] == 1 and huge["errors"][0]["code"] == "E_USAGE", huge
+    assert sorted(path.name for path in cache.iterdir() if not path.name.startswith(".")) == keys
     young = _cli(home, ["cache", "prune", "--older-than", "90"], "2026-02-01T00:00:00Z")
     assert young["exit"] == 0 and young["data"]["removed"] == [] and young["data"]["kept"] == len(keys)
     assert sorted(path.name for path in cache.iterdir() if not path.name.startswith(".")) == keys
@@ -401,3 +406,165 @@ def test_cache_flags_are_refused_where_they_mean_nothing(tmp_path: Path) -> None
     listed = _cli(home, ["cache", "list", "--older-than", "3"], "2026-01-01T00:00:00Z")
     assert listed["exit"] == 1 and listed["errors"][0]["code"] == "E_USAGE"
     assert not home.exists()
+
+
+def _ledger_matches_costs(db: Db, renders: list[dict[str, object]], calls: int) -> list[str]:
+    lines = list_ledger(db)
+    assert len(lines) == calls
+    assert sum(Decimal(line.usd) for line in lines) == sum(Decimal(str(data["costUsd"])) for data in renders) > 0
+    billed = [step for data in renders for step in _steps(data) if step["cached"] is False]
+    assert sorted(Decimal(line.usd) for line in lines) == sorted(Decimal(str(step["usd"])) for step in billed)
+    keys = [line.idem_key for line in lines]
+    assert len(set(keys)) == len(keys)
+    return keys
+
+
+def test_a_second_cache_folder_reuses_the_result_and_bills_nothing(tmp_path: Path, no_network: None) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    fake = FakeSpeech()
+    other = tmp_path / "other-cache"
+    db = _open(home)
+    try:
+        first = _render(
+            db, script, folder, "job-one", FIRST, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}, fake
+        )
+        second = _render(db, script, folder, "job-two", LATER, {"AMBITIOUS_HOME": str(home)}, _never, other)
+        third = _render(
+            db, {**script, "cache": {"dir": "kept"}}, folder, "job-three", LATER, {"AMBITIOUS_HOME": str(home)}, _never
+        )
+        spoken = _spoken(script)
+        assert len(fake.calls) == len(spoken)
+        keys = _ledger_matches_costs(db, [first, second, third], len(spoken))
+        assert keys == [step["stepKey"] for step in _steps(first)]
+        assert all(step["cached"] is True for step in _steps(second) + _steps(third))
+        assert second["costUsd"] == third["costUsd"] == "0.000000"
+        assert second["sha256"] == first["sha256"]
+        rows = step_cache.list_rows(db)
+        assert {row.state for row in rows} == {"ready"} and len(rows) == 3 * len(spoken)
+    finally:
+        db.close()
+    for key in keys:
+        copied = (other / key / "output.bin").read_bytes()
+        assert copied == (home / "video" / "cache" / key / "output.bin").read_bytes()
+        assert copied == (folder / "kept" / key / "output.bin").read_bytes()
+
+
+def test_a_damaged_result_in_another_folder_is_not_copied(tmp_path: Path) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    env = {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+    fake = FakeSpeech()
+    db = _open(home)
+    try:
+        first = _render(db, script, folder, "job-one", FIRST, env, fake)
+        key = str(_steps(first)[0]["stepKey"])
+        (home / "video" / "cache" / key / "output.bin").write_bytes(b"not the stored bytes")
+        with pytest.raises(Failure) as caught:
+            _render(db, script, folder, "job-two", LATER, {"AMBITIOUS_HOME": str(home)}, _never, tmp_path / "other")
+        assert [error.code for error in caught.value.errors] == ["E_NO_KEY"]
+        second = _render(db, script, folder, "job-three", LATER, env, fake, tmp_path / "other")
+        spoken = _spoken(script)
+        assert len(fake.calls) == len(spoken) + 1
+        assert [step["cached"] for step in _steps(second)] == [False] + [True] * (len(spoken) - 1)
+        keys = _ledger_matches_costs(db, [first, second], len(spoken) + 1)
+        assert keys[-1] == key + "#2"
+    finally:
+        db.close()
+
+
+def test_a_pruned_result_is_called_again_and_gets_its_own_line(tmp_path: Path) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    env = {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+    fake = FakeSpeech()
+    db = _open(home)
+    try:
+        first = _render(db, script, folder, "job-one", FIRST, env, fake)
+        spoken = _spoken(script)
+        db.execute("BEGIN IMMEDIATE")
+        pruned = engine.cache_prune(db, None, 30, LATER)
+        db.execute("COMMIT")
+        assert len(pruned["removed"]) == len(spoken) and step_cache.list_rows(db) == ()
+        second = _render(db, script, folder, "job-two", LATER, env, fake)
+        third = _render(db, script, folder, "job-three", LATER, {"AMBITIOUS_HOME": str(home)}, _never)
+        assert len(fake.calls) == 2 * len(spoken)
+        assert [step["cached"] for step in _steps(second)] == [False] * len(spoken)
+        assert all(step["cached"] is True for step in _steps(third))
+        keys = _ledger_matches_costs(db, [first, second, third], 2 * len(spoken))
+        step_keys = [str(step["stepKey"]) for step in _steps(first)]
+        assert keys == step_keys + [key + "#2" for key in step_keys]
+        assert [line.job_id for line in list_ledger(db)] == ["job-one"] * len(spoken) + ["job-two"] * len(spoken)
+
+        db.execute("BEGIN IMMEDIATE")
+        engine.cache_prune(db, None, 0, datetime(2026, 6, 1, tzinfo=UTC))
+        db.execute("COMMIT")
+        fourth = _render(db, script, folder, "job-four", datetime(2026, 6, 2, tzinfo=UTC), env, fake)
+        keys = _ledger_matches_costs(db, [first, second, third, fourth], 3 * len(spoken))
+        assert keys[2 * len(spoken) :] == [key + "#3" for key in step_keys]
+    finally:
+        db.close()
+
+
+def test_a_deleted_entry_folder_is_called_again_and_gets_its_own_line(tmp_path: Path) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    env = {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+    fake = FakeSpeech()
+    db = _open(home)
+    try:
+        first = _render(db, script, folder, "job-one", FIRST, env, fake)
+        spoken = _spoken(script)
+        key = str(_steps(first)[1]["stepKey"])
+        shutil.rmtree(home / "video" / "cache" / key)
+        with pytest.raises(Failure) as caught:
+            _render(db, script, folder, "job-two", LATER, {"AMBITIOUS_HOME": str(home)}, _never)
+        assert [error.code for error in caught.value.errors] == ["E_NO_KEY"]
+        second = _render(db, script, folder, "job-three", LATER, env, fake)
+        assert len(fake.calls) == len(spoken) + 1
+        assert [step["cached"] for step in _steps(second)] == [index != 1 for index in range(len(spoken))]
+        keys = _ledger_matches_costs(db, [first, second], len(spoken) + 1)
+        assert keys == [str(step["stepKey"]) for step in _steps(first)] + [key + "#2"]
+        assert second["sha256"] == first["sha256"]
+    finally:
+        db.close()
+
+
+def test_prune_leaves_an_entry_that_a_render_holds(tmp_path: Path) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    db = _open(home)
+    try:
+        first = _render(
+            db, script, folder, "job-one", FIRST, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}, FakeSpeech()
+        )
+        keys = sorted(str(step["stepKey"]) for step in _steps(first))
+        cache = home / "video" / "cache"
+        hold = Hold(str(step_cache.lock_path(cache, keys[0])))
+        try:
+            assert hold.try_lock()
+            db.execute("BEGIN IMMEDIATE")
+            pruned = engine.cache_prune(db, None, 30, LATER)
+            db.execute("COMMIT")
+        finally:
+            hold.close()
+        assert sorted(entry["stepKey"] for entry in pruned["removed"]) == keys[1:] and pruned["kept"] == 1
+        assert [row.step_key for row in step_cache.list_rows(db)] == [keys[0]]
+        assert (cache / keys[0] / "output.bin").is_file()
+        assert step_cache.lock_path(cache, keys[1]).is_file()
+    finally:
+        db.close()
+
+
+def test_a_render_with_an_older_clock_does_not_move_last_use_back(tmp_path: Path) -> None:
+    script, folder = _project(tmp_path)
+    home = tmp_path / "home"
+    db = _open(home)
+    try:
+        _render(
+            db, script, folder, "job-one", LATER, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}, FakeSpeech()
+        )
+        _render(db, script, folder, "job-two", FIRST, {"AMBITIOUS_HOME": str(home)}, _never)
+        assert {row.used_at for row in step_cache.list_rows(db)} == {"2026-03-01T09:30:00.000Z"}
+    finally:
+        db.close()

@@ -1,11 +1,11 @@
 ------------------------------ MODULE ClaimWithoutStateCheck ------------------------------
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Jobs, Renderers, StepKeys, MaxAttempts
+CONSTANTS Jobs, Renderers, StepKeys, MaxAttempts, MaxRemovals
 
-VARIABLES state, attempt, renderedAttempt, rendering, done, cached, calls, idemKeys, ledgerLines
+VARIABLES state, attempt, renderedAttempt, rendering, done, cached, calls, removals, idemKeys, ledgerLines
 
-vars == <<state, attempt, renderedAttempt, rendering, done, cached, calls, idemKeys, ledgerLines>>
+vars == <<state, attempt, renderedAttempt, rendering, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 Idle == "idle"
 
@@ -16,9 +16,11 @@ Moves ==
       <<"rendered", "verified">>, <<"rendered", "failed">>, <<"failed", "retried">>,
       <<"retried", "rendering">> }
 
-IdemKey(j, k) == <<k>>
+IdemKey(j, k, n) == <<k, n>>
 
 MaxRuns == Cardinality(Jobs) * MaxAttempts
+
+Counts == 0..(MaxRuns + MaxRemovals)
 
 RenderersOf(j) == {r \in Renderers : rendering[r] = j}
 
@@ -30,6 +32,7 @@ Init ==
     /\ done = [r \in Renderers |-> {}]
     /\ cached = {}
     /\ calls = [k \in StepKeys |-> 0]
+    /\ removals = [k \in StepKeys |-> 0]
     /\ idemKeys = {}
     /\ ledgerLines = [k \in StepKeys |-> 0]
 
@@ -38,18 +41,25 @@ Claim(r, j) ==
     /\ state' = [state EXCEPT ![j] = "rendering"]
     /\ rendering' = [rendering EXCEPT ![r] = j]
     /\ done' = [done EXCEPT ![r] = {}]
-    /\ UNCHANGED <<attempt, renderedAttempt, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<attempt, renderedAttempt, cached, calls, removals, idemKeys, ledgerLines>>
 
 RunPaidStep(r, k) ==
     /\ rendering[r] # Idle
     /\ k \notin done[r]
     /\ calls' = IF k \in cached THEN calls ELSE [calls EXCEPT ![k] = @ + 1]
     /\ cached' = cached \cup {k}
-    /\ LET j == rendering[r] IN
-        /\ ledgerLines' = IF IdemKey(j, k) \in idemKeys THEN ledgerLines ELSE [ledgerLines EXCEPT ![k] = @ + 1]
-        /\ idemKeys' = idemKeys \cup {IdemKey(j, k)}
+    /\ LET key == IdemKey(rendering[r], k, calls'[k]) IN
+        /\ ledgerLines' = IF key \in idemKeys THEN ledgerLines ELSE [ledgerLines EXCEPT ![k] = @ + 1]
+        /\ idemKeys' = idemKeys \cup {key}
     /\ done' = [done EXCEPT ![r] = @ \cup {k}]
-    /\ UNCHANGED <<state, attempt, renderedAttempt, rendering>>
+    /\ UNCHANGED <<state, attempt, renderedAttempt, rendering, removals>>
+
+Remove(k) ==
+    /\ k \in cached
+    /\ removals[k] < MaxRemovals
+    /\ cached' = cached \ {k}
+    /\ removals' = [removals EXCEPT ![k] = @ + 1]
+    /\ UNCHANGED <<state, attempt, renderedAttempt, rendering, done, calls, idemKeys, ledgerLines>>
 
 Finish(r) ==
     /\ rendering[r] # Idle
@@ -58,41 +68,41 @@ Finish(r) ==
         /\ state' = [state EXCEPT ![j] = "rendered"]
         /\ renderedAttempt' = [renderedAttempt EXCEPT ![j] = attempt[j]]
     /\ rendering' = [rendering EXCEPT ![r] = Idle]
-    /\ UNCHANGED <<attempt, done, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<attempt, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 RenderFails(r) ==
     /\ rendering[r] # Idle
     /\ state' = [state EXCEPT ![rendering[r]] = "failed"]
     /\ rendering' = [rendering EXCEPT ![r] = Idle]
-    /\ UNCHANGED <<attempt, renderedAttempt, done, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<attempt, renderedAttempt, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 Crash(r) ==
     /\ rendering[r] # Idle
     /\ rendering' = [rendering EXCEPT ![r] = Idle]
-    /\ UNCHANGED <<state, attempt, renderedAttempt, done, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<state, attempt, renderedAttempt, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 Recover(j) ==
     /\ state[j] = "rendering"
     /\ RenderersOf(j) = {}
     /\ state' = [state EXCEPT ![j] = "failed"]
-    /\ UNCHANGED <<attempt, renderedAttempt, rendering, done, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<attempt, renderedAttempt, rendering, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 Retry(j) ==
     /\ state[j] = "failed"
     /\ attempt[j] < MaxAttempts
     /\ state' = [state EXCEPT ![j] = "retried"]
     /\ attempt' = [attempt EXCEPT ![j] = @ + 1]
-    /\ UNCHANGED <<renderedAttempt, rendering, done, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<renderedAttempt, rendering, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 VerifyPasses(j) ==
     /\ state[j] = "rendered"
     /\ state' = [state EXCEPT ![j] = "verified"]
-    /\ UNCHANGED <<attempt, renderedAttempt, rendering, done, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<attempt, renderedAttempt, rendering, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 VerifyRejects(j) ==
     /\ state[j] = "rendered"
     /\ state' = [state EXCEPT ![j] = "failed"]
-    /\ UNCHANGED <<attempt, renderedAttempt, rendering, done, cached, calls, idemKeys, ledgerLines>>
+    /\ UNCHANGED <<attempt, renderedAttempt, rendering, done, cached, calls, removals, idemKeys, ledgerLines>>
 
 Settled(j) == state[j] = "verified" \/ (state[j] = "failed" /\ attempt[j] = MaxAttempts)
 
@@ -103,6 +113,7 @@ AllSettled ==
 Next ==
     \/ \E r \in Renderers, j \in Jobs : Claim(r, j)
     \/ \E r \in Renderers, k \in StepKeys : RunPaidStep(r, k)
+    \/ \E k \in StepKeys : Remove(k)
     \/ \E r \in Renderers : Finish(r)
     \/ \E r \in Renderers : RenderFails(r)
     \/ \E r \in Renderers : Crash(r)
@@ -129,16 +140,18 @@ TypeOK ==
     /\ rendering \in [Renderers -> Jobs \cup {Idle}]
     /\ done \in [Renderers -> SUBSET StepKeys]
     /\ cached \subseteq StepKeys
-    /\ calls \in [StepKeys -> 0..MaxRuns]
-    /\ idemKeys \subseteq {<<k>> : k \in StepKeys} \cup (Jobs \X StepKeys)
-    /\ ledgerLines \in [StepKeys -> 0..MaxRuns]
+    /\ calls \in [StepKeys -> Counts]
+    /\ removals \in [StepKeys -> 0..MaxRemovals]
+    /\ idemKeys \subseteq UNION {StepKeys \X Counts, Jobs \X StepKeys \X Counts, {<<n>> : n \in StepKeys \cup Counts}}
+    /\ ledgerLines \in [StepKeys -> Counts]
 
-NoDoubleCharge == \A k \in StepKeys : ledgerLines[k] <= 1
+NoDoubleCharge == \A k \in StepKeys : ledgerLines[k] <= calls[k]
 
-OneCallPerStepKey == \A k \in StepKeys : calls[k] <= 1
+CalledAgainOnlyAfterRemoval == \A k \in StepKeys : calls[k] <= removals[k] + 1
 
 RenderedIsFullyCharged ==
-    \A j \in Jobs : state[j] \in {"rendered", "verified"} => \A k \in StepKeys : ledgerLines[k] = 1
+    \A j \in Jobs : state[j] \in {"rendered", "verified"} =>
+        \A k \in StepKeys : calls[k] >= 1 /\ ledgerLines[k] = calls[k]
 
 VerifiedImpliesRendered == \A j \in Jobs : state[j] = "verified" => renderedAttempt[j] = attempt[j]
 
