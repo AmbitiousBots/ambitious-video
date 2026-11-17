@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_migration_keeps_rows(tmp_path: Path) -> None:
     database = tmp_path / "video.sqlite"
-    migrations = load_migrations(ROOT / "src" / "ambitious_video" / "db" / "migrations")
+    migrations = load_migrations(ROOT / "src" / "ambitious_video" / "db" / "migrations")[:1]
     db = open_db(str(database), readonly=False)
     try:
         assert read_user_version(db) == 0

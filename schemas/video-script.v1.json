@@ -11,6 +11,7 @@
     "output": { "$ref": "#/$defs/output" },
     "brand": { "$ref": "#/$defs/brand" },
     "voice": { "$ref": "#/$defs/voice" },
+    "cache": { "$ref": "#/$defs/cache" },
     "tracks": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/$defs/track" } },
     "cuts": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/cut" } }
   },
@@ -63,6 +64,15 @@
       "properties": {
         "provider": { "enum": ["xai"] },
         "voice": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "cache": {
+      "description": "Where results of paid steps are kept, so the same step is not paid for twice. Without it the cache is $AMBITIOUS_HOME/video/cache.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir"],
+      "properties": {
+        "dir": { "$ref": "#/$defs/relativePath" }
       }
     },
     "track": {

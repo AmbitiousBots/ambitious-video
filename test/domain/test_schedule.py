@@ -27,7 +27,19 @@ def test_retry_does_not_charge_twice() -> None:
     assert retry(state, "job-a")
     assert claim(state, "red", "job-a")
     assert run_paid_step(state, "red", 0)
-    assert state.line_count("job-a", 0) == 1
+    assert state.line_count(0) == 1
+    assert state.call_count(0) == 1
+    assert invariants_hold(state)
+
+
+def test_a_second_job_with_the_same_step_key_is_not_charged() -> None:
+    state = world()
+    assert claim(state, "red", "job-a")
+    assert run_paid_step(state, "red", 0)
+    assert claim(state, "blue", "job-b")
+    assert run_paid_step(state, "blue", 0)
+    assert state.line_count(0) == 1
+    assert state.call_count(0) == 1
     assert invariants_hold(state)
 
 

@@ -25,6 +25,8 @@ class World:
     busy: dict[str, str] = field(default_factory=dict)
     done: dict[str, set[int]] = field(default_factory=dict)
     lines: dict[IdemKey, LedgerLine] = field(default_factory=dict)
+    cached: set[int] = field(default_factory=set)
+    calls: dict[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for job in self.jobs:
@@ -35,8 +37,11 @@ class World:
             self.busy.setdefault(renderer, IDLE)
             self.done.setdefault(renderer, set())
 
-    def line_count(self, job: str, step: int) -> int:
-        return sum(1 for line in self.lines.values() if line.job_id == job and line.step_index == step)
+    def line_count(self, step: int) -> int:
+        return sum(1 for line in self.lines.values() if line.step_index == step)
+
+    def call_count(self, step: int) -> int:
+        return self.calls.get(step, 0)
 
     def holders(self, job: str) -> int:
         return sum(1 for renderer in self.renderers if self.busy[renderer] == job)
@@ -63,14 +68,10 @@ def run_paid_step(world: World, renderer: str, step: int) -> bool:
     job = world.busy[renderer]
     if job == IDLE or step not in world.paid or step in world.done[renderer]:
         return False
-    line = LedgerLine(
-        JobId(job),
-        step,
-        "voiceover",
-        Decimal(1),
-        Usd(Decimal(1)),
-        idem_key(JobId(job), step, step_digest(step)),
-    )
+    if step not in world.cached:
+        world.calls[step] = world.call_count(step) + 1
+        world.cached.add(step)
+    line = LedgerLine(JobId(job), step, "voiceover", Decimal(1), Usd(Decimal(1)), idem_key(step_digest(step)))
     charge(world.lines, line)
     world.done[renderer].add(step)
     return True
@@ -127,11 +128,12 @@ def verify_rejects(world: World, job: str) -> bool:
 
 
 def invariants_hold(world: World) -> bool:
+    for step in world.paid:
+        if world.line_count(step) > 1 or world.call_count(step) > 1:
+            return False
     for job in world.jobs:
         for step in world.paid:
-            if world.line_count(job, step) > 1:
-                return False
-            if world.state[job] in {"rendered", "verified"} and world.line_count(job, step) != 1:
+            if world.state[job] in {"rendered", "verified"} and world.line_count(step) != 1:
                 return False
         if world.state[job] == "verified" and world.rendered_attempt[job] != world.attempt[job]:
             return False

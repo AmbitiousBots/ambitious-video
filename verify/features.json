@@ -10,6 +10,12 @@
     "a voice script without a key fails with E_NO_KEY",
     "jobs and ledger read the database without changing it",
     "the four fictional sample projects validate and plan with no key",
-    "a name scan keeps company names out of src, schemas, templates and examples"
+    "a name scan keeps company names out of src, schemas, templates and examples",
+    "plan prints the same canonical bytes and planSha256 whatever --now and --seed are",
+    "changing one input changes only that step's key and the output's key",
+    "a new job with the same paid inputs uses the step cache and adds no ledger line",
+    "two renders with every paid step cached write the same file",
+    "cache list reads the step cache, and cache prune removes entries only when asked",
+    "the model check rejects a step key that is called or charged twice across jobs"
   ]
 }

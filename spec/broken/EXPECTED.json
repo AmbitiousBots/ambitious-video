@@ -1,11 +1,19 @@
 {
   "AppendWithoutIdemKey": {
     "invariant": "NoDoubleCharge",
-    "because": "A paid step adds its ledger line without looking for its idempotency key, so a retried job is charged for the same step again."
+    "because": "A paid step adds its ledger line without looking for its idempotency key, so a retry or a second job with the same step key adds a second line for one provider call."
   },
   "IdemKeyWithoutStep": {
     "invariant": "RenderedIsFullyCharged",
-    "because": "The idempotency key names the job but not the step, so the second paid step of a job looks already charged and its cost is never recorded."
+    "because": "The idempotency key does not name the step key, so the second paid step of a job looks already charged and its cost is never recorded."
+  },
+  "IdemKeyWithJob": {
+    "invariant": "NoDoubleCharge",
+    "because": "The idempotency key names the job as well as the step key, so a second job with the same inputs adds a second ledger line for a step that was served from the cache."
+  },
+  "CallWithoutCacheCheck": {
+    "invariant": "OneCallPerStepKey",
+    "because": "A paid step calls the provider without looking in the cache for its step key, so a retry or a second job with the same inputs pays the provider again."
   },
   "VerifyWithoutStateCheck": {
     "invariant": "VerifiedImpliesRendered",

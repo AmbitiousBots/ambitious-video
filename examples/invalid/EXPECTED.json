@@ -180,5 +180,9 @@
   },
   "video-out-before-in.yaml": {
     "rule": "video-out-after-in"
+  },
+  "cache-dir-outside-the-folder.yaml": {
+    "keyword": "pattern",
+    "at": "/cache/dir"
   }
 }

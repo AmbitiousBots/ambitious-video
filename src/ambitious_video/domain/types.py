@@ -57,6 +57,7 @@ ErrorCode = Literal[
     "E_TOOL",
     "E_SPEECH",
     "E_VERIFY",
+    "E_CACHE",
 ]
 
 
@@ -200,6 +201,7 @@ class Script:
     voice: Voice | None
     tracks: tuple[Track, ...]
     cuts: tuple[Cut, ...]
+    cache_dir: RelativePath | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,5 +292,5 @@ class Asset:
     kind: AssetKind
 
 
-def idem_key(job_id: JobId, step_index: int, step_sha256: Sha256Hex) -> IdemKey:
-    return IdemKey(f"{job_id}:{step_index}:{step_sha256}")
+def idem_key(step_key: Sha256Hex) -> IdemKey:
+    return IdemKey(step_key)
