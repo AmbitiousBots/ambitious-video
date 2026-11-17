@@ -6,7 +6,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -34,6 +34,7 @@ from ambitious_video.db.store import (
 )
 from ambitious_video.db.tx import begin, commit
 from ambitious_video.domain.clips import kind_of
+from ambitious_video.domain.fallback import Fallback, with_fallbacks
 from ambitious_video.domain.load import RELATIVE, load_script, say
 from ambitious_video.domain.money import Quote, money_text, paid_units, rate_text, total_usd, units_text
 from ambitious_video.domain.need import NeedTool
@@ -190,19 +191,43 @@ def _no_price() -> NoReturn:
     raise failure("E_INTERNAL", "The price table is unreadable.", "Reinstall the video module.")
 
 
-def study(raw: object, root: Path, *, require_files: bool) -> tuple[Script, Timeline]:
+def _declined(_clip: PaidClip) -> bool:
+    return True
+
+
+def studied(
+    raw: object, root: Path, *, require_files: bool, offline: bool
+) -> tuple[Script, Timeline, Mapping[int, Fallback]]:
     script, problems = load_script(raw)
     faults = _faults_of(problems)
     if script is None:
         raise_faults(faults, 0)
         raise failure("E_INPUT_SCHEMA", "The script is not valid.", "Fix the script field in data.problems.")
     raise_faults(_provider_faults(script), 0)
+    placed: Mapping[tuple[str, int], Fallback] = {}
+    if offline:
+        script, placed = with_fallbacks(script, _declined)
     media = media_map(script, root) if require_files else None
     timeline = timeline_for(script, media, require_files=require_files)
     found = (*font_faults(script, root), *timeline.faults) if require_files else timeline.faults
     if found:
         raise_faults(found, seconds_json(timeline.total, timeline.fps))
+    spots = {(span.track, span.index): span.step for span in timeline.spans}
+    taken = {spots[spot]: found for spot, found in placed.items() if spot in spots}
+    return script, timeline, taken
+
+
+def study(raw: object, root: Path, *, require_files: bool) -> tuple[Script, Timeline]:
+    script, timeline, _taken = studied(raw, root, require_files=require_files, offline=False)
     return script, timeline
+
+
+def _fallback_mark(found: Fallback) -> dict[str, JsonValue]:
+    lost = found.instead_of
+    return {
+        "fallback": found.name,
+        "fallbackFor": {"type": kind_of(lost), "provider": lost.provider, "model": lost.model},
+    }
 
 
 def _db_path(db: sqlite3.Connection) -> Path:
@@ -318,13 +343,33 @@ def _entry(store: Path, key: str) -> step_cache.Entry | None:
         raise _damaged(error) from None
 
 
-def _no_key(item: Paid) -> Failure:
-    return failure(
-        "E_NO_KEY",
-        say("This command needs an AI call ", "and no key was set."),
-        say("Set ", item.provider.secret[:64], " in the environment", " for this call."),
-        {"env": item.provider.secret, "provider": item.provider.id},
-    )
+def secrets_needed(owed: Iterable[Paid], env: Mapping[str, str]) -> list[JsonObject]:
+    waiting: dict[str, list[Paid]] = {}
+    for item in owed:
+        if env.get(item.provider.secret, "") == "":
+            waiting.setdefault(item.provider.secret, []).append(item)
+    return [
+        {
+            "env": name,
+            "provider": ", ".join(sorted({item.provider.id for item in waiting[name]})),
+            "steps": sorted(item.span.step for item in waiting[name]),
+            "usd": money_text(sum((item.quote.usd for item in waiting[name]), start=Decimal(0))),
+        }
+        for name in sorted(waiting)
+    ]
+
+
+def _no_key(missing: list[JsonObject]) -> Failure:
+    message = say("This command needs an AI call ", "and no key was set.")
+    errors = [
+        ErrorEntry(
+            "E_NO_KEY",
+            message,
+            say("Set ", str(entry["env"])[:64], " in the environment", ", or run again with --offline."),
+        )
+        for entry in missing[:20]
+    ]
+    return Failure(errors, {"missing": missing})
 
 
 def _elsewhere(db: sqlite3.Connection, store: Path, key: str) -> step_cache.Entry | None:
@@ -347,9 +392,9 @@ def _keyless(db: sqlite3.Connection, store: Path, item: Paid, env: Mapping[str, 
 
 
 def _require_keys(db: sqlite3.Connection, paid: tuple[Paid, ...], store: Path, env: Mapping[str, str]) -> None:
-    for item in paid:
-        if _keyless(db, store, item, env):
-            raise _no_key(item)
+    missing = secrets_needed((item for item in paid if not _stored(db, store, item.key)), env)
+    if missing:
+        raise _no_key(missing)
 
 
 def _run(item: Paid, env: Mapping[str, str]) -> bytes:
@@ -459,7 +504,7 @@ def _pieces(
         cached = item.key in seen
         if not cached:
             if _keyless(db, store, item, env):
-                raise _no_key(item)
+                raise _no_key(secrets_needed((item,), env))
             seen[item.key], cached = _fetch(db, store, item, job_id, stamp, partial(_run, item, env))
         usd = Decimal(0) if cached else item.quote.usd
         billed += usd
@@ -485,9 +530,36 @@ def _pieces(
     return Spoken(tuple(pieces), tuple(steps), billed)
 
 
+def _standins(plan: JsonObject) -> list[JsonObject]:
+    listed = plan["steps"]
+    found: list[JsonObject] = []
+    for step in listed if isinstance(listed, list) else []:
+        if isinstance(step, Mapping) and "fallback" in step:
+            found.append(
+                {
+                    "index": step["index"],
+                    "step": step["type"],
+                    "stepKey": step["stepKey"],
+                    "provider": step["provider"],
+                    "model": step["model"],
+                    "cached": False,
+                    "usd": money_text(Decimal(0)),
+                    "fallback": step["fallback"],
+                    "fallbackFor": step["fallbackFor"],
+                }
+            )
+    return found
+
+
+def _step_index(step: JsonObject) -> int:
+    index = step["index"]
+    return index if isinstance(index, int) else 0
+
+
 def _rendered(
     job_id: str, output: Path, timeline: Timeline, spoken: Spoken, plan: JsonObject, store: Path
 ) -> JsonObject:
+    steps = sorted([*spoken.steps, *_standins(plan)], key=_step_index)
     return {
         "jobId": job_id,
         "output": str(output),
@@ -496,7 +568,7 @@ def _rendered(
         "costUsd": money_text(spoken.billed),
         "planSha256": plan["planSha256"],
         "cacheDir": str(store),
-        "steps": list(spoken.steps),
+        "steps": steps,
     }
 
 
@@ -531,12 +603,14 @@ def render_new(
     when: datetime,
     env: Mapping[str, str],
     cache_flag: Path | None = None,
+    *,
+    offline: bool = False,
 ) -> JsonObject:
-    script, timeline = study(raw, root, require_files=True)
+    script, timeline, _taken = studied(raw, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
     paid = paid_steps(timeline)
     _require_keys(db, paid, store, env)
-    plan = plan_data(raw, root)
+    plan = plan_data(raw, root, offline=offline)
     stamp = format_instant(when)
     output = _checked(root, str(script.output.path))
     body = canonical(raw if isinstance(raw, dict) else {})
@@ -589,6 +663,8 @@ def render_again(
     when: datetime,
     env: Mapping[str, str],
     cache_flag: Path | None = None,
+    *,
+    offline: bool = False,
 ) -> JsonObject:
     row = read_job(db, job_id)
     if row is None:
@@ -597,11 +673,11 @@ def render_again(
     if raw is not None and canonical(raw) != row.script_json and digest_text(canonical(raw)) != row.script_sha256:
         raise failure("E_INPUT_SCHEMA", "The script does not match the job.", "Retry with the same script.")
     root = Path(row.script_dir)
-    script, timeline = study(stored, root, require_files=True)
+    script, timeline, _taken = studied(stored, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
     paid = paid_steps(timeline)
     _require_keys(db, paid, store, env)
-    plan = plan_data(stored, root)
+    plan = plan_data(stored, root, offline=offline)
     stamp = format_instant(when)
     commit(db)
     hold = Hold(str(_db_path(db).parent / "locks" / (job_id + ".lock")))
@@ -787,8 +863,8 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
     )
 
 
-def plan_data(raw: object, root: Path) -> JsonObject:
-    script, timeline = study(raw, root, require_files=False)
+def plan_data(raw: object, root: Path, *, offline: bool = False) -> JsonObject:
+    script, timeline, taken = studied(raw, root, require_files=False, offline=offline)
     hashes = _hashes(script, root)
     steps: list[JsonValue] = []
     keys: list[str] = []
@@ -805,6 +881,8 @@ def plan_data(raw: object, root: Path) -> JsonObject:
         step["provider"] = spec.provider
         step["model"] = spec.model
         step["paid"] = spec.paid
+        if span.step in taken:
+            step.update(_fallback_mark(taken[span.step]))
         steps.append(as_json(step))
     out = script.output
     plan: dict[str, JsonValue] = {
@@ -933,22 +1011,41 @@ def _estimate_line(span: Span, timeline: Timeline, item: Paid | None, cached: bo
     }
 
 
-def estimate_data(raw: object, root: Path, env: Mapping[str, str], cache_flag: Path | None = None) -> JsonObject:
-    script, timeline = study(raw, root, require_files=False)
+def _owed(timeline: Timeline, store: Path) -> tuple[Paid, ...]:
+    return tuple(item for item in paid_steps(timeline) if _entry(store, item.key) is None)
+
+
+def plan_view(
+    raw: object, root: Path, env: Mapping[str, str], cache_flag: Path | None = None, *, offline: bool = False
+) -> JsonObject:
+    plan = dict(plan_data(raw, root, offline=offline))
+    script, timeline, _taken = studied(raw, root, require_files=False, offline=offline)
     store = cache_root(env, cache_flag, script, root)
+    plan["secretsNeeded"] = secrets_needed(_owed(timeline, store), env)
+    return {name: plan[name] for name in sorted(plan)}
+
+
+def estimate_data(
+    raw: object, root: Path, env: Mapping[str, str], cache_flag: Path | None = None, *, offline: bool = False
+) -> JsonObject:
+    script, timeline, taken = studied(raw, root, require_files=False, offline=offline)
+    store = cache_root(env, cache_flag, script, root)
+    owed = _owed(timeline, store)
+    waiting = {item.span.step for item in owed}
     paid = {item.span.step: item for item in paid_steps(timeline)}
     rows: list[Quote] = []
     lines: list[JsonObject] = []
     for span in timeline.spans:
         item = paid.get(span.step)
-        cached = item is not None and _entry(store, item.key) is not None
+        cached = item is not None and span.step not in waiting
         quote, line = _estimate_line(span, timeline, item, cached)
         rows.append(quote)
-        lines.append(line)
+        lines.append({**line, **_fallback_mark(taken[span.step])} if span.step in taken else line)
     return {
         "usd": money_text(total_usd(tuple(rows))),
         "durationSec": seconds_json(timeline.total, timeline.fps),
         "breakdown": lines,
+        "secretsNeeded": secrets_needed(owed, env),
     }
 
 

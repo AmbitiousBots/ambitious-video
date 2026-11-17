@@ -29,7 +29,7 @@ bash spec/check.sh && python3 scripts/check_schemas.py
 
 ## Secrets
 
-Never put an API key in a file, a commit, an issue, a pull request, or a log. A paid step reads its provider's key from the environment (`XAI_API_KEY` for `xai-speech`) for that one call. The key is not stored and is not printed. Tests never call a provider: they use a fake HTTP server on 127.0.0.1 or a stubbed `urlopen`.
+Never put an API key in a file, a commit, an issue, a pull request, or a log. A paid step reads its provider's key from the environment (`XAI_API_KEY` for `xai-speech`) for that one call. The key is not stored and is not printed: `test/test_secrets_offline.py` renders with a made-up key value and then searches the database, the cache, the output and everything printed for it. A new provider or command must keep that test passing. Tests never call a provider: they use a fake HTTP server on 127.0.0.1 or a stubbed `urlopen`.
 
 ## Pull requests
 

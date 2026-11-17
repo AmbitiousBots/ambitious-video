@@ -12,6 +12,7 @@ from ambitious_video.domain.types import Sha256Hex
 LOCAL = "local"
 LOCAL_VERSION = 1
 SEED_SPAN = 2**32
+UNHASHED = frozenset({"planSha256", "secretsNeeded"})
 
 
 def canonical(value: object) -> str:
@@ -65,5 +66,5 @@ def provider_seed(seed: int, key: str) -> int:
 
 
 def plan_sha(plan: Mapping[str, JsonValue]) -> Sha256Hex:
-    body = {key: value for key, value in plan.items() if key != "planSha256"}
+    body = {key: value for key, value in plan.items() if key not in UNHASHED}
     return Sha256Hex(digest_text(canonical(body)))

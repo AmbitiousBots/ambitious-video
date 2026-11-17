@@ -10,9 +10,9 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`,
 |---|---|---|
 | `guide` | none | A short example script to copy from `data.example.script`, and the steps to render it. |
 | `validate` | none | Whether the script is usable, its duration, and any problems. |
-| `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, and `planSha256`. |
-| `estimate` | none | A dry-run price from `pricing.json`. No provider is called. Each paid line names its provider, model, units, price and price source; a step already in the step cache is priced at 0. |
-| `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. |
+| `plan` | none | The ordered steps with a `stepKey` each, an ffmpeg graph, the caption segments, the encoding, the assets the script names with their hashes, `planSha256`, and `secretsNeeded`: the keys an uncached paid step still needs. With `--offline`, the plan in which every paid step takes its free fallback. |
+| `estimate` | none | A dry-run price from `pricing.json`. No provider is called. Each paid line names its provider, model, units, price and price source; a step already in the step cache is priced at 0. `secretsNeeded` lists the keys that are still needed. With `--offline` the price is 0. |
+| `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. Lists each paid step as cached or billed. Stops with `E_NO_KEY` before any call when a key is missing. With `--offline`, calls no provider and marks each replaced step with `fallback`. |
 | `verify` | write | Checks duration, frame count, resolution, audio, encoding, and title and cut frames of a rendered job. |
 | `jobs` | read | The jobs in the database. |
 | `ledger` | read | The cost lines, exactly one per provider call. A line's idempotency key is the step key (`<stepKey>#2`, `#3`, ... when a removed result had to be called for again), so a retry or a new job with the same inputs does not add a line. |
@@ -34,7 +34,7 @@ ambitious-video estimate --in video.yaml      # 0, because nothing is spoken
 ambitious-video render --in video.yaml        # writes out/titles-and-captions.mp4 next to video.yaml
 ```
 
-A `voiceover` clip is a caption only. Use a `speech` clip, described below, only when you want a line spoken and have set the provider key in the environment.
+A `voiceover` clip is a caption only. Use a `speech` clip, described below, only when you want a line spoken and have set the provider key in the environment. `estimate` lists the keys a script still needs, and `--offline` renders it without any.
 
 ## What a render does
 
@@ -48,7 +48,7 @@ A paid step is a clip that names a provider and one of its models. The only paid
 
 The provider, the model and the voice are always written in the script. Nothing picks one for you at render time and no voice is built in. A `voiceover` clip is the free form of the same line: it gives captions their words and timing, nothing is spoken and no key is needed.
 
-Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for `xai-speech`), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged; `data.env` names the variable to set.
+Keys are bring-your-own. Each provider reads its key from one environment variable (`XAI_API_KEY` for `xai-speech`), only when a step has to be called that is not in the step cache yet. The key is used for that call and is never written to the database, the cache, the plan, the ledger, a log or any output. Without it, `render` stops with `E_NO_KEY` before anything is called or charged. [Keys asked on demand](#keys-asked-on-demand) says how to find out which keys a script needs, and [Rendering offline](#rendering-offline) how to render without any.
 
 | Provider id | Step | Models | Key | Unit |
 |---|---|---|---|---|
@@ -65,6 +65,39 @@ Keys are bring-your-own. Each provider reads its key from one environment variab
 ```
 
 A step whose result is already in the step cache has `"cached": true` and `"usd": "0.000000"`, and `usd` at the top is the sum of what a render would still be charged. `--cache <dir>` tells `estimate` which cache to look in, as it does for `render`. `estimate` reads only that folder and not the database, so a result that `render` would copy from another cache folder is still shown at its price: a render can cost less than the estimate, never more.
+
+### Keys asked on demand
+
+`estimate` and `plan` list the keys a render would still need, in `data.secretsNeeded`:
+
+```json
+{ "secretsNeeded": [ { "env": "XAI_API_KEY", "provider": "xai-speech", "steps": [8, 9, 10, 11], "usd": "0.003585" } ] }
+```
+
+There is one entry for each environment variable that is not set and that at least one uncached paid step needs. `env` is the variable to set, `provider` is the provider that reads it (ids separated by a comma and a space when several providers read the same variable), `steps` holds the `index` of each step that waits for it, and `usd` is what those steps would cost. A step whose result is in the step cache needs no key, so the list is empty when every key is set or every paid step is cached. It holds names only, never a key value. Like the prices, it reads only the chosen cache folder.
+
+`render` makes the same check across all paid steps before the first call. When a key is missing it stops with `E_NO_KEY`, one error for each variable, and `data.missing` holds the same entries. No provider has been called, no job has been created and nothing has been charged, also when the key of another provider in the same script is set.
+
+A program that renders for someone else, such as an assistant, should work in this order:
+
+1. Run `estimate`, show the price, and wait for the owner to agree to it. `render` is the only command that spends.
+2. Ask the owner once for each `env` in `secretsNeeded`, through the host's secure secret or environment mechanism. Do not ask for a key that is not listed.
+3. Set the variable only in the environment of the `render` command. Never write a key to a script, a file, a message, a page, a log or a command line.
+4. If the owner declines, or nothing may leave the computer, render with `--offline`.
+
+`guide` prints the same rules in `data.keys`.
+
+### Rendering offline
+
+`--offline` on `plan`, `estimate` and `render` calls no provider and needs no key. Every paid step takes its free fallback instead:
+
+| Paid step | Fallback | What changes |
+|---|---|---|
+| `speech` | `captions` | Nothing is spoken. The line keeps its words and its time, so a captions track still shows it, exactly as a `voiceover` clip would. |
+
+A replaced step is listed as the free step that stands in for it, with `"fallback": "captions"` and `"fallbackFor": { "type": "speech", "provider": "...", "model": "..." }`, in the steps of `plan` and `render` and in the lines of `estimate`. The offline plan has no paid step, so its estimate and its `costUsd` are `0.000000`, `secretsNeeded` is empty, the ledger gets no line and the step cache is not read or written. It is a different plan from the online one, with its own `planSha256`, and it is as repeatable as any free render: the same script and files give the same plan in every process and the same video file on the same machine and toolchain. `--offline` applies to the whole command, also when a key is set or a result is cached. With `{ "jobId": "..." }` it applies to that retry.
+
+`--offline` replaces paid steps only. A `screen_recording` clip still opens the page it names.
 
 ### Adding a provider
 
@@ -84,13 +117,13 @@ The commands find providers only through that registry, so an adapter needs no c
 
 ## Plans, step keys and the step cache
 
-`plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. `render` returns the same `planSha256`.
+`plan` prints canonical JSON: keys are sorted, and there is no time, no absolute path and no environment value in it. The same script and files give the same bytes in every process, whatever `--now` and `--seed` are. `planSha256` is the SHA-256 of that plan, and `scriptSchemaVersion` is the version of the script format it was made from. `render` returns the same `planSha256`. `secretsNeeded` is printed next to the plan and is not part of `planSha256`, because it depends on which keys are set and what the step cache holds; everything else in `data` is hashed.
 
 Every step has a `stepKey`: the SHA-256 of its kind, provider, model, adapter version, parameters, seed and input hashes, written as canonical JSON. A file the step reads goes in as the hash of its bytes. The key of a paid step names only what is sent to the provider (for speech: the model, the words, the voice and the adapter's language and format settings), not the job, the clock or where the line sits in the video. `output.stepKey` is the key of the finished video; `output.encode`, the bytes of the `brand.font` file and the key of every step are among its inputs, so changing one step changes that step's key and the output's key and leaves the other steps' keys alone. For a provider that takes a seed, `provider_seed` derives it from `--seed` and the step key. Speech takes none, so `--seed` does not change a speech key, and no provider that takes a seed ships yet.
 
 The result of a paid step is kept in `<cache dir>/<stepKey>/` (`output.bin` and a `meta.json` with its hash) and listed in the `step_cache` table. Before a paid call, `render` looks there. A hit calls nothing, needs no key, and adds no ledger line; a miss calls the provider once, stores the result and adds one ledger line whose idempotency key is the step key. When the chosen cache folder has no result but another cache folder this database has used does, the verified result is copied in instead: no call, no key and no line. Renders that use one database take turns on a step key, also when they run at the same time with different cache folders, so the second one copies the result of the first. A second job with the same words and voice therefore costs nothing, and two renders with every paid step cached write the same file on the same machine and toolchain. `render` lists each paid step with `cached` and the `usd` this call was charged, and `costUsd` is their sum.
 
-The cache folder is `$AMBITIOUS_HOME/video/cache`. A script can name another with `cache: { dir: <folder below the script> }`, and `--cache <dir>` on `render`, `cache list` and `cache prune` overrides both. Entries are never removed automatically. `cache prune --older-than 90` removes the entries last used more than 90 days ago; an entry that a running render holds is left alone, and `--older-than` takes whole days from 0 to 36500. The ledger holds one line per provider call, and a step key is called again only if its result was removed: by `cache prune`, or by deleting its folder by hand. That next call is paid for and gets its own line, with the idempotency key `<stepKey>#2` (then `#3`, and so on), so the ledger total stays equal to what `render` reported as `costUsd`. An entry whose file no longer matches its recorded hash is refused with `E_CACHE`.
+The cache folder is `$AMBITIOUS_HOME/video/cache`. A script can name another with `cache: { dir: <folder below the script> }`, and `--cache <dir>` on `plan`, `estimate`, `render`, `cache list` and `cache prune` overrides both. Entries are never removed automatically. `cache prune --older-than 90` removes the entries last used more than 90 days ago; an entry that a running render holds is left alone, and `--older-than` takes whole days from 0 to 36500. The ledger holds one line per provider call, and a step key is called again only if its result was removed: by `cache prune`, or by deleting its folder by hand. That next call is paid for and gets its own line, with the idempotency key `<stepKey>#2` (then `#3`, and so on), so the ledger total stays equal to what `render` reported as `costUsd`. An entry whose file no longer matches its recorded hash is refused with `E_CACHE`.
 
 A picture is scaled to cover the output size. A video clip of another size is scaled to fit inside the output size and centered on the brand background color, so every clip fills its scheduled time whatever the size of its source. A logo keeps its transparency: the background shows through it.
 
@@ -115,7 +148,7 @@ A render holds a lock that the operating system releases if the process dies. Th
 
 ## Module error codes
 
-Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB`, `E_MIGRATION`, `E_INTERNAL`) are defined by the module contract. These codes are this module's:
+Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB`, `E_MIGRATION`, `E_INTERNAL`) are defined by the module contract. For `E_NO_KEY`, `data.missing` lists each missing variable as `{ env, provider, steps, usd }`, and the hint names the variable. These codes are this module's:
 
 | Code | Exit | Meaning | Typical hint |
 |---|---|---|---|
