@@ -46,7 +46,7 @@ from ambitious_video.domain.types import (
 )
 from ambitious_video.media.audio import Piece, write_wav
 from ambitious_video.media.film import STORED_AS, TO_RGB, canvas_for, encode, frame_at, matches, prepare
-from ambitious_video.media.probe import duration_of, inspect, stored_as
+from ambitious_video.media.probe import duration_of, frame_count, inspect, stored_as
 from ambitious_video.steps import compile_clip
 from ambitious_video.steps.common import readable_font
 
@@ -407,13 +407,16 @@ def _samples(timeline: Timeline) -> tuple[tuple[str, int], ...]:
     return tuple(chosen)
 
 
-def _grab(video: str, index: int, dest: Path, mode: EncodeMode) -> None:
+def _grab(video: str, index: int, dest: Path, counted: int, mode: EncodeMode) -> None:
     import subprocess
 
+    if shutil.which("ffmpeg") is None:
+        raise NeedTool("ffmpeg")
     picked = "select=eq(n\\," + str(index) + ")"
     result = subprocess.run(
         [
             "ffmpeg",
+            "-nostdin",
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -426,12 +429,41 @@ def _grab(video: str, index: int, dest: Path, mode: EncodeMode) -> None:
             "1",
             str(dest),
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
     )
-    if result.returncode != 0 or not dest.is_file():
+    if result.returncode != 0 and index < counted:
         raise NeedTool("ffmpeg")
+
+
+def _seconds_text(value: float) -> str:
+    return format(value, ".3f").rstrip("0").rstrip(".")
+
+
+def _why(check: Mapping[str, object]) -> str:
+    name = str(check.get("name"))
+    if name == "file":
+        return "The rendered file is missing."
+    if name == "readable":
+        return "The rendered file is not a video."
+    expected, actual = check.get("expected"), check.get("actual")
+    if name == "duration" and isinstance(expected, float) and isinstance(actual, float):
+        return say("The video lasts ", _seconds_text(actual), " s, not ", _seconds_text(expected), " s.")
+    if name == "frames" and actual == -1:
+        return "The video frames could not be counted."
+    if name == "frames":
+        return say("The video has ", str(actual), " frames, not ", str(expected), ".")
+    if name == "resolution":
+        return say("The video is ", str(actual), ", not ", str(expected), ".")
+    if name == "audio":
+        return "The video has no audio track."
+    if name == "encoding":
+        return say("The video is stored as ", str(actual), ", not ", str(expected), ".")
+    if check.get("found") is False:
+        return say("Frame ", str(check.get("frame")), " (", name, ") is missing from the video.")
+    return say("Frame ", str(check.get("frame")), " (", name, ") differs from the script.")
 
 
 def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObject:
@@ -450,11 +482,21 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
     else:
         width, height, duration, audio = inspect(str(output))
         expected = float(row.duration_sec)
-        checks.append({"name": "duration", "ok": abs(duration - expected) <= 0.05})
-        checks.append({"name": "resolution", "ok": width == row.width and height == row.height})
+        counted = frame_count(str(output))
+        size, wanted = say(str(width), "x", str(height)), say(str(row.width), "x", str(row.height))
+        readable = duration >= 0 and width > 0
+        checks.append({"name": "readable", "ok": readable})
+        checks.append(
+            {"name": "duration", "ok": abs(duration - expected) <= 0.05, "expected": expected, "actual": duration}
+        )
+        total = timeline.total
+        checks.append({"name": "frames", "ok": counted == total, "expected": total, "actual": counted})
+        checks.append({"name": "resolution", "ok": size == wanted, "expected": wanted, "actual": size})
         checks.append({"name": "audio", "ok": audio})
         mode = script.output.encode
-        checks.append({"name": "encoding", "ok": stored_as(str(output)) == STORED_AS[mode]})
+        kept = " ".join(stored_as(str(output)) if readable else ("", "")).strip()
+        asked = " ".join(STORED_AS[mode])
+        checks.append({"name": "encoding", "ok": kept == asked, "expected": asked, "actual": kept})
         work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
         try:
             canvas = canvas_for(timeline, Path(row.script_dir))
@@ -462,8 +504,10 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
             for name, index in _samples(timeline):
                 painted = frame_at(timeline, index, canvas)
                 shot = work / (name + ".png")
-                _grab(str(output), index, shot, mode)
-                checks.append({"name": name, "ok": matches(painted, shot, mode)})
+                _grab(str(output), index, shot, counted, mode)
+                found = shot.is_file()
+                same = found and matches(painted, shot, mode)
+                checks.append({"name": name, "ok": same, "frame": index, "found": found})
         finally:
             shutil.rmtree(work, ignore_errors=True)
     passed = all(item.get("ok") is True for item in checks)
@@ -472,8 +516,12 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
     if passed:
         return {"jobId": job_id, "passed": True, "checks": as_json(checks)}
     commit(db)
+    hint = "Read data.checks for the failed check."
+    failed = [item for item in checks if item.get("ok") is not True]
+    if failed[0].get("name") == "readable":
+        failed = failed[:1]
     raise Failure(
-        [ErrorEntry("E_VERIFY", "The rendered video failed a check.", "Read data.checks for the failed check.")],
+        [ErrorEntry("E_VERIFY", _why(item), hint) for item in failed[:20]],
         {"jobId": job_id, "passed": False, "checks": as_json(checks)},
     )
 

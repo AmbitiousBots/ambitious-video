@@ -2,9 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report a security vulnerability in private. Use GitHub private vulnerability reporting for this repository:
-
-https://github.com/AmbitiousBots/ambitious-video/security/advisories/new
+Report a security vulnerability in private. Use GitHub private vulnerability reporting for this repository: open the repository's Security tab and choose "Report a vulnerability".
 
 If that page is not available, contact a maintainer through GitHub and say that the report is sensitive. Do not include the details until the maintainer gives you a private place to send them.
 

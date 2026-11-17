@@ -1,6 +1,6 @@
 # Contributing
 
-ambitious-video is a command-line renderer. A script is data, so the same tool can make a video for any industry. Keep it that way: do not build a business, a brand, or an industry into the program. `test/test_name_scan.py` fails when a company's or a person's name appears in `src/`, `schemas/`, `templates/` or `examples/`; sample content there is fictional and says SAMPLE DATA.
+ambitious-video is a command-line renderer. A script is data, so the same tool can make a video for any industry. Keep it that way: do not build a business, a brand, or an industry into the program. `test/test_name_scan.py` fails when a company's or a person's name appears in `src/`, `schemas/`, `templates/` or `examples/`, in a file at the top of the repository (`README.md`, `NOTICE`, this file and the others), in `.github/`, or in any other Markdown file outside `vendor/`. Sample content is fictional and says SAMPLE DATA. Write documentation for an outside reader: the authors are "the project contributors".
 
 ## Set up
 

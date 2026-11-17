@@ -2,9 +2,9 @@
 
 The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, voiceover, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
 
-The module follows the shared module contract, [MODULE_CONTRACT.md](https://github.com/AmbitiousBots/ambitious-kit/blob/kit-v0.1.1/MODULE_CONTRACT.md) in ambitious-kit at kit-v0.1.1: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`.
+The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
-Version 0.1.0. One binary, `ambitious-video`, reads a script on stdin or from `--in` and prints one JSON envelope. `--help` and `--version` print the usage and the version as envelope data and exit 0. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
+Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`, or from stdin with `--in -`, and prints one JSON envelope. `--help` and `--version` print the usage and the version as envelope data and exit 0. With `--in <file>` stdin is never read, and ffmpeg and ffprobe never see it, so a caller that leaves stdin open (a tool runner, for example) does not make a command hang. Without `--in`, a script piped on stdin is still read: the command waits at most two seconds for the first byte, and once any byte has arrived it reads to the end of stdin, so a slow writer never has its script cut short. A program that generates a script should send it with `--in -`, which waits for the end of stdin however long the first byte takes; on Windows the two-second wait is not available for pipes, so `--in -` is the only way to send a script on stdin there. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
 
 | Command | Access | What it returns |
 |---|---|---|
@@ -13,7 +13,7 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script on stdin or from `-
 | `plan` | none | The ordered steps, an ffmpeg graph, the caption segments, the encoding, and the assets the script names. |
 | `estimate` | none | A dry-run price from `pricing.json`. No provider is called. |
 | `render` | write | Renders the script. With `jobId` alone, retries that failed or abandoned job. |
-| `verify` | write | Checks duration, resolution, audio, encoding, and title and cut frames of a rendered job. |
+| `verify` | write | Checks duration, frame count, resolution, audio, encoding, and title and cut frames of a rendered job. |
 | `jobs` | read | The jobs in the database. |
 | `ledger` | read | The cost lines. A line's idempotency key does not include the attempt, so a retry does not add a second line. |
 | `selfcheck` | write | Runtime, binary checksum, database integrity, and ffmpeg, Pillow, and Playwright, with a line in `data.warnings` for each missing tool. |
@@ -37,6 +37,8 @@ Leave `voice` unset unless you want spoken voiceover and have set the provider k
 ## What a render does
 
 `render` of a script whose `voice` is set needs `XAI_API_KEY` for that call. The key is not stored. Without `voice`, voiceover clips are captions only and no key is needed. Speech is priced at the public text-to-speech rate in `pricing.json` (15 USD per 1 million characters). A voice named `default` uses the provider's default voice. The spoken language is detected.
+
+A picture is scaled to cover the output size. A video clip of another size is scaled to fit inside the output size and centered on the brand background color, so every clip fills its scheduled time whatever the size of its source. A logo keeps its transparency: the background shows through it.
 
 Captions are drawn only by a track with `from: <id of a track with voiceover clips>`. Each voiceover clip is shown during its own time and not before or after. A clip with more than one sentence shows one sentence at a time, each for a share of the clip that matches its length in characters. A script with no such track draws no captions. `plan` lists the segments in `data.captions`.
 
@@ -68,9 +70,9 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `E_OVERLAP` | 1 | Two clips on one track overlap. | Move a clip or shorten it. |
 | `E_MEDIA` | 1 | A file is missing, `in` / `out` falls outside it, or `brand.font` is not a font file next to the script. | Put the file next to the script, or fix the times. |
 | `E_RANGE` | 1 | A cut is not on a clip boundary, or the video is longer than 1800 seconds. | Place the cut where one clip ends and the next begins. |
-| `E_TOOL` | 1 | ffmpeg or Pillow is not available. | Install the missing tool and run the command again. |
+| `E_TOOL` | 1 | ffmpeg, ffprobe, Pillow or Playwright is missing, or ffmpeg failed while rendering. | Install the missing tool and run the command again. |
 | `E_SPEECH` | 1 | The speech service rejected the call. | Check the voice name and the key. |
-| `E_VERIFY` | 1 | A rendered file failed a check. The job moves to `failed`. | Read `data.checks`. |
+| `E_VERIFY` | 1 | A rendered file failed a check. There is one error for each failed check, and its message says what differs: the duration or the frame count against the script's, how the video is stored against `output.encode`, a frame that is missing or that differs, or a file that is not a video. The job moves to `failed`. | Read `data.checks`: each check has `ok`, and `expected` and `actual` where they apply. |
 
 ## Layout
 
@@ -98,4 +100,4 @@ The model check (needs [mise](https://mise.jdx.dev) and `curl`):
 bash spec/check.sh && python3 scripts/check_schemas.py
 ```
 
-Part of [Ambitious](https://ambitiousbots.com). Licensed under the Apache License, Version 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).
+Maintained by the project contributors. Licensed under the Apache License, Version 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).

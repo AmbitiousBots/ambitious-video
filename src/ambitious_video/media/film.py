@@ -17,7 +17,7 @@ from ambitious_video.domain.types import (
     VideoClip,
 )
 from ambitious_video.media.probe import extract_frames
-from ambitious_video.steps.common import Canvas, rgb_of
+from ambitious_video.steps.common import Canvas, fit, rgb_of
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PilImage
@@ -198,6 +198,7 @@ def encode(timeline: Timeline, canvas: Canvas, audio: Path, dest: Path, mode: En
     _image, _draw, _font = pil()
     command = [
         "ffmpeg",
+        "-nostdin",
         "-y",
         "-hide_banner",
         "-loglevel",
@@ -239,7 +240,7 @@ def encode(timeline: Timeline, canvas: Canvas, audio: Path, dest: Path, mode: En
         raise NeedTool("ffmpeg")
     try:
         for index in range(timeline.total):
-            frame = frame_at(timeline, index, canvas)
+            frame = fit(frame_at(timeline, index, canvas), canvas)
             proc.stdin.write(frame.tobytes())
         proc.stdin.close()
     except BrokenPipeError:

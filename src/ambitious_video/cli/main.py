@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import select
+import stat
 import sys
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -24,6 +27,7 @@ from ambitious_video.install.tools import tool_report, tool_warnings
 
 VERSION = "0.1.0"
 SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
+STDIN_WAIT_SECONDS = 2.0
 
 
 _json_loads = json.loads
@@ -52,6 +56,51 @@ def _directory(argv: tuple[str, ...] | list[str]) -> Path:
     if found is None:
         return Path.cwd()
     return Path(found).resolve().parent
+
+
+def _input_source(argv: list[str]) -> tuple[list[str], str]:
+    kept: list[str] = []
+    source = "implicit"
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        value = argv[index + 1] if index + 1 < len(argv) else None
+        index += 1
+        if token == "--in=-" or (token == "--in" and value == "-"):
+            source = "stdin"
+            index += 1 if token == "--in" else 0
+            continue
+        if token.startswith("--in=") or (token == "--in" and value is not None):
+            source = "file"
+        kept.append(token)
+    return kept, source
+
+
+def _waiting_bytes(descriptor: int) -> bytes:
+    if stat.S_ISREG(os.fstat(descriptor).st_mode):
+        return sys.stdin.buffer.read()
+    if not select.select([descriptor], [], [], STDIN_WAIT_SECONDS)[0]:
+        return b""
+    held = bytearray()
+    while chunk := os.read(descriptor, 65536):
+        held += chunk
+    return bytes(held)
+
+
+def _stdin_reader(source: str) -> Callable[[], str]:
+    def read() -> str:
+        if source == "file" or sys.stdin is None or sys.stdin.closed:
+            return ""
+        if source == "stdin":
+            return sys.stdin.buffer.read().decode("utf-8", errors="replace")
+        if sys.stdin.isatty():
+            return ""
+        try:
+            return _waiting_bytes(sys.stdin.fileno()).decode("utf-8", errors="replace")
+        except (OSError, ValueError):
+            return ""
+
+    return read
 
 
 def _rate() -> Decimal:
@@ -193,6 +242,8 @@ def main() -> int:
     runner.json.loads = _loads  # type: ignore[attr-defined] # YAML scripts use the JSON loader
     runner.selfcheck = _patched_selfcheck(runner.selfcheck)  # type: ignore[attr-defined,arg-type] # tools sit beside the kit report
     sys.argv[1:] = guide.builtin_command(sys.argv[1:])
+    sys.argv[1:], source = _input_source(sys.argv[1:])
+    runner._read_stdin = _stdin_reader(source)
     token = SCRIPT_DIR.set(_directory(sys.argv[1:]))
     try:
         return run_cli(
