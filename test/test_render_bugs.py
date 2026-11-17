@@ -18,6 +18,8 @@ FIXED = ["--now", "2026-01-01T00:00:00Z", "--seed", "1"]
 BG = (32, 64, 96)
 OPEN_STDIN_LIMIT_SECONDS = 60
 SLOW_WRITER_PAUSE_SECONDS = 3.0
+ENCODES = ["web", "lossless"]
+WEB_COLOR_SLACK = 4
 
 
 def environment(home: Path) -> dict[str, str]:
@@ -88,11 +90,18 @@ def make_video(path: Path, size: str) -> None:
     ffmpeg(["-f", "lavfi", "-i", f"testsrc=size={size}:rate=10:duration=3", "-pix_fmt", "yuv420p", str(path)])
 
 
-def script_of(output: str, clips: list[str], logo: str | None = None) -> str:
+def shows(found: object, wanted: tuple[int, int, int], encode: str) -> bool:
+    assert isinstance(found, tuple) and len(found) == 3
+    slack = 0 if encode == "lossless" else WEB_COLOR_SLACK
+    return all(abs(int(have) - want) <= slack for have, want in zip(found, wanted, strict=True))
+
+
+def script_of(output: str, clips: list[str], logo: str | None = None, encode: str | None = None) -> str:
     brand = '  colors: { bg: "#204060", fg: "#ffffff", accent: "#ff8800" }'
+    stored = "" if encode is None else f", encode: {encode}"
     lines = [
         "schemaVersion: 1",
-        f"output: {{ path: {output}, width: 320, height: 180, fps: 10 }}",
+        f"output: {{ path: {output}, width: 320, height: 180, fps: 10{stored} }}",
         "brand:",
         brand,
         *([] if logo is None else [f"  logo: {logo}"]),
@@ -122,9 +131,10 @@ def verified(home: Path, work: Path, job_id: object) -> dict[str, object]:
 SMALL_AND_LARGE = [("64x48", (40, 30)), ("480x360", (640, 480))]
 
 
+@pytest.mark.parametrize("encode", ENCODES)
 @pytest.mark.parametrize(("video_size", "image_size"), SMALL_AND_LARGE)
 def test_a_clip_of_another_size_fills_its_scheduled_time(
-    tmp_path: Path, video_size: str, image_size: tuple[int, int]
+    tmp_path: Path, video_size: str, image_size: tuple[int, int], encode: str
 ) -> None:
     Image.new("RGB", image_size, (200, 30, 30)).save(tmp_path / "still.png")
     make_video(tmp_path / "clip.mp4", video_size)
@@ -134,37 +144,39 @@ def test_a_clip_of_another_size_fills_its_scheduled_time(
         "{ type: video, path: clip.mp4, in: 0, out: 3 }",
         '{ type: title_card, duration: 4.0, text: "Two" }',
     ]
-    data = rendered(tmp_path / "home", tmp_path, script_of("out.mp4", clips))
+    data = rendered(tmp_path / "home", tmp_path, script_of("out.mp4", clips, None, encode))
     assert data["durationSec"] == 11
     output = tmp_path / "out.mp4"
     assert frame_count(output) == 110
     assert abs(float(probed(output, "format=duration")) - 11.0) <= 0.05
     assert probed(output, "stream=width,height", ("-select_streams", "v:0")).split() == ["320", "180"]
     still = frame_of(output, 30, tmp_path / "still-frame.png")
-    assert still.getpixel((160, 90)) == (200, 30, 30)
+    assert shows(still.getpixel((160, 90)), (200, 30, 30), encode)
     clip = frame_of(output, 55, tmp_path / "clip-frame.png")
-    assert clip.getpixel((2, 90)) == BG and clip.getpixel((317, 90)) == BG
-    assert clip.getpixel((160, 90)) != BG
-    assert frame_of(output, 90, tmp_path / "last-card.png").getpixel((2, 2)) == BG
+    assert shows(clip.getpixel((2, 90)), BG, encode) and shows(clip.getpixel((317, 90)), BG, encode)
+    assert not shows(clip.getpixel((160, 90)), BG, encode)
+    assert shows(frame_of(output, 90, tmp_path / "last-card.png").getpixel((2, 2)), BG, encode)
     checked = verified(tmp_path / "home", tmp_path, data["jobId"])
     assert checked["exit"] == 0, checked
 
 
-def test_a_small_picture_alone_keeps_the_scheduled_time(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encode", ENCODES)
+def test_a_small_picture_alone_keeps_the_scheduled_time(tmp_path: Path, encode: str) -> None:
     Image.new("RGB", (16, 16), (10, 200, 10)).save(tmp_path / "dot.png")
     clips = ["{ type: image, path: dot.png, duration: 3.0, kenburns: { from: 1.0, to: 1.2 } }"]
-    data = rendered(tmp_path / "home", tmp_path, script_of("picture.mp4", clips))
+    data = rendered(tmp_path / "home", tmp_path, script_of("picture.mp4", clips, None, encode))
     assert data["durationSec"] == 3
     assert frame_count(tmp_path / "picture.mp4") == 30
     assert verified(tmp_path / "home", tmp_path, data["jobId"])["exit"] == 0
 
 
-def test_verify_names_a_short_video_instead_of_a_missing_tool(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encode", ENCODES)
+def test_verify_names_a_short_video_instead_of_a_missing_tool(tmp_path: Path, encode: str) -> None:
     clips = [
         '{ type: title_card, duration: 2.0, text: "One" }',
         '{ type: title_card, duration: 2.0, text: "Two" }',
     ]
-    data = rendered(tmp_path / "home", tmp_path, script_of("cards.mp4", clips))
+    data = rendered(tmp_path / "home", tmp_path, script_of("cards.mp4", clips, None, encode))
     output = tmp_path / "cards.mp4"
     ffmpeg(["-i", str(output), "-t", "2.5", "-c", "copy", str(tmp_path / "short.mp4")])
     os.replace(tmp_path / "short.mp4", output)
@@ -185,13 +197,14 @@ def test_verify_names_a_short_video_instead_of_a_missing_tool(tmp_path: Path) ->
     by_name = {item["name"]: item for item in checks if isinstance(item, dict)}
     assert by_name["duration"]["ok"] is False and by_name["duration"]["expected"] == 4.0
     assert by_name["frames"]["ok"] is False and by_name["frames"]["expected"] == 40
-    assert by_name["title-0"]["ok"] is True
+    assert by_name["title-0"]["ok"] is True and by_name["encoding"]["ok"] is True
     assert by_name["title-1"] == {"name": "title-1", "ok": False, "frame": 30, "found": False}
 
 
-def test_verify_names_a_file_that_is_not_a_video(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encode", ENCODES)
+def test_verify_names_a_file_that_is_not_a_video(tmp_path: Path, encode: str) -> None:
     clips = ['{ type: title_card, duration: 1.0, text: "One" }']
-    data = rendered(tmp_path / "home", tmp_path, script_of("card.mp4", clips))
+    data = rendered(tmp_path / "home", tmp_path, script_of("card.mp4", clips, None, encode))
     (tmp_path / "card.mp4").write_bytes(b"not a video")
     checked = verified(tmp_path / "home", tmp_path, data["jobId"])
     errors = checked["errors"]
@@ -222,15 +235,16 @@ def title_frame_of(canvas: Canvas) -> Image.Image:
     return image
 
 
-def test_a_transparent_logo_renders_without_a_black_box(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encode", ENCODES)
+def test_a_transparent_logo_renders_without_a_black_box(tmp_path: Path, encode: str) -> None:
     transparent_logo(tmp_path / "logo.png")
     clips = ['{ type: title_card, duration: 1.0, text: "One" }']
-    data = rendered(tmp_path / "home", tmp_path, script_of("logo.mp4", clips, "logo.png"))
+    data = rendered(tmp_path / "home", tmp_path, script_of("logo.mp4", clips, "logo.png", encode))
     shot = frame_of(tmp_path / "logo.mp4", 5, tmp_path / "logo-frame.png")
     left, top = 320 // 24, 180 // 24
-    assert shot.getpixel((left, top)) == BG
-    assert shot.getpixel((left + 21, top)) == BG
-    assert shot.getpixel((left + 11, top + 11)) == (255, 0, 0)
+    assert shows(shot.getpixel((left, top)), BG, encode)
+    assert shows(shot.getpixel((left + 21, top)), BG, encode)
+    assert shows(shot.getpixel((left + 11, top + 11)), (255, 0, 0), encode)
     assert verified(tmp_path / "home", tmp_path, data["jobId"])["exit"] == 0
 
 
@@ -248,7 +262,7 @@ def test_no_command_hangs_when_stdin_stays_open(tmp_path: Path) -> None:
     assert isinstance(data, dict)
     (tmp_path / "job.json").write_text(json.dumps({"jobId": data["jobId"]}), encoding="utf-8")
     assert run_with_open_stdin(home, tmp_path, ["verify", "--in", str(tmp_path / "job.json")])["exit"] == 0
-    for name in ["jobs", "ledger", "selfcheck", "commands"]:
+    for name in ["jobs", "ledger", "selfcheck", "commands", "guide", "--help", "--version"]:
         assert run_with_open_stdin(home, tmp_path, [name])["exit"] == 0
 
 

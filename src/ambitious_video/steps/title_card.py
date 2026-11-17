@@ -18,16 +18,16 @@ def frame(clip: TitleCard, _local: int, _count: int, canvas: Canvas) -> PilImage
     image = image_module.new("RGB", (canvas.width, canvas.height), canvas.bg)
     draw = draw_module.Draw(image)
     size = max(18, canvas.height // 10)
-    font = font_for(size)
+    font = font_for(canvas, size)
     limit = canvas.width - canvas.width // 6
     while size > 18:
-        font = font_for(size)
+        font = font_for(canvas, size)
         lines = wrap(draw, clip.text, font, limit)
         if lines and max(measure(draw, line, font)[0] for line in lines) <= limit:
             break
         size -= 4
     lines = wrap(draw, clip.text, font, limit)
-    subtitle_font = font_for(max(14, size // 2))
+    subtitle_font = font_for(canvas, max(14, size // 2))
     subtitle = () if clip.subtitle is None else wrap(draw, clip.subtitle, subtitle_font, limit)
     line_h = measure(draw, "Ag", font)[1] + 8
     sub_h = measure(draw, "Ag", subtitle_font)[1] + 6 if subtitle else 0

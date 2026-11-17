@@ -28,13 +28,14 @@ from ambitious_video.db.store import (
     read_job,
 )
 from ambitious_video.db.tx import begin, commit
-from ambitious_video.domain.load import load_script, say
+from ambitious_video.domain.load import RELATIVE, load_script, say
 from ambitious_video.domain.money import money_text, quotes, total_usd, units_text
 from ambitious_video.domain.need import NeedTool
 from ambitious_video.domain.timeline import Fault, Timeline, asset_paths, graph_of, seconds_json, timeline_for
 from ambitious_video.domain.types import (
     AudioClip,
     ClipTrack,
+    EncodeMode,
     JobId,
     Script,
     ScriptProblem,
@@ -44,9 +45,10 @@ from ambitious_video.domain.types import (
     idem_key,
 )
 from ambitious_video.media.audio import Piece, write_wav
-from ambitious_video.media.film import canvas_for, encode, frame_at, prepare
-from ambitious_video.media.probe import duration_of, frame_count, inspect
+from ambitious_video.media.film import STORED_AS, TO_RGB, canvas_for, encode, frame_at, matches, prepare
+from ambitious_video.media.probe import duration_of, frame_count, inspect, stored_as
 from ambitious_video.steps import compile_clip
+from ambitious_video.steps.common import readable_font
 
 Speaker = Callable[[str, str, str], bytes]
 
@@ -115,6 +117,29 @@ def media_map(script: Script, root: Path) -> dict[str, float | None]:
     return found
 
 
+def font_faults(script: Script, root: Path) -> tuple[Fault, ...]:
+    font = None if script.brand is None else script.brand.font
+    if font is None:
+        return ()
+    at = "/brand/font"
+    if RELATIVE.fullmatch(font) is None:
+        inside = say("brand.font must be a font file ", "in the folder that holds the script.")
+        return (Fault("E_MEDIA", at, inside),)
+    full = _checked(root, font)
+    if not full.is_file():
+        missing = say(
+            "The font file is missing. ",
+            "brand.font must be the path ",
+            "of a font file, such as fonts/name.ttf, ",
+            "not the name of a font.",
+        )
+        return (Fault("E_MEDIA", at, missing),)
+    if not readable_font(str(full)):
+        unread = say("The font file cannot be read as a font. ", "Use a TrueType or OpenType file.")
+        return (Fault("E_MEDIA", at, unread),)
+    return ()
+
+
 def study(raw: object, root: Path, *, require_files: bool) -> tuple[Script, Timeline]:
     script, problems = load_script(raw)
     faults = _faults_of(problems)
@@ -123,8 +148,9 @@ def study(raw: object, root: Path, *, require_files: bool) -> tuple[Script, Time
         raise failure("E_INPUT_SCHEMA", "The script is not valid.", "Fix the script field in data.problems.")
     media = media_map(script, root) if require_files else None
     timeline = timeline_for(script, media, require_files=require_files)
-    if timeline.faults:
-        raise_faults(timeline.faults, seconds_json(timeline.total, timeline.fps))
+    found = (*font_faults(script, root), *timeline.faults) if require_files else timeline.faults
+    if found:
+        raise_faults(found, seconds_json(timeline.total, timeline.fps))
     return script, timeline
 
 
@@ -201,7 +227,7 @@ def _produce(script: Script, timeline: Timeline, root: Path, dest: Path, pieces:
         canvas = canvas_for(timeline, root)
         prepare(timeline, canvas, work, root)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        encode(timeline, canvas, wav, partial)
+        encode(timeline, canvas, wav, partial, script.output.encode)
         os.replace(partial, dest)
         return file_sha(dest)
     finally:
@@ -381,11 +407,12 @@ def _samples(timeline: Timeline) -> tuple[tuple[str, int], ...]:
     return tuple(chosen)
 
 
-def _grab(video: str, index: int, dest: Path, counted: int) -> None:
+def _grab(video: str, index: int, dest: Path, counted: int, mode: EncodeMode) -> None:
     import subprocess
 
     if shutil.which("ffmpeg") is None:
         raise NeedTool("ffmpeg")
+    picked = "select=eq(n\\," + str(index) + ")"
     result = subprocess.run(
         [
             "ffmpeg",
@@ -397,7 +424,7 @@ def _grab(video: str, index: int, dest: Path, counted: int) -> None:
             "-i",
             video,
             "-vf",
-            "select=eq(n\\," + str(index) + ")",
+            picked if mode == "lossless" else picked + "," + TO_RGB,
             "-vframes",
             "1",
             str(dest),
@@ -432,6 +459,8 @@ def _why(check: Mapping[str, object]) -> str:
         return say("The video is ", str(actual), ", not ", str(expected), ".")
     if name == "audio":
         return "The video has no audio track."
+    if name == "encoding":
+        return say("The video is stored as ", str(actual), ", not ", str(expected), ".")
     if check.get("found") is False:
         return say("Frame ", str(check.get("frame")), " (", name, ") is missing from the video.")
     return say("Frame ", str(check.get("frame")), " (", name, ") differs from the script.")
@@ -455,7 +484,8 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
         expected = float(row.duration_sec)
         counted = frame_count(str(output))
         size, wanted = say(str(width), "x", str(height)), say(str(row.width), "x", str(row.height))
-        checks.append({"name": "readable", "ok": duration >= 0 and width > 0})
+        readable = duration >= 0 and width > 0
+        checks.append({"name": "readable", "ok": readable})
         checks.append(
             {"name": "duration", "ok": abs(duration - expected) <= 0.05, "expected": expected, "actual": duration}
         )
@@ -463,18 +493,20 @@ def verify_job(db: sqlite3.Connection, job_id: str, when: datetime) -> JsonObjec
         checks.append({"name": "frames", "ok": counted == total, "expected": total, "actual": counted})
         checks.append({"name": "resolution", "ok": size == wanted, "expected": wanted, "actual": size})
         checks.append({"name": "audio", "ok": audio})
+        mode = script.output.encode
+        kept = " ".join(stored_as(str(output)) if readable else ("", "")).strip()
+        asked = " ".join(STORED_AS[mode])
+        checks.append({"name": "encoding", "ok": kept == asked, "expected": asked, "actual": kept})
         work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
         try:
             canvas = canvas_for(timeline, Path(row.script_dir))
             prepare(timeline, canvas, work, Path(row.script_dir))
             for name, index in _samples(timeline):
-                painted = frame_at(timeline, index, canvas).tobytes()
+                painted = frame_at(timeline, index, canvas)
                 shot = work / (name + ".png")
-                _grab(str(output), index, shot, counted)
-                from ambitious_video.media.film import pixels
-
+                _grab(str(output), index, shot, counted, mode)
                 found = shot.is_file()
-                same = found and pixels(shot) == painted
+                same = found and matches(painted, shot, mode)
                 checks.append({"name": name, "ok": same, "frame": index, "found": found})
         finally:
             shutil.rmtree(work, ignore_errors=True)
@@ -509,6 +541,13 @@ def plan_data(raw: object, root: Path) -> JsonObject:
         "steps": as_json(steps),
         "graph": graph_of(timeline),
         "assets": as_json([{"path": path, "kind": kind} for path, kind in asset_paths(_script)]),
+        "captions": as_json(
+            [
+                {"track": item.track, "atFrame": item.start, "frames": item.frames, "text": item.text}
+                for item in timeline.captions
+            ]
+        ),
+        "encode": _script.output.encode,
     }
 
 
