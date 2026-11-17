@@ -6,6 +6,8 @@ from ambitious_video.domain.types import (
     Clip,
     GeneratedScene,
     ImageClip,
+    LipSync,
+    LocalMouth,
     ScreenRecording,
     Speech,
     TitleCard,
@@ -16,6 +18,7 @@ from ambitious_video.steps import (
     audio,
     generated_scene,
     image,
+    lip_sync,
     screen_recording,
     speech,
     title_card,
@@ -33,6 +36,7 @@ COMPILE = {
     "speech": speech.compile,
     "audio": audio.compile,
     "generated_scene": generated_scene.compile,
+    "lip_sync": lip_sync.compile,
 }
 
 
@@ -53,11 +57,15 @@ def compile_clip(clip: Clip) -> dict[str, object]:
         return audio.compile(clip, None)
     if isinstance(clip, GeneratedScene):
         return generated_scene.compile(clip, None)
+    if isinstance(clip, LipSync):
+        return lip_sync.compile(clip, None)
+    if isinstance(clip, LocalMouth):
+        return lip_sync.compile_mouth(clip, None)
     raise TypeError(kind_of(clip))
 
 
 def visual_frame(
-    clip: TitleCard | ImageClip | VideoClip | ScreenRecording | GeneratedScene,
+    clip: TitleCard | ImageClip | VideoClip | ScreenRecording | GeneratedScene | LipSync | LocalMouth,
     local: int,
     count: int,
     canvas: Canvas,
@@ -70,6 +78,10 @@ def visual_frame(
         return video.frame(clip, local, count, canvas)
     if isinstance(clip, GeneratedScene):
         return generated_scene.frame(clip, local, count, canvas)
+    if isinstance(clip, LipSync):
+        return lip_sync.frame(clip, local, count, canvas)
+    if isinstance(clip, LocalMouth):
+        return lip_sync.mouth_frame(clip, local, count, canvas)
     return screen_recording.frame(clip, local, count, canvas)
 
 

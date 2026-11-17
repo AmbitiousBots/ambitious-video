@@ -32,9 +32,11 @@ class Quote:
         return self.price is not None
 
 
-def paid_units(clip: PaidClip, unit: str) -> Decimal:
+def paid_units(clip: PaidClip, unit: str, frames: int) -> Decimal:
     if isinstance(clip, Speech):
         return Decimal(len(clip.text))
+    if unit == "frame":
+        return Decimal(frames)
     if unit == "second":
         return Decimal(str(clip.duration))
     return Decimal(1)

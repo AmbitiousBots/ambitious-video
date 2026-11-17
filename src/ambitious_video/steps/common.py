@@ -38,6 +38,7 @@ class Canvas:
     folders: dict[str, str]
     font: str | None = None
     fonts: dict[int, PilFont] = field(default_factory=dict)
+    levels: dict[int, tuple[float, ...]] = field(default_factory=dict)
 
 
 def rgb_of(text: str | None, default: tuple[int, int, int]) -> tuple[int, int, int]:

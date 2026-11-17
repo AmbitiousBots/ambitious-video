@@ -69,6 +69,8 @@ TOP_LEVEL = {
 REQUIRED = ("templateVersion", "id", "title", "output", "scenes")
 END_CARD = "end-card"
 GENERATED = "generated_scene"
+LIP_SYNC = "lip_sync"
+DISCLOSED = frozenset({GENERATED, LIP_SYNC})
 MAX_INPUTS = 64
 MAX_SCENES = 64
 MAX_LINES = 16
@@ -280,7 +282,10 @@ def _shown(bag: Bag, value: object, at: str, inputs: Mapping[str, Input]) -> dic
     _slots(bag, raw.get("path"), say(at, "/path"), inputs, frozenset({kind}), whole=True)
     _slots(bag, raw.get("prompt"), say(at, "/prompt"), inputs, WORDS)
     _slots(bag, raw.get("image"), say(at, "/image"), inputs, frozenset({"image"}), whole=True)
+    _slots(bag, raw.get("video"), say(at, "/video"), inputs, frozenset({"video"}), whole=True)
     spare = raw.get("fallback")
+    if kind == LIP_SYNC and isinstance(spare, dict):
+        _slots(bag, spare.get("sprite"), say(at, "/fallback/sprite"), inputs, frozenset({"image"}), whole=True)
     if kind == GENERATED and isinstance(spare, dict):
         under = say(at, "/fallback")
         _slots(bag, spare.get("text"), say(under, "/text"), inputs, WORDS)
@@ -462,7 +467,7 @@ def load_template(raw: object) -> tuple[Template | None, tuple[Located, ...]]:
         disclosure = as_text(bag, document["disclosure"], "/disclosure", high=MAX_LABEL)
     scenes = _scenes(bag, document, inputs)
     shown = [scene.show for scene in scenes] + [scene.fallback for scene in scenes if scene.fallback is not None]
-    if disclosure is None and "disclosure" not in document and any(item.get("type") == GENERATED for item in shown):
+    if disclosure is None and "disclosure" not in document and any(item.get("type") in DISCLOSED for item in shown):
         bag.schema("", "A generated scene needs disclosure text.")
     if bag.items or name is None or title is None or output is None:
         return None, located(IN_TEMPLATE, bag)

@@ -5,6 +5,8 @@ from ambitious_video.domain.types import (
     Clip,
     GeneratedScene,
     ImageClip,
+    LipSync,
+    LocalMouth,
     ScreenRecording,
     Speech,
     TitleCard,
@@ -12,7 +14,7 @@ from ambitious_video.domain.types import (
     Voiceover,
 )
 
-VISUAL = frozenset({"title_card", "screen_recording", "video", "image", "generated_scene"})
+VISUAL = frozenset({"title_card", "screen_recording", "video", "image", "generated_scene", "lip_sync", "mouth"})
 
 
 def kind_of(clip: Clip) -> str:
@@ -32,6 +34,10 @@ def kind_of(clip: Clip) -> str:
         return "audio"
     if isinstance(clip, GeneratedScene):
         return "generated_scene"
+    if isinstance(clip, LipSync):
+        return "lip_sync"
+    if isinstance(clip, LocalMouth):
+        return "mouth"
     raise TypeError(type(clip).__name__)
 
 

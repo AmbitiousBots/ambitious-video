@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ambitious_video.providers.base import Provider, ProviderError, RunResult
 from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech
+from ambitious_video.providers.syncso_lipsync import SyncLipsync
 from ambitious_video.providers.xai_image import XaiImage
 from ambitious_video.providers.xai_speech import XaiSpeech
 from ambitious_video.providers.xai_video import XaiVideo
@@ -31,5 +32,6 @@ register(XaiSpeech())
 register(XaiVideo())
 register(XaiImage())
 register(ElevenLabsSpeech())
+register(SyncLipsync())
 
 __all__ = ["Provider", "ProviderError", "RunResult", "find", "register", "registered", "unregister"]

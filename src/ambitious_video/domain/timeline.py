@@ -14,6 +14,8 @@ from ambitious_video.domain.types import (
     ClipTrack,
     GeneratedScene,
     ImageClip,
+    LipSync,
+    LocalMouth,
     RelativePath,
     Script,
     Speech,
@@ -103,6 +105,15 @@ def _asset_paths(script: Script) -> tuple[tuple[str, str], ...]:
                     found.append((clip.fallback.path, "video"))
                 elif isinstance(clip.fallback, ImageClip):
                     found.append((clip.fallback.path, "image"))
+            elif isinstance(clip, LipSync):
+                if clip.video is not None:
+                    found.append((clip.video, "video"))
+                if clip.image is not None:
+                    found.append((clip.image, "image"))
+                if clip.mouth is not None:
+                    found.append((clip.mouth.sprite, "image"))
+            elif isinstance(clip, LocalMouth):
+                found.append((clip.shape.sprite, "image"))
     return tuple(found)
 
 
@@ -160,7 +171,40 @@ def _length(
         if known is None:
             faults.append(Fault("E_MEDIA", say(at, "/image"), "The image file is missing."))
             return None
+    if isinstance(clip, LipSync | LocalMouth) and require and not _presenter_ok(clip, media, at, faults):
+        return None
     return frames_of(clip.duration, fps, minimum=1)
+
+
+def _presenter_ok(
+    clip: LipSync | LocalMouth, media: Mapping[str, float | None] | None, at: str, faults: list[Fault]
+) -> bool:
+    known = {} if media is None else media
+    before = len(faults)
+    shape = clip.shape if isinstance(clip, LocalMouth) else clip.mouth
+    if shape is not None and known.get(shape.sprite) is None:
+        faults.append(Fault("E_MEDIA", say(at, "/fallback/sprite"), "The image file is missing."))
+    if isinstance(clip, LipSync) and clip.image is not None and known.get(clip.image) is None:
+        faults.append(Fault("E_MEDIA", say(at, "/image"), "The image file is missing."))
+    if isinstance(clip, LipSync) and clip.video is not None:
+        length = known.get(clip.video)
+        if length is None:
+            faults.append(Fault("E_MEDIA", say(at, "/video"), "The video file is missing."))
+        elif length + 1e-6 < clip.duration:
+            faults.append(Fault("E_MEDIA", say(at, "/video"), "The video is shorter than the clip."))
+    return len(faults) == before
+
+
+def heard(spans: tuple[Span, ...], span: Span) -> tuple[Span, ...]:
+    if not isinstance(span.clip, LipSync | LocalMouth):
+        return ()
+    track = span.clip.voice
+    found = [
+        item
+        for item in spans
+        if item.track == track and isinstance(item.clip, Speech | AudioClip) and span.start <= item.start < span.end
+    ]
+    return tuple(sorted(found, key=lambda item: (item.start, item.index)))
 
 
 def _place(script: Script, media: Mapping[str, float | None] | None, *, require: bool) -> Timeline:
@@ -221,7 +265,7 @@ def _place(script: Script, media: Mapping[str, float | None] | None, *, require:
         script.brand,
         tuple(faults),
         _captions(script, spans),
-        script.disclosure if any(isinstance(span.clip, GeneratedScene) for span in spans) else None,
+        script.disclosure if any(isinstance(span.clip, GeneratedScene | LipSync) for span in spans) else None,
     )
 
 

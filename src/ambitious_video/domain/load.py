@@ -9,6 +9,7 @@ from ambitious_video.domain.types import (
     HEX_COLOR_PATTERN,
     MAX_SEED,
     MODEL_ID_PATTERN,
+    MOUTH_COLOR,
     PROVIDER_ID_PATTERN,
     RESOLUTION_PATTERN,
     SCHEMA_VERSION,
@@ -29,6 +30,8 @@ from ambitious_video.domain.types import (
     HexColor,
     ImageClip,
     KenBurns,
+    LipSync,
+    MouthShape,
     Output,
     RelativePath,
     RuleProblem,
@@ -69,6 +72,7 @@ CLIP_TYPES = (
     "speech",
     "audio",
     "generated_scene",
+    "lip_sync",
 )
 FALLBACK_KEYS = {
     "title_card": {"type", "text", "subtitle"},
@@ -89,6 +93,9 @@ SCENE_KEYS = {
     "kenburns",
     "fallback",
 }
+LIP_KEYS = {"type", "provider", "model", "duration", "video", "image", "voice", "fallback"}
+MOUTH_KEYS = {"type", "sprite", "x", "y", "width", "height", "color"}
+MOUTH_NEEDS = ("sprite", "x", "y", "width", "height")
 SPOKEN = frozenset({"voiceover", "speech"})
 MAX_TEXT = 2000
 MAX_PATH = 1024
@@ -388,6 +395,48 @@ def _generated(bag: Bag, raw: Mapping[str, object], at: str) -> GeneratedScene |
     )
 
 
+def _mouth(bag: Bag, value: object, at: str) -> MouthShape | None:
+    raw = as_object(bag, value, at)
+    if raw is None:
+        return None
+    kind = raw.get("type")
+    if kind != "none" and kind != "mouth":
+        bag.schema(say(at, "/type"), "Use none or mouth.")
+        return None
+    before = len(bag.items)
+    only_keys(bag, raw, MOUTH_KEYS if kind == "mouth" else {"type"}, at)
+    if kind == "none" or not need(bag, raw, MOUTH_NEEDS, at):
+        return None
+    sprite = _path(bag, raw["sprite"], say(at, "/sprite"))
+    middle = [as_number(bag, raw[name], say(at, "/", name), low=0, high=1) for name in ("x", "y")]
+    size = [
+        as_number(bag, raw[name], say(at, "/", name), low=0, high=1, exclusive_low=True)
+        for name in ("width", "height")
+    ]
+    color: str | None = MOUTH_COLOR
+    if "color" in raw:
+        color = as_text(bag, raw["color"], say(at, "/color"), pattern=COLOR, low=7, high=7)
+    if sprite is None or color is None or len(bag.items) != before:
+        return None
+    return MouthShape(sprite, middle[0] or 0.0, middle[1] or 0.0, size[0] or 0.0, size[1] or 0.0, HexColor(color))
+
+
+def _lip_sync(bag: Bag, raw: Mapping[str, object], at: str) -> LipSync | None:
+    before = len(bag.items)
+    provider = as_text(bag, raw["provider"], say(at, "/provider"), pattern=PROVIDER, high=32)
+    model = as_text(bag, raw["model"], say(at, "/model"), pattern=MODEL, high=64)
+    duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
+    voice = as_text(bag, raw["voice"], say(at, "/voice"), pattern=TRACK, high=32)
+    if ("video" in raw) == ("image" in raw):
+        bag.schema(at, "Give one of video or image.")
+    video = _path(bag, raw["video"], say(at, "/video")) if "video" in raw else None
+    image = _path(bag, raw["image"], say(at, "/image")) if "image" in raw else None
+    mouth = _mouth(bag, raw["fallback"], say(at, "/fallback")) if "fallback" in raw else None
+    if provider is None or model is None or duration is None or voice is None or len(bag.items) != before:
+        return None
+    return LipSync(duration, provider, model, video, image, TrackId(voice), mouth)
+
+
 def as_clip(bag: Bag, value: object, at: str) -> Clip | None:
     raw = as_object(bag, value, at)
     if raw is None:
@@ -411,6 +460,7 @@ def as_clip(bag: Bag, value: object, at: str) -> Clip | None:
         "speech": {"type", "at", "text", "duration", "provider", "model", "voice"},
         "audio": {"type", "path", "at", "gain_db", "duck_under"},
         "generated_scene": SCENE_KEYS,
+        "lip_sync": LIP_KEYS,
     }[kind]
     required = {
         "title_card": ("duration", "text"),
@@ -421,12 +471,15 @@ def as_clip(bag: Bag, value: object, at: str) -> Clip | None:
         "speech": ("at", "text", "provider", "model", "voice"),
         "audio": ("path", "at"),
         "generated_scene": ("provider", "model", "prompt", "duration", "fallback"),
+        "lip_sync": ("provider", "model", "duration", "voice"),
     }[kind]
     only_keys(bag, raw, allowed, at)
     if not need(bag, raw, required, at):
         return None
     if kind == "generated_scene":
         return _generated(bag, raw, at)
+    if kind == "lip_sync":
+        return _lip_sync(bag, raw, at)
     if kind == "title_card":
         duration = as_number(bag, raw["duration"], say(at, "/duration"), low=0, exclusive_low=True)
         text = as_text(bag, raw["text"], say(at, "/text"))
@@ -549,7 +602,7 @@ def _cut(bag: Bag, value: object, at: str) -> Cut | None:
 
 def _rules(bag: Bag, script: Script) -> None:
     every = [clip for track in script.tracks if isinstance(track, ClipTrack) for clip in track.clips]
-    if script.disclosure is None and any(isinstance(clip, GeneratedScene) for clip in every):
+    if script.disclosure is None and any(isinstance(clip, GeneratedScene | LipSync) for clip in every):
         bag.rule(
             "generated-scenes-need-disclosure",
             "",
@@ -577,6 +630,15 @@ def _rules(bag: Bag, script: Script) -> None:
                             "duck-under-another-track",
                             say("/tracks/", str(index), "/clips/", str(clip_index)),
                             "duck_under must name another track.",
+                        )
+                if isinstance(clip, LipSync):
+                    heard = by_id.get(clip.voice)
+                    sounds = heard.clips if isinstance(heard, ClipTrack) and heard.id != track.id else ()
+                    if not any(isinstance(sound, Speech | AudioClip) for sound in sounds):
+                        bag.rule(
+                            "lip-sync-voice-is-a-sound-track",
+                            say("/tracks/", str(index), "/clips/", str(clip_index), "/voice"),
+                            "voice must name a track with sound.",
                         )
                 if isinstance(clip, VideoClip) and clip.end is not None and clip.end <= (clip.start or 0):
                     bag.rule(

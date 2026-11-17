@@ -4,9 +4,23 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
 from ambitious_video.domain.clips import kind_of
-from ambitious_video.domain.types import Clip, ClipTrack, PaidClip, Script, Speech, Track, Voiceover
+from ambitious_video.domain.types import (
+    Clip,
+    ClipTrack,
+    ImageClip,
+    LipSync,
+    LocalMouth,
+    PaidClip,
+    Script,
+    Speech,
+    Track,
+    VideoClip,
+    Voiceover,
+)
 
 CAPTIONS = "captions"
+NONE = "none"
+MOUTH = "mouth"
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +33,14 @@ class Fallback:
 def fallback_of(clip: PaidClip) -> Fallback:
     if isinstance(clip, Speech):
         return Fallback(CAPTIONS, Voiceover(clip.at, clip.text, clip.duration), clip)
+    if isinstance(clip, LipSync):
+        if clip.mouth is not None:
+            return Fallback(MOUTH, LocalMouth(clip.duration, clip.voice, clip.mouth), clip)
+        if clip.video is not None:
+            return Fallback(NONE, VideoClip(clip.video, 0.0, clip.duration), clip)
+        if clip.image is not None:
+            return Fallback(NONE, ImageClip(clip.image, clip.duration, None), clip)
+        raise TypeError(kind_of(clip))
     return Fallback(kind_of(clip.fallback), clip.fallback, clip)
 
 

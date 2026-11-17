@@ -7,7 +7,7 @@ import shutil
 import sqlite3
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import partial
@@ -49,7 +49,16 @@ from ambitious_video.domain.plan import (
     sorted_json,
     step_key,
 )
-from ambitious_video.domain.timeline import Fault, Span, Timeline, asset_paths, graph_of, seconds_json, timeline_for
+from ambitious_video.domain.timeline import (
+    Fault,
+    Span,
+    Timeline,
+    asset_paths,
+    graph_of,
+    heard,
+    seconds_json,
+    timeline_for,
+)
 from ambitious_video.domain.types import (
     SCHEMA_VERSION,
     AudioClip,
@@ -59,6 +68,8 @@ from ambitious_video.domain.types import (
     EncodeMode,
     GeneratedScene,
     ImageClip,
+    LipSync,
+    LocalMouth,
     PaidClip,
     Script,
     ScriptProblem,
@@ -73,6 +84,7 @@ from ambitious_video.media.film import STORED_AS, TO_RGB, Made, canvas_for, enco
 from ambitious_video.media.probe import duration_of, frame_count, inspect, stored_as
 from ambitious_video.providers.base import (
     Deferred,
+    LipSyncer,
     Provider,
     ProviderError,
     RequestLost,
@@ -84,7 +96,9 @@ from ambitious_video.steps import compile_clip
 from ambitious_video.steps.common import readable_font, readable_image
 
 FONT_INPUT = "brand.font"
-PAID_KINDS: dict[type, str] = {Speech: "speech", GeneratedScene: "scene"}
+PAID_KINDS: dict[type, str] = {Speech: "speech", GeneratedScene: "scene", LipSync: "lipsync"}
+VOICE = "audio"
+VOICE_FILE = "voice.wav"
 MANIFEST_SUFFIX = ".manifest.json"
 MANIFEST_VERSION = 1
 
@@ -187,6 +201,12 @@ def _scene_faults(clip: GeneratedScene, found: Provider, at: str) -> list[Fault]
     return rows
 
 
+def _lip_faults(clip: LipSync, found: Provider, at: str) -> list[Fault]:
+    if not isinstance(found, LipSyncer):
+        return [Fault("E_INPUT_SCHEMA", say(at, "/provider"), "That provider does not do this step.")]
+    return [Fault("E_INPUT_SCHEMA", say(at, "/", name), message) for name, message in found.lip_faults(clip)]
+
+
 def _provider_faults(script: Script) -> tuple[Fault, ...]:
     rows: list[Fault] = []
     for track_index, track in enumerate(script.tracks):
@@ -205,6 +225,8 @@ def _provider_faults(script: Script) -> tuple[Fault, ...]:
                 rows.append(Fault("E_INPUT_SCHEMA", say(at, "/model"), "The provider has no such model."))
             elif isinstance(clip, GeneratedScene):
                 rows.extend(_scene_faults(clip, found, at))
+            elif isinstance(clip, LipSync):
+                rows.extend(_lip_faults(clip, found, at))
     return tuple(rows)
 
 
@@ -223,12 +245,12 @@ def _declined(_clip: PaidClip) -> bool:
     return True
 
 
-def _is_scene(clip: PaidClip) -> bool:
-    return isinstance(clip, GeneratedScene)
+def _is_shown(clip: PaidClip) -> bool:
+    return isinstance(clip, GeneratedScene | LipSync)
 
 
 def _fallback_faults(script: Script, media: Mapping[str, float | None], known: tuple[Fault, ...]) -> tuple[Fault, ...]:
-    spare, placed = with_fallbacks(script, _is_scene)
+    spare, placed = with_fallbacks(script, _is_shown)
     if not placed:
         return ()
     faults = timeline_for(spare, media, require_files=True).faults
@@ -291,10 +313,32 @@ def _hashes(script: Script, root: Path) -> dict[str, str | None]:
     return found
 
 
-def step_spec(clip: Clip, hashes: Mapping[str, str | None]) -> StepSpec:
+def _presenter(clip: LipSync) -> tuple[str, str]:
+    if clip.video is not None:
+        return "video", clip.video
+    return "image", str(clip.image)
+
+
+def sound_recipe(timeline: Timeline, span: Span, hashes: Mapping[str, str | None]) -> str | None:
+    if not isinstance(span.clip, LipSync | LocalMouth):
+        return None
+    sounds: list[JsonValue] = []
+    for sound in heard(timeline.spans, span):
+        clip = sound.clip
+        if isinstance(clip, AudioClip):
+            sounds.append({"atFrame": sound.start - span.start, "gainDb": clip.gain_db, "from": hashes.get(clip.path)})
+        else:
+            sounds.append({"atFrame": sound.start - span.start, "from": step_key(step_spec(clip, hashes))})
+    return digest_text(canonical({"fps": timeline.fps, "frames": span.frames, "sounds": sounds}))
+
+
+def step_spec(clip: Clip, hashes: Mapping[str, str | None], sounds: str | None = None) -> StepSpec:
     if isinstance(clip, PaidClip):
         found = _provider_of(clip)
         params = sorted_json(found.params(clip))
+        if isinstance(clip, LipSync):
+            seen = (hashes.get(_presenter(clip)[1]), sounds)
+            return StepSpec(found.kind, found.id, clip.model, found.adapter_version, params, None, seen)
         if isinstance(clip, GeneratedScene):
             given: tuple[str | None, ...] = () if clip.image is None else (hashes.get(clip.image),)
             return StepSpec(found.kind, found.id, clip.model, found.adapter_version, params, clip.seed, given)
@@ -302,6 +346,8 @@ def step_spec(clip: Clip, hashes: Mapping[str, str | None]) -> StepSpec:
     inputs: tuple[str | None, ...] = ()
     if isinstance(clip, VideoClip | ImageClip | AudioClip):
         inputs = (hashes.get(clip.path),)
+    if isinstance(clip, LocalMouth):
+        inputs = (hashes.get(clip.shape.sprite), sounds)
     return StepSpec(kind_of(clip), LOCAL, None, LOCAL_VERSION, as_json(compile_clip(clip)), None, inputs)
 
 
@@ -333,7 +379,7 @@ def _output_spec(script: Script, timeline: Timeline, hashes: Mapping[str, str | 
             for span in timeline.spans
         ],
     }
-    made = [span for span in timeline.spans if isinstance(span.clip, GeneratedScene)]
+    made = [span for span in timeline.spans if isinstance(span.clip, GeneratedScene | LipSync)]
     if made and isinstance(params, dict):
         params["aiTag"] = timeline.disclosure
         params["generated"] = [{"index": span.step, "kenburns": _zoom_json(span.clip)} for span in made]
@@ -367,15 +413,18 @@ class Paid:
     inputs: Mapping[str, Path]
 
 
-def _paid(span: Span, clip: PaidClip, hashes: Mapping[str, str | None], root: Path) -> Paid:
+def _paid(timeline: Timeline, span: Span, clip: PaidClip, hashes: Mapping[str, str | None], root: Path) -> Paid:
     found = _provider_of(clip)
-    spec = step_spec(clip, hashes)
+    spec = step_spec(clip, hashes, sound_recipe(timeline, span, hashes))
     inputs: dict[str, Path] = {}
     if isinstance(clip, GeneratedScene) and clip.image is not None:
         inputs["image"] = _checked(root, clip.image)
+    if isinstance(clip, LipSync):
+        name, path = _presenter(clip)
+        inputs[name] = _checked(root, path)
     try:
         price = found.price(clip.model)
-        units = paid_units(clip, price.unit)
+        units = paid_units(clip, price.unit, span.frames)
         usd = found.quote(spec.params if isinstance(spec.params, Mapping) else {}, units)
     except (PriceMissing, PriceTableBroken):
         _no_price()
@@ -383,12 +432,20 @@ def _paid(span: Span, clip: PaidClip, hashes: Mapping[str, str | None], root: Pa
 
 
 def paid_steps(timeline: Timeline, root: Path) -> tuple[Paid, ...]:
-    hashes: dict[str, str | None] = {}
+    sent: list[str] = []
     for span in timeline.spans:
         if isinstance(span.clip, GeneratedScene) and span.clip.image is not None:
-            full = _checked(root, span.clip.image)
-            hashes[span.clip.image] = file_sha(full) if full.is_file() else None
-    return tuple(_paid(span, span.clip, hashes, root) for span in timeline.spans if isinstance(span.clip, PaidClip))
+            sent.append(span.clip.image)
+        if isinstance(span.clip, LipSync):
+            sent.append(_presenter(span.clip)[1])
+            sent.extend(item.clip.path for item in heard(timeline.spans, span) if isinstance(item.clip, AudioClip))
+    hashes: dict[str, str | None] = {}
+    for path in dict.fromkeys(sent):
+        full = _checked(root, path)
+        hashes[path] = file_sha(full) if full.is_file() else None
+    return tuple(
+        _paid(timeline, span, span.clip, hashes, root) for span in timeline.spans if isinstance(span.clip, PaidClip)
+    )
 
 
 def _damaged(error: step_cache.CacheDamaged) -> Failure:
@@ -487,6 +544,8 @@ def _lost(item: Paid) -> Failure:
 
 
 def _usable(item: Paid, path: Path) -> bool:
+    if isinstance(item.clip, LipSync):
+        return duration_of(str(path)) is not None
     if not isinstance(item.provider, SceneMaker):
         return True
     if item.provider.output != "image":
@@ -546,7 +605,7 @@ def _send_ahead(
 ) -> None:
     for key, item in {item.key: item for item in paid}.items():
         maker = item.provider
-        if not isinstance(maker, Deferred) or _stored(db, store, key):
+        if not isinstance(maker, Deferred) or isinstance(item.clip, LipSync) or _stored(db, store, key):
             continue
         if _keyless(db, store, item, env):
             raise _no_key(secrets_needed((item,), env))
@@ -570,7 +629,13 @@ def _send_ahead(
             across.close()
 
 
-def _run(db: sqlite3.Connection, item: Paid, env: Mapping[str, str], job_id: str, stamp: str) -> bytes:
+def _run(
+    db: sqlite3.Connection, item: Paid, env: Mapping[str, str], job_id: str, stamp: str, resend: bool = False
+) -> bytes:
+    if resend:
+        begin(db)
+        forget_request(db, item.key)
+        commit(db)
     if isinstance(item.provider, Deferred):
         return _later(db, item, item.provider, env, job_id, stamp)
     work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
@@ -658,6 +723,40 @@ def _fetch(
         across.close()
 
 
+def _voiced(timeline: Timeline, item: Paid, root: Path, spoken: Mapping[int, Path], work: Path) -> Paid:
+    pieces: list[Piece] = []
+    for sound in heard(timeline.spans, item.span):
+        clip = sound.clip
+        start = sound.start - item.span.start
+        if isinstance(clip, AudioClip):
+            pieces.append(Piece(root / str(clip.path), start, clip.gain_db or 0.0, ()))
+        elif sound.step in spoken:
+            pieces.append(Piece(spoken[sound.step], start, 0.0, ()))
+    write_wav(work / VOICE_FILE, item.span.frames, timeline.fps, tuple(pieces))
+    return replace(item, inputs={**item.inputs, VOICE: work / VOICE_FILE})
+
+
+def _synced(
+    db: sqlite3.Connection,
+    store: Path,
+    timeline: Timeline,
+    root: Path,
+    item: Paid,
+    env: Mapping[str, str],
+    job_id: str,
+    stamp: str,
+    spoken: Mapping[int, Path],
+    resend: bool,
+) -> tuple[Path, bool]:
+    work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
+    try:
+        voiced = item if _stored(db, store, item.key) else _voiced(timeline, item, root, spoken, work)
+        call = partial(_run, db, voiced, env, job_id, stamp, resend)
+        return _fetch(db, store, voiced, job_id, stamp, call)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 @dataclass(frozen=True, slots=True)
 class Spoken:
     pieces: tuple[Piece, ...]
@@ -684,13 +783,19 @@ def _pieces(
     billed = Decimal(0)
     seen: dict[str, Path] = {}
     media: dict[int, Made] = {}
-    for item in paid:
+    voices: dict[int, Path] = {}
+    for item in sorted(paid, key=lambda item: isinstance(item.clip, LipSync)):
         cached = item.key in seen
         if not cached:
             if _keyless(db, store, item, env):
                 raise _no_key(secrets_needed((item,), env))
-            call = partial(_run, db, item, env, job_id, stamp)
-            seen[item.key], cached = _fetch(db, store, item, job_id, stamp, call)
+            if isinstance(item.clip, LipSync):
+                seen[item.key], cached = _synced(
+                    db, store, timeline, root, item, env, job_id, stamp, voices, resend
+                )
+            else:
+                call = partial(_run, db, item, env, job_id, stamp)
+                seen[item.key], cached = _fetch(db, store, item, job_id, stamp, call)
         usd = Decimal(0) if cached else item.quote.usd
         billed += usd
         steps.append(
@@ -705,8 +810,11 @@ def _pieces(
             }
         )
         if isinstance(item.clip, Speech):
+            voices[item.span.step] = seen[item.key]
             pieces.append(Piece(seen[item.key], item.span.start, 0.0, ()))
             ranges.append((item.span.start, item.span.end))
+        elif isinstance(item.clip, LipSync):
+            media[item.span.step] = Made(seen[item.key], False)
         elif isinstance(item.provider, SceneMaker):
             media[item.span.step] = Made(seen[item.key], item.provider.output == "image")
     for span in timeline.spans:
@@ -714,7 +822,7 @@ def _pieces(
             ducks = tuple(ranges) if span.clip.duck_under is not None else ()
             gain = 0.0 if span.clip.gain_db is None else span.clip.gain_db
             pieces.append(Piece(root / str(span.clip.path), span.start, gain, ducks))
-    return Spoken(tuple(pieces), tuple(steps), billed, media)
+    return Spoken(tuple(pieces), tuple(sorted(steps, key=_step_index)), billed, media)
 
 
 def _standins(plan: JsonObject) -> list[JsonObject]:
@@ -970,7 +1078,7 @@ def render_again(
 
 
 def _made_at(timeline: Timeline, index: int) -> bool:
-    made = [span for span in timeline.spans if isinstance(span.clip, GeneratedScene)]
+    made = [span for span in timeline.spans if isinstance(span.clip, GeneratedScene | LipSync)]
     if any(span.start <= index < span.end for span in made):
         return True
     edges = {edge for span in made for edge in (span.start, span.end)}
@@ -1121,10 +1229,12 @@ def plan_data(raw: object, root: Path, *, offline: bool = False) -> JsonObject:
     steps: list[JsonValue] = []
     keys: list[str] = []
     for span in timeline.spans:
-        spec = step_spec(span.clip, hashes)
+        spec = step_spec(span.clip, hashes, sound_recipe(timeline, span, hashes))
         key = step_key(spec)
         keys.append(key)
         step = compile_clip(span.clip)
+        if isinstance(span.clip, LipSync | LocalMouth):
+            step["hears"] = [sound.step for sound in heard(timeline.spans, span)]
         step["index"] = span.step
         step["atFrame"] = span.start
         step["frames"] = span.frames

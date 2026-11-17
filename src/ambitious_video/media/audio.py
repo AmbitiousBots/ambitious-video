@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import array
+import math
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,8 @@ from ambitious_video.media.probe import decode_pcm
 
 RATE = 48000
 DUCK = 10 ** (-12 / 20)
+LEVEL_STEPS = 8
+QUIET = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +22,7 @@ class Piece:
     ducks: tuple[tuple[int, int], ...]
 
 
-def write_wav(path: Path, frames: int, fps: int, pieces: tuple[Piece, ...]) -> None:
+def mixed(frames: int, fps: int, pieces: tuple[Piece, ...]) -> array.array[int]:
     count = frames * RATE // fps
     samples = array.array("h", [0] * count)
     for piece in pieces:
@@ -37,12 +40,29 @@ def write_wav(path: Path, frames: int, fps: int, pieces: tuple[Piece, ...]) -> N
             for begin, end in duck_samples:
                 if begin <= at < end:
                     level *= DUCK
-            mixed = int(samples[at] + sample * level)
-            if mixed > 32767:
-                mixed = 32767
-            if mixed < -32768:
-                mixed = -32768
-            samples[at] = mixed
+            summed = int(samples[at] + sample * level)
+            if summed > 32767:
+                summed = 32767
+            if summed < -32768:
+                summed = -32768
+            samples[at] = summed
+    return samples
+
+
+def levels(samples: array.array[int], frames: int, fps: int) -> tuple[float, ...]:
+    loud: list[int] = []
+    for index in range(frames):
+        window = samples[index * RATE // fps : (index + 1) * RATE // fps]
+        total = sum(sample * sample for sample in window)
+        loud.append(math.isqrt(total // len(window)) if window else 0)
+    peak = max(loud, default=0)
+    if peak < QUIET:
+        return tuple(0.0 for _ in loud)
+    return tuple(round(value * LEVEL_STEPS / peak) / LEVEL_STEPS for value in loud)
+
+
+def write_wav(path: Path, frames: int, fps: int, pieces: tuple[Piece, ...]) -> None:
+    samples = mixed(frames, fps, pieces)
     with wave.open(str(path), "w") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
