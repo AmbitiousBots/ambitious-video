@@ -4,7 +4,7 @@ ambitious-video is a command-line renderer. A script is data, so the same tool c
 
 ## Set up
 
-Install [mise](https://mise.jdx.dev) 2026.11.8, then from this repository:
+Install [mise](https://mise.jdx.dev) 2026.11.12, then from this repository:
 
 ```sh
 mise trust && mise install
