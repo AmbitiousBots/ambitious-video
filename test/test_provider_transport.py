@@ -101,7 +101,7 @@ def test_authenticated_transport(
                 provider.run(provider.params(example(provider)), {"video": media, "audio": media}, KEY, out)
 
     assert authenticated == [True]
-    assert not reached.is_set(), "authenticated request attempted a connection to the redirect host"
+    assert not reached.is_set(), "Route authenticated requests through providers/http.py to reject redirects"
     error = caught.value
     assert (error.provider, error.status) == (provider.id, status)
     assert error.__cause__ is None and error.__context__ is None

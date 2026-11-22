@@ -15,12 +15,10 @@ ban-relative-imports = "parents"
 "datetime.date.today".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
 "time.time".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
 "time.time_ns".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
-"time.monotonic".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
 "random".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
 "secrets".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
 "uuid.uuid4".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
 "os.urandom".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
-"time.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
 "threading.Timer".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
 "sched".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
 "asyncio.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
@@ -32,8 +30,13 @@ ban-relative-imports = "parents"
 "typing.cast".msg = "cast overrules the type checker. Parse the value at the boundary or narrow it with isinstance."
 "typing.Any".msg = "Any switches the type checker off. Use object and parse it at the boundary, or name the real type."
 
+[lint.flake8-tidy-imports.extend-banned-api]
+"time.monotonic".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"time.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
+
 [lint.per-file-ignores]
-"**/cli/**" = ["T20", "TID251"]
+"**/cli/**" = ["T20"]
+"**/cli/{engine,main}.py" = ["TID251"]
 "src/ambitious_video/providers/http.py" = ["TID251"]
 "**/install/**" = ["TID251"]
 "**/db/**" = ["TID251"]

@@ -5,6 +5,8 @@ import io
 import json
 import math
 import shutil
+import subprocess
+import sys
 import threading
 import urllib.error
 import wave
@@ -23,11 +25,13 @@ from ambitious_kit.domain.envelope import Failure, JsonObject
 
 from ambitious_video import providers
 from ambitious_video.cli import engine
+from ambitious_video.cli.poll import await_result
 from ambitious_video.db.store import list_ledger
 from ambitious_video.domain.money import UNITS, Price
 from ambitious_video.domain.types import PaidClip, Speech
-from ambitious_video.providers.base import Provider, ProviderError, RunResult
+from ambitious_video.providers.base import Patience, Provider, ProviderError, RunResult
 from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
+from ambitious_video.providers.http import Request, Sender
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken, parse_prices, price_of, price_table
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
 
@@ -428,14 +432,18 @@ def test_a_provider_of_another_kind_cannot_speak(tmp_path: Path) -> None:
 class _Recorder(BaseHTTPRequestHandler):
     seen: list[tuple[str, str, str, bytes]] = []
     status = 200
+    declared: int | None = None
+    reply = b"spoken bytes"
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         kind = str(self.headers.get("Content-Type"))
         type(self).seen.append((self.path, str(self.headers.get("Authorization")), kind, body))
         self.send_response(type(self).status)
+        if self.declared is not None:
+            self.send_header("Content-Length", str(self.declared))
         self.end_headers()
-        self.wfile.write(b"spoken bytes" if type(self).status == 200 else body)
+        self.wfile.write(self.reply if self.status == 200 else body)
 
     def log_message(self, *_args: object) -> None:
         return None
@@ -475,6 +483,66 @@ def test_xai_speech_sends_the_words_the_voice_and_the_key_in_a_header(tmp_path: 
     assert json.loads(body) == {name: value for name, value in params.items() if name != "model"}
     assert SECRET.encode() not in body
     assert local_speech.quote(params, Decimal(1_000_000)) == Decimal(15)
+
+
+@pytest.mark.parametrize(("declared", "limit", "accepted"), [(15, 16, False), (12, 12, True), (None, 11, False)])
+def test_speech_requires_complete_audio_within_the_limit(
+    declared: int | None, limit: int, accepted: bool, tmp_path: Path,
+    local_speech: XaiSpeech, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_Recorder, "declared", declared)
+    monkeypatch.setattr("ambitious_video.providers.http.MAX_BYTES", limit)
+    out = tmp_path / "out.bin"
+    if accepted:
+        assert local_speech.run(local_speech.params(CLIP), {}, SECRET, out).path.read_bytes() == b"spoken bytes"
+    else:
+        with pytest.raises(ProviderError) as caught:
+            local_speech.run(local_speech.params(CLIP), {}, SECRET, out)
+        assert caught.value.status == 0 and not out.exists()
+
+
+def test_speech_rejects_an_http_200_error_echo_before_writing_audio(
+    local_speech: XaiSpeech, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_Recorder, "reply", json.dumps({"error": "invalid key " + SECRET}).encode())
+    out = tmp_path / "audio"
+    with pytest.raises(ProviderError) as caught:
+        local_speech.run(local_speech.params(CLIP), {}, SECRET, out)
+    assert caught.value.status == 0 and not out.exists() and SECRET not in _locals_of(caught.value)
+
+
+def test_a_sender_retained_after_a_failed_call_cannot_authenticate(
+    local_speech: XaiSpeech, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held: list[Sender] = []
+    request = Request(local_speech.config.endpoint, b"{}", 5)
+
+    def render(params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
+        held.append(exchange)
+        assert exchange(request) == 401
+        raise ProviderError(local_speech.id, 401)
+
+    monkeypatch.setattr(local_speech, "render", render)
+    _Recorder.status = 401
+    with pytest.raises(ProviderError):
+        local_speech.run({}, {}, SECRET, tmp_path / "out")
+    with pytest.raises(RuntimeError):
+        held[0](request)
+    assert SECRET not in repr(vars(held[0])) and len(_Recorder.seen) == 1
+
+
+def test_polling_accepts_a_collection_function(tmp_path: Path) -> None:
+    result = RunResult(tmp_path / "media")
+    replies = iter((None, result))
+    assert await_result(Patience(0, 5), lambda: next(replies)) == result
+
+
+def test_poller_lint_rejects_network_imports() -> None:
+    lint = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "--stdin-filename", "src/ambitious_video/cli/poll.py", "-"],
+        cwd=ROOT, input="import urllib.request\n", text=True, capture_output=True,
+    )
+    assert lint.returncode == 1 and "TID251" in lint.stdout and "providers/http.py" in lint.stdout
 
 
 def test_xai_speech_has_no_voice_of_its_own() -> None:

@@ -7,8 +7,10 @@ import re
 import select
 import stat
 import sys
+from collections import ChainMap
 from collections.abc import Callable
 from contextvars import ContextVar
+from dataclasses import replace
 from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
@@ -18,7 +20,7 @@ import yaml
 from ambitious_kit.cli.command import Context, DbContext, no_input, pure_command, read_command, write_command
 from ambitious_kit.cli.runner import ModuleSpec, run_cli
 from ambitious_kit.db.sqlite import load_migrations
-from ambitious_kit.domain.envelope import JsonObject, failure
+from ambitious_kit.domain.envelope import Failure, JsonObject, failure
 
 from ambitious_video.cli import engine, guide
 from ambitious_video.cli import expand as expander
@@ -244,10 +246,9 @@ def estimate(context: Context[object]) -> JsonObject:
 
 
 def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
-    job_id, body = context.input
-    max_usd = _max_usd()
-
-    def run() -> JsonObject:
+    try:
+        job_id, body = context.input
+        max_usd = _max_usd()
         if job_id is None:
             if body is None:
                 raise failure("E_INPUT_SCHEMA", "The input must be a script.", "Send the video script.")
@@ -274,8 +275,16 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
             resend=RESEND.get(),
             max_usd=max_usd,
         )
-
-    return _guard(run)
+    except ProviderError as error:
+        problem = engine.provider_failure(error)
+    except NeedTool as error:
+        problem = engine.tool_failure(error)
+    except (Failure, KeyboardInterrupt) as error:
+        error.__traceback__ = None
+        raise
+    finally:
+        del context
+    raise problem
 
 
 def verify(context: DbContext[str]) -> JsonObject:
@@ -343,6 +352,17 @@ def _patched_selfcheck(original: _Selfcheck) -> _Selfcheck:
     return wrapped
 
 
+def _with_process_env[C: Context[object]](action: Callable[[C], JsonObject]) -> Callable[[C], JsonObject]:
+    def run(context: C) -> JsonObject:
+        env = ChainMap(os.environ)
+        try:
+            return action(replace(context, env=env))
+        finally:
+            env.maps.clear()
+
+    return run
+
+
 def main() -> int:
     import ambitious_kit.cli.runner as runner
 
@@ -372,9 +392,9 @@ def main() -> int:
                 commands={
                     "expand": pure_command(expand, _inputs),
                     "validate": pure_command(validate, _script),
-                    "plan": pure_command(plan, _script),
-                    "estimate": pure_command(estimate, _script),
-                    "render": write_command(render, _render_input),
+                    "plan": pure_command(_with_process_env(plan), _script),
+                    "estimate": pure_command(_with_process_env(estimate), _script),
+                    "render": write_command(_with_process_env(render), _render_input),
                     "verify": write_command(verify, _verify_input),
                     "jobs": read_command(jobs, no_input),
                     "ledger": read_command(ledger, no_input),
@@ -384,7 +404,8 @@ def main() -> int:
                     "help": pure_command(show_help, no_input),
                     "version": pure_command(show_version, no_input),
                 },
-            )
+            ),
+            env={"AMBITIOUS_HOME": os.getenv("AMBITIOUS_HOME", "")},
         )
     finally:
         sys.argv = original

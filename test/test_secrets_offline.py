@@ -11,8 +11,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import traceback
 import wave
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -23,7 +24,7 @@ import ambitious_kit.cli.runner as runner
 import pytest
 import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
-from ambitious_kit.domain.envelope import Failure, JsonObject
+from ambitious_kit.domain.envelope import ErrorEntry, Failure, JsonObject
 from PIL import Image
 
 from ambitious_video import providers
@@ -518,6 +519,32 @@ def shell(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -
     return _Shell(monkeypatch, capsys)
 
 
+@pytest.mark.parametrize("entry", ["adapter", "cli"])
+def test_cancellation_drops_credentials_from_the_request_and_cli_frames(
+    entry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, local_xai: None, shell: _Shell
+) -> None:
+    script, folder = _sample(tmp_path, "example-plumbing", ("xai-speech",))
+    path = folder / "cancel.json"
+    path.write_text(json.dumps(script), encoding="utf-8")
+    monkeypatch.setenv("AMBITIOUS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XAI_API_KEY", SENTINEL)
+
+    def cancel(conn: object, method: str, url: str, body: bytes, headers: Mapping[str, str], **kwargs: object) -> None:
+        assert headers["Authorization"] == "Bearer " + SENTINEL
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("http.client.HTTPConnection.request", cancel)
+    with pytest.raises(KeyboardInterrupt) as caught:
+        if entry == "cli":
+            shell("render", "--in", str(path))
+        else:
+            provider = providers.find("xai-speech")
+            assert provider is not None
+            provider.run({"text": "Hello"}, {}, SENTINEL, tmp_path / "audio")
+    detail = traceback.TracebackException.from_exception(caught.value, capture_locals=True)
+    assert SENTINEL not in "".join(detail.format()) and caught.value.__context__ is None
+
+
 def test_a_key_value_is_never_stored_or_printed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -562,7 +589,18 @@ def test_a_key_value_is_never_stored_or_printed(
     changed["tracks"][1]["clips"][0]["text"] = "A line that was never spoken before."
     other = folder / "changed.json"
     other.write_text(json.dumps(changed), encoding="utf-8")
+    errors_of = runner._errors_of
+    observed: list[bool] = []
+
+    def inspect_failure(error: Exception, io: runner.Io) -> tuple[Sequence[ErrorEntry], JsonObject]:
+        detail = traceback.TracebackException.from_exception(error, capture_locals=True)
+        clean = error.__context__ is None and error.__cause__ is None
+        observed.append(clean and SENTINEL not in "".join(detail.format()))
+        return errors_of(error, io)
+
+    monkeypatch.setattr(runner, "_errors_of", inspect_failure)
     failed = shell("render", "--in", str(other))
+    assert observed == [True]
     assert failed["exit"] == 1 and failed["errors"][0]["code"] == "E_PROVIDER"
     assert failed["data"] == {"provider": "xai-speech", "status": 401}
     assert _Speaker.seen[-1] == "Bearer " + SENTINEL and len(_Speaker.seen) == len(spoken) + 1

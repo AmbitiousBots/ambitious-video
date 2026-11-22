@@ -8,7 +8,6 @@ from typing import Protocol, runtime_checkable
 
 from ambitious_kit.domain.envelope import JsonObject
 
-from ambitious_video.cli.poll import await_result as await_result
 from ambitious_video.domain.money import Price
 from ambitious_video.domain.types import GeneratedScene, LipSync, PaidClip, ProviderKind, SceneOutput
 

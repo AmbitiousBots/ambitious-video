@@ -72,7 +72,7 @@ class _Service(BaseHTTPRequestHandler):
         kind = type(self)
         kind.seen.append((method, self.path, self.headers.get("Authorization"), body))
         if kind.refuse:
-            self._answer(b"{}", kind.refuse)
+            self._answer(json.dumps({"error": "refused " + SECRET}).encode(), kind.refuse)
         return kind.refuse == 0
 
     def do_POST(self) -> None:
@@ -97,6 +97,12 @@ class _Service(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if self.path.startswith("/files/"):
+            self.send_response(302)
+            self.send_header("Location", "/download")
+            self.send_header("Content-Length", "268435457")
+            self.end_headers()
+            return
+        if self.path == "/download":
             self._answer(kind.video)
             return
         name = self.path.rsplit("/", 1)[-1]
@@ -957,6 +963,7 @@ def test_xai_video_submits_once_then_polls_and_downloads_without_the_key(tmp_pat
     assert found == RunResult(out) and out.read_bytes() == _Service.video
     assert [row[2] for row in _sent("GET", "/v1/videos/req-1")] == ["Bearer " + SECRET] * 2
     assert [row[2] for row in _sent("GET", "/files/")] == [None]
+    assert [row[2] for row in _sent("GET", "/download")] == [None]
     _Service.status = "failed"
     with pytest.raises(RequestLost):
         adapter.collect(request_id, SECRET, out)
@@ -1012,6 +1019,17 @@ def test_a_refused_scene_call_drops_the_key(tmp_path: Path, service: str) -> Non
     with pytest.raises(ProviderError) as slow:
         video.run({"model": "grok-imagine-video"}, {}, SECRET, out)
     assert SECRET not in _locals_of(slow.value) and len(_sent("POST", "/v1/videos/generations")) == 3
+
+
+def test_an_http_200_application_error_drops_the_echoed_key(tmp_path: Path, service: str) -> None:
+    still = XaiImage(XaiImageConfig(endpoint=service + "/v1/images/generations"))
+    _Service.refuse = 200
+    out = tmp_path / "image"
+    with pytest.raises(ProviderError) as caught:
+        still.run({}, {}, SECRET, out)
+    assert (caught.value.provider, caught.value.status) == (still.id, 0)
+    assert caught.value.__context__ is None and SECRET not in _locals_of(caught.value)
+    assert not out.exists()
 
 
 def test_xai_image_asks_for_one_picture_and_writes_its_bytes(tmp_path: Path, service: str) -> None:

@@ -7,13 +7,15 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from email.message import Message
+from http.client import HTTPMessage
 from pathlib import Path
+from types import TracebackType
 from typing import IO, final
 
 from ambitious_kit.domain.envelope import JsonObject
 
-from ambitious_video.providers.base import Patience, ProviderError, RunResult, await_result
+from ambitious_video.cli.poll import await_result
+from ambitious_video.providers.base import Patience, ProviderError, RunResult
 
 JSON_TYPE = "application/json"
 MAX_BYTES = 256 * 1024 * 1024
@@ -28,11 +30,17 @@ class KeyHeader:
 BEARER = KeyHeader("Authorization", "Bearer ")
 
 
-class _Stay(urllib.request.HTTPRedirectHandler):
+class _Redirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, follow: bool) -> None:
+        self.follow = follow
+
     def redirect_request(
-        self, req: urllib.request.Request, fp: IO[bytes], code: int, msg: str, headers: Message, newurl: str
+        self, req: urllib.request.Request, fp: IO[bytes], code: int, msg: str, headers: HTTPMessage, newurl: str
     ) -> urllib.request.Request | None:
-        return None
+        if not self.follow:
+            return None
+        fp.close()
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def send(
@@ -50,11 +58,14 @@ def send(
             request.add_header("Content-Type", content_type)
         if secret is not None:
             request.add_unredirected_header(carried.name, carried.prefix + secret)
-        opened = urllib.request.urlopen if secret is None else urllib.request.build_opener(_Stay).open
+        opener = urllib.request.build_opener(_Redirect(follow=secret is None))
         del secret
-        with opened(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
+            length = getattr(response, "length", None)
+            if length is not None and length > MAX_BYTES:
+                return 0
             body = response.read(MAX_BYTES + 1)
-        if isinstance(body, bytes) and len(body) <= MAX_BYTES:
+        if isinstance(body, bytes) and len(body) <= MAX_BYTES and (length is None or len(body) == length):
             return body
     except urllib.error.HTTPError as error:
         status = error.code
@@ -86,13 +97,20 @@ class Request:
 
 class Sender(AbstractContextManager["Sender"]):
     def __init__(self, secret: str) -> None:
-        self.__secret = secret
+        self.__secret: str | None = secret
 
     def __call__(self, request: Request) -> bytes | int:
-        return send(request.url, request.payload, self.__secret, request.timeout, request.header, request.content_type)
+        if self.__secret is None:
+            raise RuntimeError("Provider request scope ended.")
+        body = send(request.url, request.payload, self.__secret, request.timeout, request.header, request.content_type)
+        if isinstance(body, bytes) and self.__secret and self.__secret.encode() in body:
+            return 0
+        return body
 
-    def __exit__(self, *_exc: object) -> None:
-        del self.__secret
+    def __exit__(self, kind: type[BaseException] | None, error: BaseException | None, tb: TracebackType | None) -> None:
+        self.__secret = None
+        if isinstance(error, (ProviderError, KeyboardInterrupt)):
+            error.__traceback__ = error.__cause__ = error.__context__ = None
 
 
 class MediaProvider(ABC):
@@ -133,11 +151,10 @@ class DeferredProvider(ABC):
 
     @final
     def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        try:
-            request_id = self.submit(params, inputs, secret)
-            found = await_result(self, request_id, secret, out)
-        finally:
+        with Sender(secret) as exchange:
             del secret
+            request_id = self.start(params, inputs, exchange)
+            found = await_result(self.patience, lambda: self.poll(request_id, exchange, out))
         if found is None:
             raise ProviderError(self.id, 0)
         return found

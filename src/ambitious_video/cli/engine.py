@@ -19,6 +19,7 @@ from ambitious_kit.domain.envelope import ErrorEntry, Failure, JsonObject, JsonV
 from ambitious_kit.paths import ambitious_home, refuse_agent_data
 
 from ambitious_video import providers
+from ambitious_video.cli.poll import await_result
 from ambitious_video.db import step_cache
 from ambitious_video.db.lock import Hold
 from ambitious_video.db.requests import forget_request, store_request, stored_request
@@ -89,7 +90,6 @@ from ambitious_video.providers.base import (
     ProviderError,
     RequestLost,
     SceneMaker,
-    await_result,
 )
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken
 from ambitious_video.steps import compile_clip
@@ -602,15 +602,21 @@ def _later(
         request_id = stored_request(db, item.key)
         if request_id is None:
             request_id = _submit(db, item, maker, env, stamp)
+        problem: Failure | None = None
+        out = work / step_cache.BODY
         try:
-            result = await_result(maker, request_id, env.get(item.provider.secret, ""), work / step_cache.BODY)
+            result = await_result(
+                maker.patience, lambda: maker.collect(request_id, env.get(item.provider.secret, ""), out)
+            )
         except RequestLost:
             begin(db)
             forget_request(db, item.key)
             commit(db)
-            raise _lost(item) from None
+            problem = _lost(item)
         except ProviderError as error:
-            raise _stuck(item, request_id, error.status) from None
+            problem = _stuck(item, request_id, error.status)
+        if problem is not None:
+            raise problem
         if result is None:
             raise _waiting(item, job_id, request_id)
         if not _usable(item, result.path):
