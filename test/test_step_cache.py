@@ -68,17 +68,18 @@ class _Answer(io.BytesIO):
 def _served(speaker: Speaker) -> Iterator[None]:
     unwanted: list[str] = []
 
-    def opened(request: object, timeout: float = 0) -> _Answer:
+    def opened(_opener: object, request: object, timeout: float = 0) -> _Answer:
         assert getattr(request, "full_url", "") == "https://api.x.ai/v1/tts" and timeout > 0
         sent = json.loads(getattr(request, "data", b""))
         assert set(sent) == {"text", "voice_id", "language", "output_format"}
-        key = str(getattr(request, "headers", {}).get("Authorization")).removeprefix("Bearer ")
+        assert hasattr(request, "get_header")
+        key = str(request.get_header("Authorization")).removeprefix("Bearer ")
         if speaker is _never:
             unwanted.append(sent["text"])
         return _Answer(speaker(sent["text"], sent["voice_id"], key))
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr("urllib.request.urlopen", opened)
+        patch.setattr("urllib.request.OpenerDirector.open", opened)
         yield
     assert unwanted == []
 

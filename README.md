@@ -306,7 +306,7 @@ A replaced step is listed as the free step that stands in for it, with `"fallbac
 
 ### Adding a provider
 
-A provider is one module in `src/ambitious_video/providers/` with a class that follows `Provider` in `providers/base.py`, registered in `providers/__init__.py`:
+Add the adapter in `src/ambitious_video/providers/` and register it in `providers/__init__.py`. Inherit from `MediaProvider` for a single response or `DeferredProvider` for a job that needs polling. Both classes live in `providers/http.py` and supply the public methods that accept the API key.
 
 | Member | What it is |
 |---|---|
@@ -316,9 +316,13 @@ A provider is one module in `src/ambitious_video/providers/` with a class that f
 | `seedable`, `adapter_version` | Whether the provider takes a seed, and a number to raise when the adapter's output changes, so old cache entries are not reused. |
 | `params(step)` | Pure. The canonical parameters that are sent; they are hashed into the step key. |
 | `price(model)`, `quote(params, units)` | The price entry and the price of that many units, from `pricing.json` only. |
-| `run(params, inputs, secret, out)` | The call. Writes the result to `out`. Uses only the standard library, and must not keep, log or raise the key. |
+| `render(params, inputs, exchange, out)` | A `MediaProvider` calls `exchange(Request(...))`, writes the response to `out` and returns `RunResult(out)`. |
 
-A `scene` provider also follows `SceneMaker`: `output` says whether it returns a `video` or an `image` (a still picture, shown with the clip's `kenburns` zoom), and `faults(step)` names the fields of a clip it cannot make, such as a length or a size it does not offer, so `validate` refuses them before anything is sent. A provider that answers later follows `Deferred` instead of doing the work in `run`: `submit(params, inputs, secret)` starts the work and returns the provider's request id, `collect(request_id, secret, out)` returns the result or `None` while it is not ready, and `patience` gives the seconds between two polls and the longest wait. It raises `RequestLost` when the provider says the request failed, which is the only case in which a step is sent again. A `lipsync` provider follows `Deferred` and `LipSyncer`: `lip_faults(step)` names the fields of a `lip_sync` clip it cannot make, and `submit` finds the presenter file in `inputs` under `video` or `image` and the mixed sound under `audio`.
+A `DeferredProvider` implements `start(params, inputs, exchange)` to return a request ID and `poll(request_id, exchange, out)` to return `RunResult(out)` when ready or `None` while waiting. Set `patience` to the poll interval and maximum wait. Raise `RequestLost` when the provider reports that it lost or rejected the job.
+
+Send authenticated requests with `exchange(Request(...))`. It returns response bytes on success or an integer status on failure. Use `exchange.download(url, timeout, schemes)` for keyless media downloads. Each redirect starts a fresh GET and must use an allowed scheme. Ruff directs adapter network imports to that module.
+
+A scene adapter implements `SceneMaker.output` and `faults(step)` for validation. A lip-sync adapter implements `LipSyncer.lip_faults(step)`. Its `start` method receives the presenter under `video` or `image` and the mixed sound under `audio`.
 
 The commands find providers only through that registry, so an adapter needs no change to `plan`, `estimate`, the step cache or `render`. `test/test_providers.py` registers one inside a test and runs it through all four, and `test/test_generated_scenes.py` does the same with one that answers later. A script that names a provider id, a model or a kind of step the registry does not have is refused by `validate`.
 

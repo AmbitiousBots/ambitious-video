@@ -11,8 +11,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import traceback
 import wave
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -23,7 +24,7 @@ import ambitious_kit.cli.runner as runner
 import pytest
 import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
-from ambitious_kit.domain.envelope import Failure, JsonObject
+from ambitious_kit.domain.envelope import ErrorEntry, Failure, JsonObject
 from PIL import Image
 
 from ambitious_video import providers
@@ -36,6 +37,7 @@ from ambitious_video.domain.plan import plan_sha
 from ambitious_video.domain.types import ClipTrack, PaidClip, Speech, Voiceover
 from ambitious_video.providers.base import Provider, RunResult
 from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
+from ambitious_video.providers.http import MediaProvider, Sender
 from ambitious_video.providers.xai_image import XaiImage, XaiImageConfig
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
 from ambitious_video.providers.xai_video import XaiVideo, XaiVideoConfig
@@ -63,7 +65,7 @@ def _tone(text: str) -> bytes:
     return buffer.getvalue()
 
 
-class KeyedSpeech:
+class KeyedSpeech(MediaProvider):
     kind: Final = "speech"
     models: Final = ("only",)
     seedable: Final = False
@@ -87,8 +89,8 @@ class KeyedSpeech:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        assert secret == self.value and inputs == {}
+    def render(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
+        assert exchange.public_text(self.value) is None and inputs == {}
         self.calls.append(str(params["say"]))
         out.write_bytes(_tone(str(params["say"])))
         return RunResult(out)
@@ -518,6 +520,48 @@ def shell(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -
     return _Shell(monkeypatch, capsys)
 
 
+def test_launcher_preserves_the_outer_kit_error_envelope(
+    shell: _Shell, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unavailable(limit: int) -> int:
+        raise RuntimeError("seed unavailable")
+
+    monkeypatch.setattr("secrets.randbelow", unavailable)
+    monkeypatch.setattr(sys, "argv", ["ambitious-video", "--version"])
+    assert main.main() == 2
+    captured = shell.capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["module"] == "video" and result["command"] == "" and result["meta"]["seed"] == 0
+    assert [entry["code"] for entry in result["errors"]] == ["E_INTERNAL"]
+    assert "seed unavailable" in captured.err
+
+
+@pytest.mark.parametrize("entry", ["adapter", "cli"])
+def test_cancellation_drops_credentials_from_the_request_and_cli_frames(
+    entry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, local_xai: None, shell: _Shell
+) -> None:
+    script, folder = _sample(tmp_path, "example-plumbing", ("xai-speech",))
+    path = folder / "cancel.json"
+    path.write_text(json.dumps(script), encoding="utf-8")
+    monkeypatch.setenv("AMBITIOUS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XAI_API_KEY", SENTINEL)
+
+    def cancel(conn: object, method: str, url: str, body: bytes, headers: Mapping[str, str], **kwargs: object) -> None:
+        assert headers["Authorization"] == "Bearer " + SENTINEL
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("http.client.HTTPConnection.request", cancel)
+    with pytest.raises(KeyboardInterrupt) as caught:
+        if entry == "cli":
+            shell("render", "--in", str(path))
+        else:
+            provider = providers.find("xai-speech")
+            assert provider is not None
+            provider.run({"text": "Hello"}, {}, SENTINEL, tmp_path / "audio")
+    detail = traceback.TracebackException.from_exception(caught.value, capture_locals=True)
+    assert SENTINEL not in "".join(detail.format()) and caught.value.__context__ is None
+
+
 def test_a_key_value_is_never_stored_or_printed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -562,7 +606,18 @@ def test_a_key_value_is_never_stored_or_printed(
     changed["tracks"][1]["clips"][0]["text"] = "A line that was never spoken before."
     other = folder / "changed.json"
     other.write_text(json.dumps(changed), encoding="utf-8")
+    errors_of = runner._errors_of
+    observed: list[bool] = []
+
+    def inspect_failure(error: Exception, io: runner.Io) -> tuple[Sequence[ErrorEntry], JsonObject]:
+        detail = traceback.TracebackException.from_exception(error, capture_locals=True)
+        clean = error.__context__ is None and error.__cause__ is None
+        observed.append(clean and SENTINEL not in "".join(detail.format()))
+        return errors_of(error, io)
+
+    monkeypatch.setattr(runner, "_errors_of", inspect_failure)
     failed = shell("render", "--in", str(other))
+    assert observed == [True]
     assert failed["exit"] == 1 and failed["errors"][0]["code"] == "E_PROVIDER"
     assert failed["data"] == {"provider": "xai-speech", "status": 401}
     assert _Speaker.seen[-1] == "Bearer " + SENTINEL and len(_Speaker.seen) == len(spoken) + 1

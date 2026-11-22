@@ -5,6 +5,7 @@ import io
 import json
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
@@ -20,7 +21,7 @@ from ambitious_kit.domain.envelope import Failure, JsonObject
 from PIL import Image
 
 from ambitious_video import providers
-from ambitious_video.cli import engine
+from ambitious_video.cli import engine, main
 from ambitious_video.db.store import list_ledger, read_job
 from ambitious_video.domain.fallback import fallback_of
 from ambitious_video.domain.load import load_script
@@ -29,6 +30,7 @@ from ambitious_video.domain.template import expand, load_template
 from ambitious_video.domain.types import GeneratedScene, ImageClip, PaidClip, TitleCard, VideoClip
 from ambitious_video.media.film import Made, canvas_for, frame_at, prepare
 from ambitious_video.providers.base import Patience, Provider, ProviderError, RequestLost, RunResult
+from ambitious_video.providers.http import DeferredProvider, Sender
 from ambitious_video.providers.xai_image import XaiImage, XaiImageConfig
 from ambitious_video.providers.xai_video import XaiVideo, XaiVideoConfig
 
@@ -61,6 +63,7 @@ class _Service(BaseHTTPRequestHandler):
     video = b""
     picture = b""
     status = "pending"
+    submission: bytes | None = None
     refuse = 0
 
     def _answer(self, body: bytes, code: int = 200) -> None:
@@ -72,7 +75,7 @@ class _Service(BaseHTTPRequestHandler):
         kind = type(self)
         kind.seen.append((method, self.path, self.headers.get("Authorization"), body))
         if kind.refuse:
-            self._answer(b"{}", kind.refuse)
+            self._answer(json.dumps({"error": "refused " + SECRET}).encode(), kind.refuse)
         return kind.refuse == 0
 
     def do_POST(self) -> None:
@@ -85,7 +88,7 @@ class _Service(BaseHTTPRequestHandler):
             self._answer(json.dumps({"data": [{"b64_json": encoded}]}).encode())
             return
         sent = sum(1 for method, path, _key, _body in kind.seen if (method, path) == ("POST", self.path))
-        self._answer(json.dumps({"request_id": f"req-{sent}"}).encode())
+        self._answer(kind.submission or json.dumps({"request_id": f"req-{sent}"}).encode())
 
     def do_GET(self) -> None:
         if not self._noted("GET", b""):
@@ -97,6 +100,12 @@ class _Service(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if self.path.startswith("/files/"):
+            self.send_response(302)
+            self.send_header("Location", "/download")
+            self.send_header("Content-Length", "268435457")
+            self.end_headers()
+            return
+        if self.path == "/download":
             self._answer(kind.video)
             return
         name = self.path.rsplit("/", 1)[-1]
@@ -326,6 +335,68 @@ def test_a_scene_that_times_out_is_polled_again_and_never_sent_twice(tmp_path: P
     assert all(row[2] is None for row in _sent("GET", "/files/"))
     assert SECRET.encode() not in _everything_written(home, folder)
     assert SECRET not in json.dumps([waiting.value.data, retried, again, estimate, plan])
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "json-escape"])
+def test_render_rejects_a_decoded_credential_before_storing_or_polling(
+    tmp_path: Path, local_xai: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], encoding: str
+) -> None:
+    home = tmp_path / "home"
+    path = _folder(tmp_path) / "script.json"
+    path.write_text(json.dumps(_script(_scene())))
+    response = json.dumps({"request_id": "req-" + SECRET})
+    escaped = response.replace(SECRET, r"\u006e" + SECRET[1:])
+    body = response.encode("utf-16") if encoding == "utf-16" else escaped.encode()
+    monkeypatch.setattr(_Service, "submission", body)
+    monkeypatch.setenv("AMBITIOUS_HOME", str(home))
+    monkeypatch.setenv("XAI_API_KEY", SECRET)
+    monkeypatch.setattr(sys, "argv", ["ambitious-video", "render", "--in", str(path)])
+    assert main.main() == 1
+    printed = capsys.readouterr()
+    failure = json.loads(printed.out)
+    assert failure["errors"][0]["code"] == "E_PROVIDER" and failure["data"] == {"provider": "xai-video", "status": 0}
+    assert SECRET not in printed.out and printed.err == ""
+    assert len(_sent("POST", "/v1/videos/generations")) == 1 and _sent("GET", "/v1/videos/") == []
+    db = _open(home)
+    try:
+        assert _requests(db) == [] and list_ledger(db) == ()
+    finally:
+        db.close()
+
+
+def test_retry_discards_a_stored_credential_before_polling(tmp_path: Path, local_xai: str) -> None:
+    folder, home = _folder(tmp_path), tmp_path / "home"
+    db = _open(home)
+    try:
+        with pytest.raises(engine.Waiting):
+            _render(db, _script(_scene()), folder, "job", FIRST, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET})
+        db.execute("UPDATE provider_requests SET request_id = ?", ("req-" + SECRET,))
+        calls = len(_Service.seen)
+        with pytest.raises(Failure) as caught:
+            engine.render_again(db, "job", None, LATER, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET})
+        assert caught.value.errors[0].code == "E_PROVIDER" and "requestId" not in caught.value.data
+        assert SECRET not in _locals_of(caught.value)
+        assert len(_Service.seen) == calls and _requests(db) == [] and list_ledger(db) == ()
+    finally:
+        db.close()
+
+
+def test_direct_render_failures_release_the_environment(tmp_path: Path, local_xai: str) -> None:
+    home = tmp_path / "home"
+    folder = _folder(tmp_path)
+    db = _open(home)
+    try:
+        _Service.refuse = 401
+        with pytest.raises(ProviderError) as first:
+            engine.render_new(
+                db, _script(_scene()), folder, "job", FIRST, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET}
+            )
+        with pytest.raises(ProviderError) as retry:
+            engine.render_again(db, "job", None, LATER, {"AMBITIOUS_HOME": str(home), "XAI_API_KEY": SECRET})
+        for caught in (first, retry):
+            assert caught.value.status == 401 and SECRET not in _locals_of(caught.value)
+    finally:
+        db.close()
 
 
 def test_a_generation_the_provider_gives_up_on_is_forgotten_and_not_billed(tmp_path: Path, local_xai: str) -> None:
@@ -675,7 +746,7 @@ def test_validate_checks_the_reference_picture_and_the_fallback_file(tmp_path: P
     assert lost == [(at + "/image", "The image file is missing.")]
 
 
-class TestScene:
+class TestScene(DeferredProvider):
     __test__ = False
     kind: Final = "scene"
     id: Final = "test-scene"
@@ -705,21 +776,18 @@ class TestScene:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def submit(self, params: JsonObject, inputs: Mapping[str, Path], secret: str) -> str:
-        assert secret == SECRET
+    def start(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender) -> str:
+        assert exchange.public_text(SECRET) is None
         self.submitted.append({**params, "inputs": sorted(inputs)})
         return f"ticket-{len(self.submitted)}"
 
-    def collect(self, request_id: str, secret: str, out: Path) -> RunResult | None:
-        assert secret == SECRET
+    def poll(self, request_id: str, exchange: Sender, out: Path) -> RunResult | None:
+        assert exchange.public_text(SECRET) is None
         self.polled.append(request_id)
         if not self.ready:
             return None
         out.write_bytes(self.video)
         return RunResult(out)
-
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        raise AssertionError("a provider that answers later is submitted and polled")
 
 
 @pytest.fixture
@@ -957,6 +1025,7 @@ def test_xai_video_submits_once_then_polls_and_downloads_without_the_key(tmp_pat
     assert found == RunResult(out) and out.read_bytes() == _Service.video
     assert [row[2] for row in _sent("GET", "/v1/videos/req-1")] == ["Bearer " + SECRET] * 2
     assert [row[2] for row in _sent("GET", "/files/")] == [None]
+    assert [row[2] for row in _sent("GET", "/download")] == [None]
     _Service.status = "failed"
     with pytest.raises(RequestLost):
         adapter.collect(request_id, SECRET, out)
@@ -1012,6 +1081,17 @@ def test_a_refused_scene_call_drops_the_key(tmp_path: Path, service: str) -> Non
     with pytest.raises(ProviderError) as slow:
         video.run({"model": "grok-imagine-video"}, {}, SECRET, out)
     assert SECRET not in _locals_of(slow.value) and len(_sent("POST", "/v1/videos/generations")) == 3
+
+
+def test_an_http_200_application_error_drops_the_echoed_key(tmp_path: Path, service: str) -> None:
+    still = XaiImage(XaiImageConfig(endpoint=service + "/v1/images/generations"))
+    _Service.refuse = 200
+    out = tmp_path / "image"
+    with pytest.raises(ProviderError) as caught:
+        still.run({}, {}, SECRET, out)
+    assert (caught.value.provider, caught.value.status) == (still.id, 0)
+    assert caught.value.__context__ is None and SECRET not in _locals_of(caught.value)
+    assert not out.exists()
 
 
 def test_xai_image_asks_for_one_picture_and_writes_its_bytes(tmp_path: Path, service: str) -> None:

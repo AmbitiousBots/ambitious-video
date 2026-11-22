@@ -15,25 +15,28 @@ ban-relative-imports = "parents"
 "datetime.date.today".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
 "time.time".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
 "time.time_ns".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
-"time.monotonic".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
 "random".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
 "secrets".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
 "uuid.uuid4".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
 "os.urandom".msg = "Only the cli package draws randomness. Take a random.Random seeded from --seed as an argument so the same input always gives the same output."
-"time.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
 "threading.Timer".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
 "sched".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
 "asyncio.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
-"urllib.request".msg = "Network is only allowed in the providers and install packages. Move the call into providers and pass its result into domain as data."
-"http.client".msg = "Network is only allowed in the providers and install packages. Move the call into providers and pass its result into domain as data."
-"socket".msg = "Network is only allowed in the providers and install packages. Move the call into providers and pass its result into domain as data."
-"ssl".msg = "Network is only allowed in the providers and install packages. Move the call into providers and pass its result into domain as data."
+"urllib.request".msg = "Send provider requests through providers/http.py and pass the result into domain as data."
+"http.client".msg = "Send provider requests through providers/http.py and pass the result into domain as data."
+"socket".msg = "Send provider requests through providers/http.py and pass the result into domain as data."
+"ssl".msg = "Send provider requests through providers/http.py and pass the result into domain as data."
 "sqlite3".msg = "sqlite3 is only allowed in the db package. Move the query into db and return plain data."
 "typing.cast".msg = "cast overrules the type checker. Parse the value at the boundary or narrow it with isinstance."
 "typing.Any".msg = "Any switches the type checker off. Use object and parse it at the boundary, or name the real type."
 
+[lint.flake8-tidy-imports.extend-banned-api]
+"time.monotonic".msg = "Only the cli package reads the clock. Take the time as an argument (the --now value) so the same input always gives the same output."
+"time.sleep".msg = "Timers are only allowed in the cli package. Return the delay as data and let the CLI shell wait, or take a deadline as an argument."
+
 [lint.per-file-ignores]
-"**/cli/**" = ["T20", "TID251"]
-"**/providers/**" = ["TID251"]
+"**/cli/**" = ["T20"]
+"**/cli/{engine,main}.py" = ["TID251"]
+"src/ambitious_video/providers/http.py" = ["TID251"]
 "**/install/**" = ["TID251"]
 "**/db/**" = ["TID251"]

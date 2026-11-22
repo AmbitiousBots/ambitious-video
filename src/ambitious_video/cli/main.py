@@ -4,11 +4,14 @@ import json
 import os
 import random
 import re
+import secrets
 import select
 import stat
 import sys
+import traceback
 from collections.abc import Callable
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
@@ -16,10 +19,12 @@ from typing import Protocol
 
 import yaml
 from ambitious_kit.cli.command import Context, DbContext, no_input, pure_command, read_command, write_command
-from ambitious_kit.cli.runner import ModuleSpec, run_cli
+from ambitious_kit.cli.runner import Io, ModuleSpec, cli_envelope
 from ambitious_kit.db.sqlite import load_migrations
-from ambitious_kit.domain.envelope import JsonObject, failure
+from ambitious_kit.domain.clock import format_instant
+from ambitious_kit.domain.envelope import MAX_SEED, ErrorEntry, Failure, Identity, JsonObject, Meta, err, failure
 
+from ambitious_video import providers
 from ambitious_video.cli import engine, guide
 from ambitious_video.cli import expand as expander
 from ambitious_video.db.store import count_jobs
@@ -244,10 +249,9 @@ def estimate(context: Context[object]) -> JsonObject:
 
 
 def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
-    job_id, body = context.input
-    max_usd = _max_usd()
-
-    def run() -> JsonObject:
+    try:
+        job_id, body = context.input
+        max_usd = _max_usd()
         if job_id is None:
             if body is None:
                 raise failure("E_INPUT_SCHEMA", "The input must be a script.", "Send the video script.")
@@ -257,7 +261,7 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
                 SCRIPT_DIR.get(),
                 _job_id(context.rng, count_jobs(context.db)),
                 context.now,
-                context.env,
+                os.environ,
                 CACHE_DIR.get(),
                 offline=OFFLINE.get(),
                 resend=RESEND.get(),
@@ -268,14 +272,17 @@ def render(context: DbContext[tuple[str | None, object | None]]) -> JsonObject:
             job_id,
             body,
             context.now,
-            context.env,
+            os.environ,
             CACHE_DIR.get(),
             offline=OFFLINE.get(),
             resend=RESEND.get(),
             max_usd=max_usd,
         )
-
-    return _guard(run)
+    except ProviderError as error:
+        problem = engine.provider_failure(error)
+    except NeedTool as error:
+        problem = engine.tool_failure(error)
+    raise problem
 
 
 def verify(context: DbContext[str]) -> JsonObject:
@@ -332,8 +339,6 @@ class _Selfcheck(Protocol):
 
 def _patched_selfcheck(original: _Selfcheck) -> _Selfcheck:
     def wrapped(*, module: str, db_path: str, binary_path: str, migrations: object) -> JsonObject:
-        from ambitious_kit.domain.envelope import Failure
-
         try:
             data = original(module=module, db_path=db_path, binary_path=binary_path, migrations=migrations)
         except Failure as error:
@@ -343,15 +348,37 @@ def _patched_selfcheck(original: _Selfcheck) -> _Selfcheck:
     return wrapped
 
 
+def _run_cli(spec: ModuleSpec, argv: list[str], source: str) -> int:
+    env = {provider.secret: "set" for provider in providers.registered() if os.getenv(provider.secret)}
+    env["AMBITIOUS_HOME"] = os.getenv("AMBITIOUS_HOME", "")
+    io = Io(
+        argv=argv,
+        env=env,
+        binary_path=sys.argv[0],
+        read_stdin=_stdin_reader(source),
+        system_now=lambda: datetime.now(UTC),
+        system_seed=lambda: secrets.randbelow(MAX_SEED + 1),
+        write_stderr=sys.stderr.write,
+    )
+    try:
+        result = cli_envelope(spec, io)
+    except Exception as error:
+        io.write_stderr("".join(traceback.format_exception(error)))
+        identity = Identity(1, "video", "", Meta(format_instant(datetime.now(UTC)), 0, VERSION))
+        entry = ErrorEntry("E_INTERNAL", "The module hit an unexpected error.", "Report it with the stderr log.")
+        result = err(identity, [entry])
+    sys.stdout.write(result.serialize())
+    sys.stdout.flush()
+    return result.exit_code
+
+
 def main() -> int:
     import ambitious_kit.cli.runner as runner
 
-    runner.json.loads = _loads  # type: ignore[attr-defined] # YAML scripts use the JSON loader
-    runner.selfcheck = _patched_selfcheck(runner.selfcheck)  # type: ignore[attr-defined,arg-type] # tools sit beside the kit report
-    original = sys.argv
+    original_selfcheck = runner.selfcheck  # type: ignore[attr-defined] # the kit binds its report here
+    original_loads = json.loads
     kept, own = _own_flags(guide.builtin_command(sys.argv[1:]))
     kept, source = _input_source(kept)
-    runner._read_stdin = _stdin_reader(source)
     token = SCRIPT_DIR.set(_directory(kept))
     chosen = own.get("--cache")
     cache_token = CACHE_DIR.set(None if chosen is None else Path(chosen))
@@ -361,9 +388,10 @@ def main() -> int:
     template_token = TEMPLATE.set(own.get("--template"))
     out_token = OUT.set(own.get("--out"))
     cap_token = MAX_USD.set(own.get("--max-usd"))
-    sys.argv = [original[0], *kept]
     try:
-        return run_cli(
+        runner.json.loads = _loads  # type: ignore[attr-defined] # YAML scripts use the JSON loader
+        runner.selfcheck = _patched_selfcheck(original_selfcheck)  # type: ignore[attr-defined,arg-type] # tools sit beside the kit report
+        return _run_cli(
             ModuleSpec(
                 module="video",
                 version=VERSION,
@@ -384,10 +412,13 @@ def main() -> int:
                     "help": pure_command(show_help, no_input),
                     "version": pure_command(show_version, no_input),
                 },
-            )
+            ),
+            kept,
+            source,
         )
     finally:
-        sys.argv = original
+        runner.selfcheck = original_selfcheck  # type: ignore[attr-defined] # restore the kit report for other callers
+        json.loads = original_loads
         MAX_USD.reset(cap_token)
         OUT.reset(out_token)
         TEMPLATE.reset(template_token)

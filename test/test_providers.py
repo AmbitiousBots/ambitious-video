@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import array
+import errno
 import io
 import json
 import math
 import shutil
+import subprocess
+import sys
 import threading
 import urllib.error
 import wave
@@ -14,7 +17,9 @@ from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.resources import files
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Final
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -23,13 +28,17 @@ from ambitious_kit.domain.envelope import Failure, JsonObject
 
 from ambitious_video import providers
 from ambitious_video.cli import engine
+from ambitious_video.cli.poll import await_result
 from ambitious_video.db.store import list_ledger
 from ambitious_video.domain.money import UNITS, Price
 from ambitious_video.domain.types import PaidClip, Speech
-from ambitious_video.providers.base import Provider, ProviderError, RunResult
+from ambitious_video.providers.base import Patience, Provider, ProviderError, RunResult
 from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
+from ambitious_video.providers.http import DeferredProvider, MediaProvider, Request, Sender
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken, parse_prices, price_of, price_table
+from ambitious_video.providers.syncso_lipsync import SyncLipsync
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
+from ambitious_video.providers.xai_video import XaiVideo
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "examples" / "samples" / "example-bookshop"
@@ -77,7 +86,7 @@ def _tone(text: str) -> bytes:
     return buffer.getvalue()
 
 
-class TestSpeech:
+class TestSpeech(MediaProvider):
     __test__ = False
     kind: Final = "speech"
     id: Final = "test-speech"
@@ -100,8 +109,8 @@ class TestSpeech:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        assert secret == SECRET and inputs == {}
+    def render(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
+        assert exchange.public_text(SECRET) is None and inputs == {}
         self.calls.append((str(params["say"]), str(params["as"])))
         out.write_bytes(_tone(str(params["say"])))
         return RunResult(out)
@@ -288,24 +297,15 @@ def test_estimate_names_the_provider_the_model_the_units_and_the_price_source(tm
     assert len(str(data["usd"]).partition(".")[2]) == 6
 
 
-def test_a_cached_step_is_estimated_at_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    class Answer(io.BytesIO):
-        def __enter__(self) -> Answer:
-            return self
-
-    def opened(request: object, timeout: float = 0) -> Answer:
-        sent = json.loads(getattr(request, "data", b"{}"))
-        return Answer(_tone(sent["text"]))
-
-    script, folder = _project(tmp_path, "xai-speech", "tts")
+def test_a_cached_step_is_estimated_at_zero(tmp_path: Path, fake_speech: TestSpeech) -> None:
+    script, folder = _project(tmp_path, fake_speech.id, "small")
     home, shared = tmp_path / "home", tmp_path / "shared"
     quiet = {"AMBITIOUS_HOME": str(home)}
     before = engine.estimate_data(script, folder, quiet, shared)
-    monkeypatch.setattr("urllib.request.urlopen", opened)
     db = _open(home)
     try:
         db.execute("BEGIN IMMEDIATE")
-        engine.render_new(db, dict(script), folder, "job-one", FIRST, {**quiet, "XAI_API_KEY": SECRET}, shared)
+        engine.render_new(db, dict(script), folder, "job-one", FIRST, {**quiet, fake_speech.secret: SECRET}, shared)
         db.execute("COMMIT")
     finally:
         db.close()
@@ -321,7 +321,7 @@ def test_a_cached_step_is_estimated_at_zero(tmp_path: Path, monkeypatch: pytest.
     first["text"] = first["text"] + " Changed."
     partly = _paid(engine.estimate_data(changed, folder, quiet, shared))
     assert [line["cached"] for line in partly] == [False] + [True] * (len(partly) - 1)
-    assert Decimal(str(partly[0]["usd"])) == Decimal(len(first["text"])) * Decimal("0.000015")
+    assert Decimal(str(partly[0]["usd"])) == Decimal(len(first["text"])) * fake_speech.price("small").usd_per_unit
 
 
 def test_every_price_has_a_unit_a_source_and_a_date() -> None:
@@ -385,6 +385,13 @@ def test_a_missing_or_broken_price_is_refused() -> None:
             parse_prices(text)
 
 
+def test_registration_requires_the_shared_transport() -> None:
+    provider = SimpleNamespace(id="raw-key-provider", run=lambda params, inputs, secret, out: RunResult(out))
+    with pytest.raises(TypeError, match="providers/http.py"):
+        providers.register(provider)
+    assert providers.find(provider.id) is None
+
+
 def test_the_registry_refuses_a_second_adapter_with_the_same_id(fake_speech: TestSpeech) -> None:
     found: Provider | None = providers.find("test-speech")
     assert found is fake_speech and providers.find("no-such-provider") is None
@@ -437,14 +444,18 @@ def test_a_provider_of_another_kind_cannot_speak(tmp_path: Path) -> None:
 class _Recorder(BaseHTTPRequestHandler):
     seen: list[tuple[str, str, str, bytes]] = []
     status = 200
+    declared: int | None = None
+    reply = b"spoken bytes"
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         kind = str(self.headers.get("Content-Type"))
         type(self).seen.append((self.path, str(self.headers.get("Authorization")), kind, body))
         self.send_response(type(self).status)
+        if self.declared is not None:
+            self.send_header("Content-Length", str(self.declared))
         self.end_headers()
-        self.wfile.write(b"spoken bytes" if type(self).status == 200 else body)
+        self.wfile.write(self.reply if self.status == 200 else body)
 
     def log_message(self, *_args: object) -> None:
         return None
@@ -486,6 +497,102 @@ def test_xai_speech_sends_the_words_the_voice_and_the_key_in_a_header(tmp_path: 
     assert local_speech.quote(params, Decimal(1_000_000)) == Decimal(15)
 
 
+@pytest.mark.parametrize(("declared", "limit", "accepted"), [(15, 16, False), (12, 12, True), (None, 11, False)])
+def test_speech_requires_complete_audio_within_the_limit(
+    declared: int | None, limit: int, accepted: bool, tmp_path: Path,
+    local_speech: XaiSpeech, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_Recorder, "declared", declared)
+    monkeypatch.setattr("ambitious_video.providers.http.MAX_BYTES", limit)
+    out = tmp_path / "out.bin"
+    if accepted:
+        assert local_speech.run(local_speech.params(CLIP), {}, SECRET, out).path.read_bytes() == b"spoken bytes"
+    else:
+        with pytest.raises(ProviderError) as caught:
+            local_speech.run(local_speech.params(CLIP), {}, SECRET, out)
+        assert caught.value.status == 0 and not out.exists()
+
+
+def test_speech_rejects_an_http_200_error_echo_before_writing_audio(
+    local_speech: XaiSpeech, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_Recorder, "reply", json.dumps({"error": "invalid key " + SECRET}).encode())
+    out = tmp_path / "audio"
+    with pytest.raises(ProviderError) as caught:
+        local_speech.run(local_speech.params(CLIP), {}, SECRET, out)
+    assert caught.value.status == 0 and not out.exists() and SECRET not in _locals_of(caught.value)
+
+
+@pytest.mark.parametrize("destination", ["https", "http", "ftp"])
+def test_media_redirects_use_fresh_credentials_and_allowed_schemes(
+    destination: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin = "https://media.invalid/start"
+    direct = "https://cdn.invalid/hop"
+    final = f"{destination}://cdn.invalid/file"
+    seen: list[tuple[str, bool, bool]] = []
+
+    def reply(handler: object, connection: object, req: object, **kwargs: object) -> MagicMock:
+        assert hasattr(req, "full_url") and hasattr(req, "add_header") and hasattr(req, "header_items")
+        url = req.full_url
+        if url == origin:
+            req.add_header("Authorization", "test-origin-credential")
+        headers = dict(req.header_items())
+        seen.append((url, "Authorization" in headers, "Proxy-authorization" in headers))
+        location = {origin: direct, direct: final}.get(url)
+        response = MagicMock(code=200 if location is None else 302, length=None)
+        response.info.return_value = {} if location is None else {"location": location}
+        response.__enter__.return_value = response
+        response.read.return_value = b"media"
+        return response
+
+    monkeypatch.setattr("urllib.request.getproxies", lambda: {"https": "http://test:fixture@proxy.invalid"})
+    monkeypatch.setattr("urllib.request.proxy_bypass", lambda host: host == "cdn.invalid")
+    monkeypatch.setattr("urllib.request.AbstractHTTPHandler.do_open", reply)
+    monkeypatch.setattr("urllib.request.FTPHandler.ftp_open", lambda *_: pytest.fail("FTP download"))
+    with Sender(SECRET) as exchange:
+        result = exchange.download(origin, 1, ("https",))
+    expected = [(origin, True, True), (direct, False, False)]
+    if destination == "https":
+        assert result == b"media" and seen == [*expected, (final, False, False)]
+    else:
+        assert result == 302 and seen == expected
+
+
+def test_a_sender_retained_after_a_failed_call_cannot_authenticate(
+    local_speech: XaiSpeech, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held: list[Sender] = []
+    request = Request(local_speech.config.endpoint, b"{}", 5)
+
+    def render(params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
+        held.append(exchange)
+        assert exchange(request) == 401
+        raise ProviderError(local_speech.id, 401)
+
+    monkeypatch.setattr(local_speech, "render", render)
+    _Recorder.status = 401
+    with pytest.raises(ProviderError):
+        local_speech.run({}, {}, SECRET, tmp_path / "out")
+    with pytest.raises(RuntimeError):
+        held[0](request)
+    assert SECRET not in repr(vars(held[0])) and len(_Recorder.seen) == 1
+
+
+def test_polling_accepts_a_collection_function(tmp_path: Path) -> None:
+    result = RunResult(tmp_path / "media")
+    replies = iter((None, result))
+    assert await_result(Patience(0, 5), lambda: next(replies)) == result
+
+
+def test_poller_lint_rejects_network_imports() -> None:
+    lint = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "--stdin-filename", "src/ambitious_video/cli/poll.py", "-"],
+        cwd=ROOT, input="import urllib.request\n", text=True, capture_output=True,
+    )
+    assert lint.returncode == 1 and "TID251" in lint.stdout and "providers/http.py" in lint.stdout
+
+
 def test_xai_speech_has_no_voice_of_its_own() -> None:
     adapter = XaiSpeech()
     assert (adapter.kind, adapter.id, adapter.models) == ("speech", "xai-speech", ("tts",))
@@ -504,6 +611,57 @@ def _locals_of(error: BaseException) -> str:
         parts.extend(repr(value) for value in frame.tb_frame.f_locals.values())
         frame = frame.tb_next
     return " ".join(parts)
+
+
+POLL_LABEL = "test-poll-correlation"
+MEDIA = b"test-downloaded-media"
+
+
+def _poll_replies(monkeypatch: pytest.MonkeyPatch, payload: dict[str, object]) -> None:
+    body = json.dumps({**payload, "correlation": POLL_LABEL, "echo": SECRET}).encode("utf-16")
+    replies = iter((body, MEDIA))
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", lambda *_args, **_kwargs: io.BytesIO(next(replies)))
+
+
+def _assert_poll_error_is_clean(error: BaseException) -> None:
+    assert error.__cause__ is None and error.__context__ is None
+    detail = _locals_of(error)
+    assert SECRET not in detail and POLL_LABEL not in detail and MEDIA.decode() not in detail
+
+
+@pytest.mark.parametrize("adapter", [XaiVideo(), SyncLipsync()], ids=["xai", "sync"])
+@pytest.mark.parametrize("status", [{}, 42], ids=["object", "number"])
+def test_poll_rejects_a_non_string_status(
+    adapter: DeferredProvider, status: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _poll_replies(monkeypatch, {"status": status})
+    with pytest.raises(ProviderError) as caught:
+        adapter.collect("job", SECRET, tmp_path / "out")
+    assert type(caught.value) is ProviderError
+    assert (caught.value.provider, caught.value.status) == (adapter.id, 0)
+    _assert_poll_error_is_clean(caught.value)
+
+
+@pytest.mark.parametrize(("adapter", "payload"), [
+    (XaiVideo(), {"status": "done", "video": {"url": "https://cdn.invalid/file"}}),
+    (SyncLipsync(), {"status": "COMPLETED", "outputUrl": "https://cdn.invalid/file"}),
+], ids=["xai", "sync"])
+def test_media_write_failure_discards_the_reply_and_chain(
+    adapter: DeferredProvider, payload: dict[str, object], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def disk_full(_path: Path, media: bytes) -> int:
+        assert media == MEDIA
+        try:
+            raise RuntimeError(POLL_LABEL)
+        except RuntimeError as cause:
+            raise OSError(errno.ENOSPC, "Disk full") from cause
+
+    _poll_replies(monkeypatch, payload)
+    monkeypatch.setattr(Path, "write_bytes", disk_full)
+    with pytest.raises(OSError) as caught:
+        adapter.collect("job", SECRET, tmp_path / "out")
+    assert caught.value.errno == errno.ENOSPC
+    _assert_poll_error_is_clean(caught.value)
 
 
 def test_a_refused_call_drops_the_key(tmp_path: Path, local_speech: XaiSpeech) -> None:
@@ -525,8 +683,8 @@ def test_a_network_error_drops_the_key(tmp_path: Path, monkeypatch: pytest.Monke
     def failed(*_args: object, **_kwargs: object) -> object:
         raise urllib.error.URLError(f"Bearer {SECRET}")
 
-    monkeypatch.setattr("urllib.request.urlopen", failed)
-    adapter = XaiSpeech()
+    monkeypatch.setattr("socket.create_connection", failed)
+    adapter = XaiSpeech(XaiSpeechConfig(endpoint="http://127.0.0.1/tts"))
     with pytest.raises(ProviderError) as caught:
         adapter.run(adapter.params(CLIP), {}, SECRET, tmp_path / "out.bin")
     assert caught.value.status == 0 and caught.value.__cause__ is None and caught.value.__context__ is None

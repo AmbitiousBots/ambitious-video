@@ -14,7 +14,7 @@ from ambitious_kit.domain.envelope import JsonObject
 from ambitious_video.domain.money import Price
 from ambitious_video.domain.types import GeneratedScene, PaidClip
 from ambitious_video.providers.base import ProviderError, RunResult
-from ambitious_video.providers.http import as_object, send
+from ambitious_video.providers.http import MediaProvider, Request, Sender, as_object
 from ambitious_video.providers.pricing import price_of
 
 RESOLUTIONS = ("1k", "2k")
@@ -39,7 +39,7 @@ def _picture(body: Mapping[str, object] | None) -> bytes | None:
         return None
 
 
-class XaiImage:
+class XaiImage(MediaProvider):
     kind: Final = "scene"
     id: Final = "xai-image"
     models: Final = ("grok-imagine-image", "grok-imagine-image-2.0")
@@ -75,9 +75,8 @@ class XaiImage:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        answer = send(self.config.endpoint, json.dumps(dict(params)).encode(), secret, self.config.timeout_seconds)
-        del secret
+    def render(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
+        answer = exchange(Request(self.config.endpoint, json.dumps(dict(params)).encode(), self.config.timeout_seconds))
         if isinstance(answer, int):
             raise ProviderError(self.id, answer)
         picture = _picture(as_object(answer))
