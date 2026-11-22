@@ -116,6 +116,8 @@ class XaiVideo(DeferredProvider):
         if body is None:
             raise ProviderError(self.id, 0)
         status = body.get("status")
+        if not isinstance(status, str):
+            raise ProviderError(self.id, 0)
         if status in GONE:
             raise RequestLost(self.id, 0)
         address = _video_url(body)

@@ -123,7 +123,7 @@ class Sender(AbstractContextManager["Sender"]):
 
     def __exit__(self, kind: type[BaseException] | None, error: BaseException | None, tb: TracebackType | None) -> None:
         self.__secret = None
-        if isinstance(error, (ProviderError, KeyboardInterrupt)):
+        if error is not None:
             error.__traceback__ = error.__cause__ = error.__context__ = None
 
 

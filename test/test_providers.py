@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import array
+import errno
 import io
 import json
 import math
@@ -33,9 +34,11 @@ from ambitious_video.domain.money import UNITS, Price
 from ambitious_video.domain.types import PaidClip, Speech
 from ambitious_video.providers.base import Patience, Provider, ProviderError, RunResult
 from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
-from ambitious_video.providers.http import MediaProvider, Request, Sender
+from ambitious_video.providers.http import DeferredProvider, MediaProvider, Request, Sender
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken, parse_prices, price_of, price_table
+from ambitious_video.providers.syncso_lipsync import SyncLipsync
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
+from ambitious_video.providers.xai_video import XaiVideo
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "examples" / "samples" / "example-bookshop"
@@ -608,6 +611,57 @@ def _locals_of(error: BaseException) -> str:
         parts.extend(repr(value) for value in frame.tb_frame.f_locals.values())
         frame = frame.tb_next
     return " ".join(parts)
+
+
+POLL_LABEL = "test-poll-correlation"
+MEDIA = b"test-downloaded-media"
+
+
+def _poll_replies(monkeypatch: pytest.MonkeyPatch, payload: dict[str, object]) -> None:
+    body = json.dumps({**payload, "correlation": POLL_LABEL, "echo": SECRET}).encode("utf-16")
+    replies = iter((body, MEDIA))
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", lambda *_args, **_kwargs: io.BytesIO(next(replies)))
+
+
+def _assert_poll_error_is_clean(error: BaseException) -> None:
+    assert error.__cause__ is None and error.__context__ is None
+    detail = _locals_of(error)
+    assert SECRET not in detail and POLL_LABEL not in detail and MEDIA.decode() not in detail
+
+
+@pytest.mark.parametrize("adapter", [XaiVideo(), SyncLipsync()], ids=["xai", "sync"])
+@pytest.mark.parametrize("status", [{}, 42], ids=["object", "number"])
+def test_poll_rejects_a_non_string_status(
+    adapter: DeferredProvider, status: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _poll_replies(monkeypatch, {"status": status})
+    with pytest.raises(ProviderError) as caught:
+        adapter.collect("job", SECRET, tmp_path / "out")
+    assert type(caught.value) is ProviderError
+    assert (caught.value.provider, caught.value.status) == (adapter.id, 0)
+    _assert_poll_error_is_clean(caught.value)
+
+
+@pytest.mark.parametrize(("adapter", "payload"), [
+    (XaiVideo(), {"status": "done", "video": {"url": "https://cdn.invalid/file"}}),
+    (SyncLipsync(), {"status": "COMPLETED", "outputUrl": "https://cdn.invalid/file"}),
+], ids=["xai", "sync"])
+def test_media_write_failure_discards_the_reply_and_chain(
+    adapter: DeferredProvider, payload: dict[str, object], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def disk_full(_path: Path, media: bytes) -> int:
+        assert media == MEDIA
+        try:
+            raise RuntimeError(POLL_LABEL)
+        except RuntimeError as cause:
+            raise OSError(errno.ENOSPC, "Disk full") from cause
+
+    _poll_replies(monkeypatch, payload)
+    monkeypatch.setattr(Path, "write_bytes", disk_full)
+    with pytest.raises(OSError) as caught:
+        adapter.collect("job", SECRET, tmp_path / "out")
+    assert caught.value.errno == errno.ENOSPC
+    _assert_poll_error_is_clean(caught.value)
 
 
 def test_a_refused_call_drops_the_key(tmp_path: Path, local_speech: XaiSpeech) -> None:
