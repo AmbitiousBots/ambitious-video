@@ -15,8 +15,8 @@ from ambitious_kit.domain.envelope import JsonObject
 
 from ambitious_video.domain.money import Price
 from ambitious_video.domain.types import GeneratedScene, PaidClip
-from ambitious_video.providers.base import Patience, ProviderError, RequestLost, RunResult, await_result
-from ambitious_video.providers.http import as_object, send
+from ambitious_video.providers.base import Patience, ProviderError, RequestLost, RunResult
+from ambitious_video.providers.http import DeferredProvider, Request, Sender, as_object, send
 from ambitious_video.providers.pricing import price_of
 
 REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
@@ -54,7 +54,7 @@ def _video_url(body: Mapping[str, object], schemes: tuple[str, ...]) -> str | No
     return found
 
 
-class XaiVideo:
+class XaiVideo(DeferredProvider):
     kind: Final = "scene"
     id: Final = "xai-video"
     models: Final = ("grok-imagine-video", "grok-imagine-video-1.5", "grok-imagine-video-1.5-lite")
@@ -65,7 +65,7 @@ class XaiVideo:
 
     def __init__(self, config: XaiVideoConfig | None = None) -> None:
         self.config: Final = XaiVideoConfig() if config is None else config
-        self.patience: Final = Patience(self.config.poll_seconds, self.config.wait_seconds)
+        self.patience = Patience(self.config.poll_seconds, self.config.wait_seconds)
 
     def faults(self, step: GeneratedScene) -> tuple[tuple[str, str], ...]:
         found: list[tuple[str, str]] = []
@@ -94,12 +94,11 @@ class XaiVideo:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def submit(self, params: JsonObject, inputs: Mapping[str, Path], secret: str) -> str:
+    def start(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender) -> str:
         sent = dict(params)
         if REFERENCE in inputs:
             sent[REFERENCE] = {"url": _data_url(inputs[REFERENCE])}
-        answer = send(self.config.submit_url, json.dumps(sent).encode(), secret, self.config.timeout_seconds)
-        del secret
+        answer = exchange(Request(self.config.submit_url, json.dumps(sent).encode(), self.config.timeout_seconds))
         if isinstance(answer, int):
             raise ProviderError(self.id, answer)
         body = as_object(answer)
@@ -108,12 +107,10 @@ class XaiVideo:
             raise ProviderError(self.id, 0)
         return found
 
-    def collect(self, request_id: str, secret: str, out: Path) -> RunResult | None:
+    def poll(self, request_id: str, exchange: Sender, out: Path) -> RunResult | None:
         if REQUEST_ID.fullmatch(request_id) is None:
-            del secret
             raise RequestLost(self.id, 0)
-        answer = send(self.config.status_url + request_id, None, secret, self.config.timeout_seconds)
-        del secret
+        answer = exchange(Request(self.config.status_url + request_id, None, self.config.timeout_seconds))
         if isinstance(answer, int) and answer in UNKNOWN:
             raise RequestLost(self.id, answer)
         if isinstance(answer, int):
@@ -134,15 +131,3 @@ class XaiVideo:
             raise ProviderError(self.id, video if isinstance(video, int) else 0)
         out.write_bytes(video)
         return RunResult(out)
-
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        try:
-            request_id = self.submit(params, inputs, secret)
-            found = await_result(self, request_id, secret, out)
-        except BaseException:
-            del secret
-            raise
-        del secret
-        if found is None:
-            raise ProviderError(self.id, 0)
-        return found

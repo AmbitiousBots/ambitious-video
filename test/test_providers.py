@@ -288,24 +288,15 @@ def test_estimate_names_the_provider_the_model_the_units_and_the_price_source(tm
     assert len(str(data["usd"]).partition(".")[2]) == 6
 
 
-def test_a_cached_step_is_estimated_at_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    class Answer(io.BytesIO):
-        def __enter__(self) -> Answer:
-            return self
-
-    def opened(request: object, timeout: float = 0) -> Answer:
-        sent = json.loads(getattr(request, "data", b"{}"))
-        return Answer(_tone(sent["text"]))
-
-    script, folder = _project(tmp_path, "xai-speech", "tts")
+def test_a_cached_step_is_estimated_at_zero(tmp_path: Path, fake_speech: TestSpeech) -> None:
+    script, folder = _project(tmp_path, fake_speech.id, "small")
     home, shared = tmp_path / "home", tmp_path / "shared"
     quiet = {"AMBITIOUS_HOME": str(home)}
     before = engine.estimate_data(script, folder, quiet, shared)
-    monkeypatch.setattr("urllib.request.urlopen", opened)
     db = _open(home)
     try:
         db.execute("BEGIN IMMEDIATE")
-        engine.render_new(db, dict(script), folder, "job-one", FIRST, {**quiet, "XAI_API_KEY": SECRET}, shared)
+        engine.render_new(db, dict(script), folder, "job-one", FIRST, {**quiet, fake_speech.secret: SECRET}, shared)
         db.execute("COMMIT")
     finally:
         db.close()
@@ -321,7 +312,7 @@ def test_a_cached_step_is_estimated_at_zero(tmp_path: Path, monkeypatch: pytest.
     first["text"] = first["text"] + " Changed."
     partly = _paid(engine.estimate_data(changed, folder, quiet, shared))
     assert [line["cached"] for line in partly] == [False] + [True] * (len(partly) - 1)
-    assert Decimal(str(partly[0]["usd"])) == Decimal(len(first["text"])) * Decimal("0.000015")
+    assert Decimal(str(partly[0]["usd"])) == Decimal(len(first["text"])) * fake_speech.price("small").usd_per_unit
 
 
 def test_every_price_has_a_unit_a_source_and_a_date() -> None:
@@ -525,8 +516,8 @@ def test_a_network_error_drops_the_key(tmp_path: Path, monkeypatch: pytest.Monke
     def failed(*_args: object, **_kwargs: object) -> object:
         raise urllib.error.URLError(f"Bearer {SECRET}")
 
-    monkeypatch.setattr("urllib.request.urlopen", failed)
-    adapter = XaiSpeech()
+    monkeypatch.setattr("socket.create_connection", failed)
+    adapter = XaiSpeech(XaiSpeechConfig(endpoint="http://127.0.0.1/tts"))
     with pytest.raises(ProviderError) as caught:
         adapter.run(adapter.params(CLIP), {}, SECRET, tmp_path / "out.bin")
     assert caught.value.status == 0 and caught.value.__cause__ is None and caught.value.__context__ is None

@@ -13,7 +13,7 @@ from ambitious_kit.domain.envelope import JsonObject
 from ambitious_video.domain.money import Price
 from ambitious_video.domain.types import PaidClip, Speech
 from ambitious_video.providers.base import ProviderError, RunResult
-from ambitious_video.providers.http import KeyHeader, send
+from ambitious_video.providers.http import KeyHeader, MediaProvider, Request, Sender
 from ambitious_video.providers.pricing import price_of
 
 HOST = "https://api.elevenlabs.io"
@@ -31,7 +31,7 @@ class ElevenLabsSpeechConfig:
     timeout_seconds: float = 120
 
 
-class ElevenLabsSpeech:
+class ElevenLabsSpeech(MediaProvider):
     kind: Final = "speech"
     id: Final = "elevenlabs-speech"
     models: Final = tuple(MODEL_IDS)
@@ -59,13 +59,12 @@ class ElevenLabsSpeech:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
+    def render(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
         voice = quote(str(params["voice_id"]), safe="")
         chosen = urlencode({"output_format": str(params["output_format"])})
         url = self.config.endpoint + "/" + voice + "?" + chosen
         sent = {"text": params["text"], "model_id": params["model_id"]}
-        answer = send(url, json.dumps(sent).encode(), secret, self.config.timeout_seconds, KEY_HEADER)
-        del secret
+        answer = exchange(Request(url, json.dumps(sent).encode(), self.config.timeout_seconds, KEY_HEADER))
         if isinstance(answer, int):
             raise ProviderError(self.id, answer)
         out.write_bytes(answer)
