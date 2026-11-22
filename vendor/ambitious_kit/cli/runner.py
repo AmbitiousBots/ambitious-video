@@ -235,10 +235,10 @@ def _read_stdin() -> str:
     return "" if sys.stdin.isatty() else sys.stdin.buffer.read().decode("utf-8", errors="replace")
 
 
-def run_cli(spec: ModuleSpec, *, env: Mapping[str, str] | None = None) -> int:
+def run_cli(spec: ModuleSpec) -> int:
     io = Io(
         argv=sys.argv[1:],
-        env=os.environ if env is None else env,
+        env=os.environ,
         binary_path=sys.argv[0],
         read_stdin=_read_stdin,
         system_now=lambda: datetime.now(UTC),

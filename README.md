@@ -320,7 +320,7 @@ Add the adapter in `src/ambitious_video/providers/` and register it in `provider
 
 A `DeferredProvider` implements `start(params, inputs, exchange)` to return a request ID and `poll(request_id, exchange, out)` to return `RunResult(out)` when ready or `None` while waiting. Set `patience` to the poll interval and maximum wait. Raise `RequestLost` when the provider reports that it lost or rejected the job.
 
-Send authenticated requests with `exchange(Request(...))`. It returns response bytes on success or an integer status on failure. Use the keyless transport in `providers/http.py` for media downloads. Ruff directs adapter network imports to that module.
+Send authenticated requests with `exchange(Request(...))`. It returns response bytes on success or an integer status on failure. Use `exchange.download(url, timeout, schemes)` for keyless media downloads. Each redirect starts a fresh GET and must use an allowed scheme. Ruff directs adapter network imports to that module.
 
 A scene adapter implements `SceneMaker.output` and `faults(step)` for validation. A lip-sync adapter implements `LipSyncer.lip_faults(step)`. Its `start` method receives the presenter under `video` or `image` and the mixed sound under `audio`.
 

@@ -4,7 +4,6 @@ import base64
 import json
 import mimetypes
 import re
-import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -16,7 +15,7 @@ from ambitious_kit.domain.envelope import JsonObject
 from ambitious_video.domain.money import Price
 from ambitious_video.domain.types import GeneratedScene, PaidClip
 from ambitious_video.providers.base import Patience, ProviderError, RequestLost, RunResult
-from ambitious_video.providers.http import DeferredProvider, Request, Sender, as_object, send
+from ambitious_video.providers.http import DeferredProvider, Request, Sender, as_object
 from ambitious_video.providers.pricing import price_of
 
 REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
@@ -46,12 +45,10 @@ def _data_url(path: Path) -> str:
     return "data:" + kind + ";base64," + base64.b64encode(path.read_bytes()).decode()
 
 
-def _video_url(body: Mapping[str, object], schemes: tuple[str, ...]) -> str | None:
+def _video_url(body: Mapping[str, object]) -> str | None:
     video = body.get("video")
     found = video.get("url") if isinstance(video, dict) else None
-    if not isinstance(found, str) or urllib.parse.urlsplit(found).scheme not in schemes:
-        return None
-    return found
+    return found if isinstance(found, str) else None
 
 
 class XaiVideo(DeferredProvider):
@@ -121,12 +118,12 @@ class XaiVideo(DeferredProvider):
         status = body.get("status")
         if status in GONE:
             raise RequestLost(self.id, 0)
-        address = _video_url(body, self.config.download_schemes)
+        address = _video_url(body)
         if address is None and status == DONE:
             raise ProviderError(self.id, 0)
         if address is None:
             return None
-        video = send(address, None, None, self.config.timeout_seconds)
+        video = exchange.download(address, self.config.timeout_seconds, self.config.download_schemes)
         if isinstance(video, int) or video == b"":
             raise ProviderError(self.id, video if isinstance(video, int) else 0)
         out.write_bytes(video)

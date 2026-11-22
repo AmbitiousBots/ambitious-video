@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -15,7 +14,7 @@ from ambitious_kit.domain.envelope import JsonObject
 from ambitious_video.domain.money import Price
 from ambitious_video.domain.types import LipSync, PaidClip
 from ambitious_video.providers.base import Patience, ProviderError, RequestLost, RunResult
-from ambitious_video.providers.http import DeferredProvider, KeyHeader, Request, Sender, as_object, send
+from ambitious_video.providers.http import DeferredProvider, KeyHeader, Request, Sender, as_object
 from ambitious_video.providers.pricing import price_of
 
 REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
@@ -82,11 +81,9 @@ def form_of(fields: Mapping[str, str], files: Mapping[str, Path]) -> tuple[bytes
     return b"".join(line + BREAK + part for part in parts) + line + b"--" + BREAK, FORM_TYPE + boundary
 
 
-def _output_url(body: Mapping[str, object], schemes: tuple[str, ...]) -> str | None:
+def _output_url(body: Mapping[str, object]) -> str | None:
     found = body.get("outputUrl")
-    if not isinstance(found, str) or urllib.parse.urlsplit(found).scheme not in schemes:
-        return None
-    return found
+    return found if isinstance(found, str) else None
 
 
 class SyncLipsync(DeferredProvider):
@@ -153,10 +150,10 @@ class SyncLipsync(DeferredProvider):
             raise RequestLost(self.id, 0)
         if status != DONE:
             return None
-        address = _output_url(body, self.config.download_schemes)
+        address = _output_url(body)
         if address is None:
             raise ProviderError(self.id, 0)
-        video = send(address, None, None, self.config.timeout_seconds)
+        video = exchange.download(address, self.config.timeout_seconds, self.config.download_schemes)
         if isinstance(video, int) or video == b"":
             raise ProviderError(self.id, video if isinstance(video, int) else 0)
         out.write_bytes(video)

@@ -37,6 +37,7 @@ from ambitious_video.domain.plan import plan_sha
 from ambitious_video.domain.types import ClipTrack, PaidClip, Speech, Voiceover
 from ambitious_video.providers.base import Provider, RunResult
 from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
+from ambitious_video.providers.http import MediaProvider, Sender
 from ambitious_video.providers.xai_image import XaiImage, XaiImageConfig
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
 from ambitious_video.providers.xai_video import XaiVideo, XaiVideoConfig
@@ -64,7 +65,7 @@ def _tone(text: str) -> bytes:
     return buffer.getvalue()
 
 
-class KeyedSpeech:
+class KeyedSpeech(MediaProvider):
     kind: Final = "speech"
     models: Final = ("only",)
     seedable: Final = False
@@ -88,8 +89,8 @@ class KeyedSpeech:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        assert secret == self.value and inputs == {}
+    def render(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
+        assert exchange.public_text(self.value) is None and inputs == {}
         self.calls.append(str(params["say"]))
         out.write_bytes(_tone(str(params["say"])))
         return RunResult(out)
@@ -517,6 +518,22 @@ def shell(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -
     monkeypatch.setattr(runner, "selfcheck", runner.selfcheck)
     monkeypatch.setattr(runner, "_read_stdin", runner._read_stdin)
     return _Shell(monkeypatch, capsys)
+
+
+def test_launcher_preserves_the_outer_kit_error_envelope(
+    shell: _Shell, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unavailable(limit: int) -> int:
+        raise RuntimeError("seed unavailable")
+
+    monkeypatch.setattr("secrets.randbelow", unavailable)
+    monkeypatch.setattr(sys, "argv", ["ambitious-video", "--version"])
+    assert main.main() == 2
+    captured = shell.capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["module"] == "video" and result["command"] == "" and result["meta"]["seed"] == 0
+    assert [entry["code"] for entry in result["errors"]] == ["E_INTERNAL"]
+    assert "seed unavailable" in captured.err
 
 
 @pytest.mark.parametrize("entry", ["adapter", "cli"])

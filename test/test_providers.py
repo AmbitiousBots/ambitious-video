@@ -16,7 +16,9 @@ from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.resources import files
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Final
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -31,7 +33,7 @@ from ambitious_video.domain.money import UNITS, Price
 from ambitious_video.domain.types import PaidClip, Speech
 from ambitious_video.providers.base import Patience, Provider, ProviderError, RunResult
 from ambitious_video.providers.elevenlabs_speech import ElevenLabsSpeech, ElevenLabsSpeechConfig
-from ambitious_video.providers.http import Request, Sender
+from ambitious_video.providers.http import MediaProvider, Request, Sender
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken, parse_prices, price_of, price_table
 from ambitious_video.providers.xai_speech import XaiSpeech, XaiSpeechConfig
 
@@ -81,7 +83,7 @@ def _tone(text: str) -> bytes:
     return buffer.getvalue()
 
 
-class TestSpeech:
+class TestSpeech(MediaProvider):
     __test__ = False
     kind: Final = "speech"
     id: Final = "test-speech"
@@ -104,8 +106,8 @@ class TestSpeech:
     def quote(self, params: JsonObject, units: Decimal) -> Decimal:
         return self.price(str(params["model"])).usd_per_unit * units
 
-    def run(self, params: JsonObject, inputs: Mapping[str, Path], secret: str, out: Path) -> RunResult:
-        assert secret == SECRET and inputs == {}
+    def render(self, params: JsonObject, inputs: Mapping[str, Path], exchange: Sender, out: Path) -> RunResult:
+        assert exchange.public_text(SECRET) is None and inputs == {}
         self.calls.append((str(params["say"]), str(params["as"])))
         out.write_bytes(_tone(str(params["say"])))
         return RunResult(out)
@@ -380,6 +382,13 @@ def test_a_missing_or_broken_price_is_refused() -> None:
             parse_prices(text)
 
 
+def test_registration_requires_the_shared_transport() -> None:
+    provider = SimpleNamespace(id="raw-key-provider", run=lambda params, inputs, secret, out: RunResult(out))
+    with pytest.raises(TypeError, match="providers/http.py"):
+        providers.register(provider)
+    assert providers.find(provider.id) is None
+
+
 def test_the_registry_refuses_a_second_adapter_with_the_same_id(fake_speech: TestSpeech) -> None:
     found: Provider | None = providers.find("test-speech")
     assert found is fake_speech and providers.find("no-such-provider") is None
@@ -509,6 +518,42 @@ def test_speech_rejects_an_http_200_error_echo_before_writing_audio(
     with pytest.raises(ProviderError) as caught:
         local_speech.run(local_speech.params(CLIP), {}, SECRET, out)
     assert caught.value.status == 0 and not out.exists() and SECRET not in _locals_of(caught.value)
+
+
+@pytest.mark.parametrize("destination", ["https", "http", "ftp"])
+def test_media_redirects_use_fresh_credentials_and_allowed_schemes(
+    destination: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin = "https://media.invalid/start"
+    direct = "https://cdn.invalid/hop"
+    final = f"{destination}://cdn.invalid/file"
+    seen: list[tuple[str, bool, bool]] = []
+
+    def reply(handler: object, connection: object, req: object, **kwargs: object) -> MagicMock:
+        assert hasattr(req, "full_url") and hasattr(req, "add_header") and hasattr(req, "header_items")
+        url = req.full_url
+        if url == origin:
+            req.add_header("Authorization", "test-origin-credential")
+        headers = dict(req.header_items())
+        seen.append((url, "Authorization" in headers, "Proxy-authorization" in headers))
+        location = {origin: direct, direct: final}.get(url)
+        response = MagicMock(code=200 if location is None else 302, length=None)
+        response.info.return_value = {} if location is None else {"location": location}
+        response.__enter__.return_value = response
+        response.read.return_value = b"media"
+        return response
+
+    monkeypatch.setattr("urllib.request.getproxies", lambda: {"https": "http://test:fixture@proxy.invalid"})
+    monkeypatch.setattr("urllib.request.proxy_bypass", lambda host: host == "cdn.invalid")
+    monkeypatch.setattr("urllib.request.AbstractHTTPHandler.do_open", reply)
+    monkeypatch.setattr("urllib.request.FTPHandler.ftp_open", lambda *_: pytest.fail("FTP download"))
+    with Sender(SECRET) as exchange:
+        result = exchange.download(origin, 1, ("https",))
+    expected = [(origin, True, True), (direct, False, False)]
+    if destination == "https":
+        assert result == b"media" and seen == [*expected, (final, False, False)]
+    else:
+        assert result == 302 and seen == expected
 
 
 def test_a_sender_retained_after_a_failed_call_cannot_authenticate(

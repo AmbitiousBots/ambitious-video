@@ -6,7 +6,8 @@ import os
 import shutil
 import sqlite3
 import tempfile
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -84,13 +85,13 @@ from ambitious_video.media.audio import Piece, write_wav
 from ambitious_video.media.film import STORED_AS, TO_RGB, Made, canvas_for, encode, frame_at, matches, prepare
 from ambitious_video.media.probe import duration_of, frame_count, inspect, stored_as
 from ambitious_video.providers.base import (
-    Deferred,
     LipSyncer,
     Provider,
     ProviderError,
     RequestLost,
     SceneMaker,
 )
+from ambitious_video.providers.http import DeferredProvider
 from ambitious_video.providers.pricing import PriceMissing, PriceTableBroken
 from ambitious_video.steps import compile_clip
 from ambitious_video.steps.common import readable_font, readable_image
@@ -585,7 +586,7 @@ def _stuck(item: Paid, request_id: str, status: int) -> Failure:
     )
 
 
-def _submit(db: sqlite3.Connection, item: Paid, maker: Deferred, env: Mapping[str, str], stamp: str) -> str:
+def _submit(db: sqlite3.Connection, item: Paid, maker: DeferredProvider, env: Mapping[str, str], stamp: str) -> str:
     params = item.spec.params if isinstance(item.spec.params, Mapping) else {}
     request_id = maker.submit(params, item.inputs, env.get(item.provider.secret, ""))
     begin(db)
@@ -595,7 +596,7 @@ def _submit(db: sqlite3.Connection, item: Paid, maker: Deferred, env: Mapping[st
 
 
 def _later(
-    db: sqlite3.Connection, item: Paid, maker: Deferred, env: Mapping[str, str], job_id: str, stamp: str
+    db: sqlite3.Connection, item: Paid, maker: DeferredProvider, env: Mapping[str, str], job_id: str, stamp: str
 ) -> bytes:
     work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
     try:
@@ -609,6 +610,7 @@ def _later(
                 maker.patience, lambda: maker.collect(request_id, env.get(item.provider.secret, ""), out)
             )
         except RequestLost:
+            del request_id
             begin(db)
             forget_request(db, item.key)
             commit(db)
@@ -634,7 +636,7 @@ def _send_ahead(
 ) -> None:
     for key, item in {item.key: item for item in paid}.items():
         maker = item.provider
-        if not isinstance(maker, Deferred) or isinstance(item.clip, LipSync) or _stored(db, store, key):
+        if not isinstance(maker, DeferredProvider) or isinstance(item.clip, LipSync) or _stored(db, store, key):
             continue
         if _keyless(db, store, item, env):
             raise _no_key(secrets_needed((item,), env))
@@ -665,7 +667,7 @@ def _run(
         begin(db)
         forget_request(db, item.key)
         commit(db)
-    if isinstance(item.provider, Deferred):
+    if isinstance(item.provider, DeferredProvider):
         return _later(db, item, item.provider, env, job_id, stamp)
     work = Path(tempfile.mkdtemp(prefix="ambitious-video-"))
     try:
@@ -971,6 +973,17 @@ def _remember_assets(db: sqlite3.Connection, script: Script, root: Path) -> None
             insert_asset(db, file_sha(full), path, kind)
 
 
+@contextmanager
+def _render_env(source: Mapping[str, str]) -> Iterator[dict[str, str]]:
+    env = {provider.secret: source.get(provider.secret, "") for provider in providers.registered()}
+    env["AMBITIOUS_HOME"] = source.get("AMBITIOUS_HOME", "")
+    del source
+    try:
+        yield env
+    finally:
+        env.clear()
+
+
 def render_new(
     db: sqlite3.Connection,
     raw: object,
@@ -983,6 +996,22 @@ def render_new(
     offline: bool = False,
     resend: bool = False,
     max_usd: Decimal | None = None,
+) -> JsonObject:
+    with _render_env(env) as env:
+        return _render_new(db, raw, root, job_id, when, env, cache_flag, offline, resend, max_usd)
+
+
+def _render_new(
+    db: sqlite3.Connection,
+    raw: object,
+    root: Path,
+    job_id: str,
+    when: datetime,
+    env: Mapping[str, str],
+    cache_flag: Path | None,
+    offline: bool,
+    resend: bool,
+    max_usd: Decimal | None,
 ) -> JsonObject:
     script, timeline, _taken = studied(raw, root, require_files=True, offline=offline)
     store = cache_root(env, cache_flag, script, root)
@@ -1047,6 +1076,21 @@ def render_again(
     offline: bool = False,
     resend: bool = False,
     max_usd: Decimal | None = None,
+) -> JsonObject:
+    with _render_env(env) as env:
+        return _render_again(db, job_id, raw, when, env, cache_flag, offline, resend, max_usd)
+
+
+def _render_again(
+    db: sqlite3.Connection,
+    job_id: str,
+    raw: object | None,
+    when: datetime,
+    env: Mapping[str, str],
+    cache_flag: Path | None,
+    offline: bool,
+    resend: bool,
+    max_usd: Decimal | None,
 ) -> JsonObject:
     row = read_job(db, job_id)
     if row is None:
