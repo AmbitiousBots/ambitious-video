@@ -23,6 +23,7 @@ from ambitious_kit.cli.runner import Io, ModuleSpec, cli_envelope
 from ambitious_kit.db.sqlite import load_migrations
 from ambitious_kit.domain.clock import format_instant
 from ambitious_kit.domain.envelope import MAX_SEED, ErrorEntry, Failure, Identity, JsonObject, Meta, err, failure
+from ambitious_kit.runtime import PinnedRuntime
 
 from ambitious_video import providers
 from ambitious_video.cli import engine, guide
@@ -32,7 +33,7 @@ from ambitious_video.domain.need import NeedTool
 from ambitious_video.install.tools import tool_report, tool_warnings
 from ambitious_video.providers.base import ProviderError
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 SCRIPT_DIR: ContextVar[Path] = ContextVar("script_dir", default=Path())
 CACHE_DIR: ContextVar[Path | None] = ContextVar("cache_dir", default=None)
 OLDER_THAN: ContextVar[str | None] = ContextVar("older_than", default=None)
@@ -334,13 +335,34 @@ def _with_tools(data: JsonObject) -> JsonObject:
 
 
 class _Selfcheck(Protocol):
-    def __call__(self, *, module: str, db_path: str, binary_path: str, migrations: object) -> JsonObject: ...
+    def __call__(
+        self,
+        *,
+        module: str,
+        db_path: str,
+        binary_path: str,
+        migrations: object,
+        runtime: PinnedRuntime | None = None,
+    ) -> JsonObject: ...
 
 
 def _patched_selfcheck(original: _Selfcheck) -> _Selfcheck:
-    def wrapped(*, module: str, db_path: str, binary_path: str, migrations: object) -> JsonObject:
+    def wrapped(
+        *,
+        module: str,
+        db_path: str,
+        binary_path: str,
+        migrations: object,
+        runtime: PinnedRuntime | None = None,
+    ) -> JsonObject:
         try:
-            data = original(module=module, db_path=db_path, binary_path=binary_path, migrations=migrations)
+            data = original(
+                module=module,
+                db_path=db_path,
+                binary_path=binary_path,
+                migrations=migrations,
+                runtime=runtime,
+            )
         except Failure as error:
             raise Failure(error.errors, _with_tools(error.data)) from None
         return _with_tools(data)

@@ -4,7 +4,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 VALUE_FLAGS = ("in", "db", "now", "seed")
-FLAG_USAGE = "[--in file] [--db path] [--now ISO8601] [--seed int] [--json]"
+SWITCHES = ("json", "help")
+FLAG_USAGE = "[--in file] [--db path] [--now ISO8601] [--seed int] [--json] [--help]"
 
 
 @dataclass(frozen=True)
@@ -15,13 +16,14 @@ class ParsedArgs:
     now: str | None
     seed: str | None
     problems: tuple[str, ...]
+    help: bool = False
 
 
 def parse_args(argv: Sequence[str]) -> ParsedArgs:
     words: list[str] = []
     problems: list[str] = []
     values: dict[str, str] = {}
-    json_seen = False
+    switches: set[str] = set()
     index = 0
     while index < len(argv):
         token = argv[index]
@@ -30,10 +32,10 @@ def parse_args(argv: Sequence[str]) -> ParsedArgs:
             words.append(token)
             continue
         name, equals, inline = token[2:].partition("=")
-        if name == "json" and equals == "":
-            if json_seen:
-                problems.append("The flag --json was given more than once.")
-            json_seen = True
+        if name in SWITCHES and equals == "":
+            if name in switches:
+                problems.append(f"The flag --{name} was given more than once.")
+            switches.add(name)
             continue
         if name not in VALUE_FLAGS:
             problems.append(f'Unknown flag "{token}".')
@@ -58,4 +60,5 @@ def parse_args(argv: Sequence[str]) -> ParsedArgs:
         now=values.get("now"),
         seed=values.get("seed"),
         problems=tuple(problems),
+        help="help" in switches,
     )

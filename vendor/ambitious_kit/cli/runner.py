@@ -32,8 +32,10 @@ from ambitious_kit.domain.envelope import (
     is_semver,
     ok,
 )
+from ambitious_kit.domain.input_shape import listed_shape, shape_problems
 from ambitious_kit.domain.migrations import Migration
 from ambitious_kit.paths import ambitious_home, refuse_agent_data
+from ambitious_kit.runtime import pinned_runtime
 
 BUILT_IN = ("selfcheck", "commands")
 
@@ -45,6 +47,7 @@ class ModuleSpec:
     schema_version: int
     migrations: Sequence[Migration]
     commands: Mapping[str, Command]
+    runtime_lock: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,9 @@ def _checked_spec(spec: ModuleSpec) -> None:
         if not is_command_name(name)
     )
     wrong.extend(f'command "{name}" is provided by the kit' for name in spec.commands if name in BUILT_IN)
+    for name, declared in spec.commands.items():
+        if declared.shape is not None:
+            wrong.extend(shape_problems(name, declared.takes_input, declared.shape))
     if wrong:
         raise ValueError(f"The module spec is not valid: {'; '.join(wrong)}.")
 
@@ -149,21 +155,30 @@ def cli_envelope(spec: ModuleSpec, io: Io) -> Envelope:
 
     commands: dict[str, Command] = dict(spec.commands)
 
-    def describe_commands(_context: Context[None]) -> JsonObject:
-        return {
+    def describe_commands(only: str | None) -> Callable[[Context[None]], JsonObject]:
+        return lambda _context: {
             "commands": [
-                {"name": name, "access": listed.access, "input": listed.takes_input}
+                {
+                    "name": name,
+                    "access": listed.access,
+                    "input": listed.takes_input,
+                    **({} if listed.shape is None else listed_shape(listed.shape)),
+                }
                 for name, listed in sorted(commands.items())
+                if only is None or name == only
             ]
         }
 
     commands["selfcheck"] = Command("write", False, lambda _raw: lambda _runtime: {})
-    commands["commands"] = pure_command(describe_commands, no_input)
-    name = " ".join(args.words)
+    commands["commands"] = pure_command(describe_commands(None), no_input)
+    asked = " ".join(args.words)
+    name = "commands" if args.help and len(args.words) == 0 else asked
     command = commands.get(name)
+    if args.help and command is not None and len(args.words) > 0:
+        command = pure_command(describe_commands(name), no_input)
     valid = ", ".join(sorted(commands))
     usage_errors: list[ErrorEntry] = []
-    if len(args.words) == 0:
+    if len(args.words) == 0 and not args.help:
         usage_errors.append(_usage("No command was given.", f"Use one of: {valid}."))
     elif command is None:
         usage_errors.append(_usage(f'Unknown command "{name}".', f"Use one of: {valid}."))
@@ -183,7 +198,7 @@ def cli_envelope(spec: ModuleSpec, io: Io) -> Envelope:
             )
         )
     if command is None or usage_errors:
-        return err(identity("" if command is None else name), usage_errors)
+        return err(identity("" if command is None else asked), usage_errors)
 
     connections: list[sqlite3.Connection] = []
     try:
@@ -191,11 +206,19 @@ def cli_envelope(spec: ModuleSpec, io: Io) -> Envelope:
         db_path = refuse_agent_data(args.db or os.path.join(home, spec.module, f"{spec.module}.sqlite"))
         if args.input_file is not None:
             refuse_agent_data(args.input_file)
-        run = command.parse(_read_input(name, command.takes_input, args, io))
-        if name == "selfcheck":
+        run = command.parse(None if args.help else _read_input(name, command.takes_input, args, io))
+        if name == "selfcheck" and not args.help:
             return ok(
                 identity(name),
-                selfcheck(module=spec.module, db_path=db_path, binary_path=io.binary_path, migrations=spec.migrations),
+                selfcheck(
+                    module=spec.module,
+                    db_path=db_path,
+                    binary_path=io.binary_path,
+                    migrations=spec.migrations,
+                    runtime=None
+                    if spec.runtime_lock is None
+                    else pinned_runtime(io.env, spec.module, spec.runtime_lock),
+                ),
             )
         readonly = command.access == "read"
 

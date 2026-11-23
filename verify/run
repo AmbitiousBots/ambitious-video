@@ -424,19 +424,27 @@ PY
 
 echo "== help, version, guide: the printed example renders and verifies =="
 "$PY" dist/ambitious-video.pyz --help --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/help.json"
+"$PY" dist/ambitious-video.pyz help --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/usage.json"
 "$PY" dist/ambitious-video.pyz --version --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/version.json"
 "$PY" dist/ambitious-video.pyz guide --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/guide.json"
 "$PY" - "$WORK" examples/titles-and-captions.yaml <<'PY'
 import json, sys
 from pathlib import Path
 work = Path(sys.argv[1])
-for name in ("help", "version", "guide"):
-    body = json.loads((work / f"{name}.json").read_text(encoding="utf-8"))
-    if not body["ok"] or body["command"] != name:
-        raise SystemExit(body)
-if json.loads((work / "version.json").read_text(encoding="utf-8"))["data"]["version"] != "0.1.0":
-    raise SystemExit("--version did not report 0.1.0")
-script = json.loads((work / "guide.json").read_text(encoding="utf-8"))["data"]["example"]["script"]
+listed = json.loads((work / "help.json").read_text(encoding="utf-8"))
+names = [entry["name"] for entry in listed["data"]["commands"]]
+if not listed["ok"] or listed["command"] != "commands" or not {"help", "version", "guide", "selfcheck"} <= set(names):
+    raise SystemExit(listed)
+usage = json.loads((work / "usage.json").read_text(encoding="utf-8"))
+if not usage["ok"] or usage["command"] != "help" or not str(usage["data"]["usage"]).startswith("ambitious-video"):
+    raise SystemExit(usage)
+version = json.loads((work / "version.json").read_text(encoding="utf-8"))
+if not version["ok"] or version["command"] != "version" or version["data"]["version"] != "0.1.1":
+    raise SystemExit(version)
+guide = json.loads((work / "guide.json").read_text(encoding="utf-8"))
+if not guide["ok"] or guide["command"] != "guide":
+    raise SystemExit(guide)
+script = guide["data"]["example"]["script"]
 if script != Path(sys.argv[2]).read_text(encoding="utf-8"):
     raise SystemExit("guide does not print examples/titles-and-captions.yaml")
 (work / "guide").mkdir()

@@ -21,7 +21,7 @@ def pure_copy(source: Path, dest: Path) -> None:
 
 
 def main() -> None:
-    target = ROOT / "dist" / "ambitious-video-0.1.0.pyz"
+    target = ROOT / "dist" / "ambitious-video-0.1.1.pyz"
     stage = ROOT / "dist" / "yaml"
     if stage.exists():
         for path in sorted(stage.rglob("*"), reverse=True):

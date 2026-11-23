@@ -15,8 +15,8 @@
       { "name": "cache list", "summary": "List the entries of the step cache." },
       { "name": "cache prune", "summary": "Remove cache entries last used more than --older-than <days> ago." },
       { "name": "selfcheck", "summary": "Report the runtime, the database and the tools, with warnings for a missing tool." },
-      { "name": "commands", "summary": "List every command with its access and whether it reads input." },
-      { "name": "help", "summary": "Print this help. The flag --help does the same." },
+      { "name": "commands", "summary": "List every command with its access and whether it reads input. The flag --help prints this list, and --help after a command name prints that command and does not run it." },
+      { "name": "help", "summary": "Print this help. The flag -h does the same." },
       { "name": "version", "summary": "Print the version. The flag --version does the same." }
     ],
     "flags": [
@@ -32,7 +32,7 @@
       { "flag": "--now ISO8601", "meaning": "Use this time instead of the clock, for example 2026-01-01T00:00:00Z." },
       { "flag": "--seed int", "meaning": "Use this seed for anything random, such as a job id." },
       { "flag": "--json", "meaning": "Accepted for compatibility. Output is always JSON." },
-      { "flag": "--help", "meaning": "Print this help as envelope data and exit 0. -h does the same." },
+      { "flag": "--help", "meaning": "List the commands and exit 0. After a command name, list that command and do not run it." },
       { "flag": "--version", "meaning": "Print the version as envelope data and exit 0." }
     ],
     "start": "Run the guide command, save data.example.script to a file, then validate and render that file."

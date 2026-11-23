@@ -1,6 +1,6 @@
 [project]
 name = "ambitious-video"
-version = "0.1.0"
+version = "0.1.1"
 description = "A video renderer driven by a script written as data"
 readme = "README.md"
 license = "Apache-2.0"

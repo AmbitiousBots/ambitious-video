@@ -200,24 +200,25 @@ def test_an_estimate_above_the_cap_stops_before_any_provider_call(
     assert not (folder / "out").exists()
 
 
-def test_the_first_of_the_merged_caps_applies(tmp_path: Path, fake_speech: type[_Speaker], shell: _Shell) -> None:
+def test_the_later_of_the_merged_caps_applies(tmp_path: Path, fake_speech: type[_Speaker], shell: _Shell) -> None:
     script, folder = _spoken_sample(tmp_path)
     total = str(_data(shell("estimate", "--in", _saved(folder, _with(script, None), "free.json")))["usd"])
     assert Decimal("0.001") < Decimal(total) < Decimal("100")
-    # WHY: in a YAML merge the earlier mapping wins, and a YAML library that lets the later one win raises the cap.
-    tight_first = _merged(folder, script, ("0.001", "100"), "tight-first.yaml")
+    # WHY: PyYAML 6.0.4 keeps the later maxUsd when a merge repeats that multi-character key.
+    loose_later = _merged(folder, script, ("0.001", "100"), "loose-later.yaml")
+    priced = shell("estimate", "--in", loose_later)
+    assert priced["exit"] == 0 and _data(priced)["usd"] == total
+    assert _data(priced)["budget"] == {"cap": "100.000000", "source": "budget.maxUsd"}
+    assert fake_speech.seen == []
+
+    tight_later = _merged(folder, script, ("100", "0.001"), "tight-later.yaml")
     for command in ("estimate", "render"):
-        stopped = shell(command, "--in", tight_first)
+        stopped = shell(command, "--in", tight_later)
         assert stopped["exit"] == 1 and _codes(stopped) == ["E_BUDGET"], stopped
         assert (_data(stopped)["estimate"], _data(stopped)["cap"]) == (total, "0.001000")
         assert _data(stopped)["source"] == "budget.maxUsd"
     assert fake_speech.seen == []
     assert _data(shell("ledger"))["lines"] == [] and _data(shell("jobs"))["jobs"] == []
-
-    loose_first = shell("estimate", "--in", _merged(folder, script, ("100", "0.001"), "loose-first.yaml"))
-    assert loose_first["exit"] == 0 and _data(loose_first)["usd"] == total
-    assert _data(loose_first)["budget"] == {"cap": "100.000000", "source": "budget.maxUsd"}
-    assert fake_speech.seen == []
 
 
 def test_a_cached_rerun_passes_under_a_cap_that_the_first_run_would_not(

@@ -11,6 +11,7 @@ from pathlib import Path
 from ambitious_kit.db.sqlite import integrity_check, migrate, open_db, read_user_version
 from ambitious_kit.domain.envelope import ErrorEntry, Failure, JsonObject
 from ambitious_kit.domain.migrations import Migration
+from ambitious_kit.runtime import PinnedRuntime
 
 NOT_CHECKED = "not checked"
 
@@ -71,9 +72,24 @@ def _check_db(module: str, db_path: str, migrations: Sequence[Migration]) -> DbR
         db.close()
 
 
-def selfcheck(*, module: str, db_path: str, binary_path: str, migrations: Sequence[Migration]) -> JsonObject:
+def selfcheck(
+    *,
+    module: str,
+    db_path: str,
+    binary_path: str,
+    migrations: Sequence[Migration],
+    runtime: PinnedRuntime | None = None,
+) -> JsonObject:
     report = _check_db(module, db_path, migrations)
     binary = os.path.realpath(binary_path)
+    pinned: JsonObject = (
+        {}
+        if runtime is None
+        else {
+            "pinnedRuntime": runtime.to_json(),
+            "warnings": [] if runtime.problem is None else [runtime.problem],
+        }
+    )
     data: JsonObject = {
         "runtime": {"name": "python", "version": platform.python_version()},
         "binary": {"path": binary, "sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest()},
@@ -84,6 +100,7 @@ def selfcheck(*, module: str, db_path: str, binary_path: str, migrations: Sequen
             "migrationsApplied": list(report.applied),
         },
         "problems": [finding.problem for finding in report.findings],
+        **pinned,
     }
     if report.findings:
         raise Failure([finding.error for finding in report.findings], data)

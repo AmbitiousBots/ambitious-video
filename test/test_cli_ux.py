@@ -94,18 +94,34 @@ def test_the_guide_script_validates_and_renders_without_a_key(tmp_path: Path) ->
 
 
 def test_help_flag_prints_one_ok_envelope(tmp_path: Path) -> None:
-    listed = names_in(data_of(run(tmp_path / "home", tmp_path, ["commands"]))["commands"])
-    for args in (["--help"], ["-h"], ["help"], ["selfcheck", "--help"], ["--help", "--no-such-flag"]):
-        shown = run(tmp_path / "home", tmp_path, args)
+    home = tmp_path / "home"
+    listed = data_of(run(home, tmp_path, ["commands"]))["commands"]
+    names = names_in(listed)
+    for args in (["-h"], ["help"], ["-h", "--no-such-flag"]):
+        shown = run(home, tmp_path, args)
         assert shown["exit"] == 0 and shown["ok"] is True and shown["errors"] == [], args
         assert shown["command"] == "help"
         data = data_of(shown)
         assert str(data["usage"]).startswith("ambitious-video <command>")
-        assert names_in(data["commands"]) == listed
+        assert names_in(data["commands"]) == names
         flags = data["flags"]
         assert isinstance(flags, list)
         assert {"--help", "--version"} <= {str(item["flag"]) for item in flags if isinstance(item, dict)}
-    assert not (tmp_path / "home").exists()
+    bare = run(home, tmp_path, ["--help"])
+    assert bare["exit"] == 0 and bare["ok"] is True and bare["errors"] == []
+    assert bare["command"] == "commands" and data_of(bare)["commands"] == listed
+    focused = run(home, tmp_path, ["selfcheck", "--help"])
+    assert focused["exit"] == 0 and focused["ok"] is True and focused["errors"] == []
+    assert focused["command"] == "selfcheck"
+    assert isinstance(listed, list)
+    only = [entry for entry in listed if isinstance(entry, dict) and entry["name"] == "selfcheck"]
+    assert data_of(focused)["commands"] == only
+    refused = run(home, tmp_path, ["--help", "--no-such-flag"])
+    assert refused["exit"] == 1 and refused["ok"] is False
+    errors = refused["errors"]
+    assert isinstance(errors, list) and isinstance(errors[0], dict)
+    assert errors[0]["code"] == "E_USAGE"
+    assert not home.exists()
 
 
 def test_version_flag_reports_the_version(tmp_path: Path) -> None:
@@ -113,10 +129,10 @@ def test_version_flag_reports_the_version(tmp_path: Path) -> None:
         shown = run(tmp_path / "home", tmp_path, args)
         assert shown["exit"] == 0 and shown["ok"] is True and shown["errors"] == [], args
         assert shown["command"] == "version"
-        assert data_of(shown) == {"version": "0.1.0"}
+        assert data_of(shown) == {"version": "0.1.1"}
         meta = shown["meta"]
         assert isinstance(meta, dict)
-        assert meta == {"now": "2026-01-01T00:00:00.000Z", "seed": 1, "version": "0.1.0"}
+        assert meta == {"now": "2026-01-01T00:00:00.000Z", "seed": 1, "version": "0.1.1"}
 
 
 def test_usage_errors_are_still_usage_errors(tmp_path: Path) -> None:

@@ -7,16 +7,16 @@ from ambitious_kit.domain.envelope import JsonObject, JsonValue, failure
 
 from ambitious_video.cli.engine import as_json
 
-HELP_FLAGS = ("--help", "-h")
+SHORT_HELP = "-h"
 VERSION_FLAG = "--version"
 KEPT_VALUE_FLAGS = ("--now", "--seed")
 KEPT_PLAIN_FLAGS = ("--json",)
 
 
 def builtin_command(argv: list[str]) -> list[str]:
-    if any(token in HELP_FLAGS for token in argv):
+    if SHORT_HELP in argv:
         word = "help"
-    elif VERSION_FLAG in argv:
+    elif VERSION_FLAG in argv and "--help" not in argv:
         word = "version"
     else:
         return argv
