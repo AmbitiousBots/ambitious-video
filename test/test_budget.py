@@ -204,7 +204,6 @@ def test_the_later_of_the_merged_caps_applies(tmp_path: Path, fake_speech: type[
     script, folder = _spoken_sample(tmp_path)
     total = str(_data(shell("estimate", "--in", _saved(folder, _with(script, None), "free.json")))["usd"])
     assert Decimal("0.001") < Decimal(total) < Decimal("100")
-    # WHY: PyYAML 6.0.4 keeps the later maxUsd when a merge repeats that multi-character key.
     loose_later = _merged(folder, script, ("0.001", "100"), "loose-later.yaml")
     priced = shell("estimate", "--in", loose_later)
     assert priced["exit"] == 0 and _data(priced)["usd"] == total
