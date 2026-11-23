@@ -170,7 +170,7 @@ def test_the_scan_refuses(text: str) -> None:
     [
         "from ambitious_video.domain import types",
         "import ambitious_kit",
-        "out/ambitious-video-0.1.0.pyz",
+        "out/ambitious-video-0.1.1.pyz",
         "$AMBITIOUS_HOME/video/video.sqlite",
         "AMBITIOUS_HOME defaults to /workspace/ambitious",
         "a dashboard, a shall, a halt and a chalk line",

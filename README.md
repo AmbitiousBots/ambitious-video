@@ -4,7 +4,7 @@ The video module is a generic renderer driven by a declarative video script (a J
 
 The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
-Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`, or from stdin with `--in -`, and prints one JSON envelope. `--help` and `--version` print the usage and the version as envelope data and exit 0. With `--in <file>` stdin is never read, and ffmpeg and ffprobe never see it, so a caller that leaves stdin open (a tool runner, for example) does not make a command hang. Without `--in`, a script piped on stdin is still read: the command waits at most two seconds for the first byte, and once any byte has arrived it reads to the end of stdin, so a slow writer never has its script cut short. A program that generates a script should send it with `--in -`, which waits for the end of stdin however long the first byte takes; on Windows the two-second wait is not available for pipes, so `--in -` is the only way to send a script on stdin there. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` and the step cache is `$AMBITIOUS_HOME/video/cache` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
+Version 0.1.1. One binary, `ambitious-video`, reads a script from `--in <file>`, or from stdin with `--in -`, and prints one JSON envelope. `help` and `-h` print the usage, and `--version` prints the version, each as envelope data, and they exit 0. `--help` lists commands the way `commands` does and does not run a command. With `--in <file>` stdin is never read, and ffmpeg and ffprobe never see it, so a caller that leaves stdin open (a tool runner, for example) does not make a command hang. Without `--in`, a script piped on stdin is still read: the command waits at most two seconds for the first byte, and once any byte has arrived it reads to the end of stdin, so a slow writer never has its script cut short. A program that generates a script should send it with `--in -`, which waits for the end of stdin however long the first byte takes; on Windows the two-second wait is not available for pipes, so `--in -` is the only way to send a script on stdin there. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` and the step cache is `$AMBITIOUS_HOME/video/cache` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
 
 | Command | Access | What it returns |
 |---|---|---|
@@ -20,8 +20,8 @@ Version 0.1.0. One binary, `ambitious-video`, reads a script from `--in <file>`,
 | `cache list` | read | The entries of the step cache: step key, folder, provider, size, when it was made and last used. |
 | `cache prune` | write | Removes entries last used more than `--older-than <days>` ago. Nothing is ever removed without this command. |
 | `selfcheck` | write | Runtime, binary checksum, database integrity, and ffmpeg, Pillow, and Playwright, with a line in `data.warnings` for each missing tool. |
-| `commands` | none | Every command, including this one. |
-| `help` | none | The usage, the commands and the flags. `--help` anywhere on the command line does the same. |
+| `commands` | none | Every command, including this one. `--help` prints the same list. `--help` after a command name prints that one command and does not run it. |
+| `help` | none | The usage, the commands and the flags. `-h` does the same. |
 | `version` | none | The version, also in `meta.version`. `--version` does the same. |
 
 ## A first video
@@ -407,7 +407,7 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | `pricing.json` | The price table, inside the package: one entry per provider and model, with its source and the day it was checked. |
 | `guide.yaml`, `help.json` | What `guide` and `help` print, inside the package. `guide.yaml` is a copy of `examples/titles-and-captions.yaml`, and a test keeps the two the same. |
 
-Build `dist/ambitious-video-0.1.0.pyz` with `python scripts/build.py`. It runs on Python 3.13 with Pillow and ffmpeg installed. PyYAML is bundled. The check from a fresh tree:
+Build `dist/ambitious-video-0.1.1.pyz` with `python scripts/build.py`. It runs on Python 3.13 with Pillow and ffmpeg installed. PyYAML is bundled. The check from a fresh tree:
 
 ```sh
 bash verify/run

@@ -800,7 +800,7 @@ def test_the_guide_tells_a_bot_how_to_ask_for_a_key(tmp_path: Path) -> None:
     text = " ".join(keys)
     for phrase in ("secretsNeeded", "once", "--offline", "E_NO_KEY", "never"):
         assert phrase in text, phrase
-    shown = _cli(tmp_path / "home", ["--help"])["data"]
+    shown = _cli(tmp_path / "home", ["help"])["data"]
     assert any(row["flag"] == "--offline" for row in shown["flags"])
     assert any(row["flag"] == "--resend" for row in shown["flags"])
     assert "--offline" in shown["usage"]

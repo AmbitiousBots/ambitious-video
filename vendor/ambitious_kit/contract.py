@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ambitious_kit.domain.envelope import INTERNAL_ERROR_CODES, envelope_problems
+from ambitious_kit.domain.input_shape import FIELD_TYPES
 from ambitious_kit.paths import AGENT_DATA_ROOT
 
 NOW = "2026-01-01T00:00:00Z"
@@ -174,6 +175,12 @@ def _is_whole_number(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _same_listing(left: object, right: object) -> bool:
+    return json.dumps(left, sort_keys=True, ensure_ascii=False, separators=(",", ":")) == json.dumps(
+        right, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+
+
 def _envelope_shape(bench: Bench) -> list[str]:
     home = bench.fresh_home()
     selfcheck = bench.run(["selfcheck", *FIXED], home)
@@ -208,6 +215,41 @@ def _envelope_shape(bench: Bench) -> list[str]:
         problems.append(
             f"{listing.label}: data.commands must list every command, including selfcheck and commands, "
             "each as { name, access, input }."
+        )
+    help_listing = bench.run(["--help", *FIXED], home)
+    problems.extend(_must_succeed(help_listing))
+    if (
+        help_listing.envelope is not None
+        and help_listing.envelope.get("ok") is True
+        and not _same_listing(_field(help_listing.envelope, "data", "commands"), listed)
+    ):
+        problems.append(
+            f"{help_listing.label}: --help with no command must list every command in data.commands "
+            "exactly as `commands` does."
+        )
+    untouched = bench.fresh_home()
+    focused = bench.run(["selfcheck", "--help", *FIXED], untouched)
+    problems.extend(_must_succeed(focused))
+    created = _files_under(untouched)
+    if created:
+        problems.append(
+            f"{focused.label}: --help must describe the command and not run it, "
+            f"but AMBITIOUS_HOME now holds {', '.join(created)}."
+        )
+    selfcheck_entry = (
+        [entry for entry in listed if _field(entry, "name") == "selfcheck"] if isinstance(listed, list) else []
+    )
+    if (
+        focused.envelope is not None
+        and focused.envelope.get("ok") is True
+        and not (
+            focused.envelope.get("command") == "selfcheck"
+            and _same_listing(_field(focused.envelope, "data", "commands"), selfcheck_entry)
+        )
+    ):
+        problems.append(
+            f"{focused.label}: --help with a command name must answer with command set to that name "
+            "and data.commands holding that one command's entry exactly as `commands` lists it."
         )
     return problems
 
@@ -351,6 +393,83 @@ def _no_stdout_noise(bench: Bench) -> list[str]:
     return [problem for args, stdin in invocations for problem in bench.run(args, home, stdin=stdin).problems]
 
 
+FIELD_RULE = f"each field as {{ name, type, required }}, with type one of {', '.join(FIELD_TYPES)}"
+
+
+def _listed_fields(fields: object) -> list[tuple[str, bool]] | None:
+    if not isinstance(fields, list):
+        return None
+    read = [
+        (entry["name"], entry["required"])
+        for entry in fields
+        if isinstance(entry, dict)
+        and isinstance(entry.get("name"), str)
+        and isinstance(entry.get("type"), str)
+        and entry["type"] in FIELD_TYPES
+        and isinstance(entry.get("required"), bool)
+    ]
+    return read if len(read) == len(fields) else None
+
+
+def _compact(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _shape_problems_of(bench: Bench, entry: Mapping[str, object]) -> list[str]:
+    name, fields, example = entry.get("name"), entry.get("fields"), entry.get("example")
+    if not isinstance(name, str) or ("fields" not in entry and "example" not in entry):
+        return []
+    label = f'`commands`: the command "{name}"'
+    if entry.get("input") is not True:
+        return [f"{label} lists fields or an example, but its input is not true."]
+    read = _listed_fields(fields)
+    if read is None:
+        return [f"{label} must list {FIELD_RULE}."]
+    if "example" not in entry:
+        return []
+    if not isinstance(example, dict):
+        return [f"{label} must give its example as one JSON object."]
+    required = [key for key, is_required in read if is_required]
+    missing = [key for key in required if key not in example]
+    if missing:
+        return [
+            f"{label} lists {', '.join(missing)} as required, "
+            f"but its example leaves {'it' if len(missing) == 1 else 'them'} out."
+        ]
+    args = [*name.split(" "), *FIXED]
+    sent = bench.run(args, bench.fresh_home(), stdin=_compact(example))
+    problems = list(sent.problems)
+    if sent.envelope is not None and "E_INPUT_SCHEMA" in _error_codes(sent.envelope):
+        problems.append(
+            f"{label} lists an example that is refused with E_INPUT_SCHEMA. "
+            "The example is sent as input, so it must be valid input."
+        )
+    for key in required:
+        dropped = {field_name: value for field_name, value in example.items() if field_name != key}
+        outcome = bench.run(args, bench.fresh_home(), stdin=_compact(dropped))
+        problems.extend(outcome.problems)
+        if outcome.envelope is None:
+            continue
+        codes = _error_codes(outcome.envelope)
+        if not (outcome.envelope.get("ok") is False and "E_INPUT_SCHEMA" in codes):
+            answered = "ok" if outcome.envelope.get("ok") is True else ", ".join(codes)
+            problems.append(
+                f'{label} lists the field "{key}" as required, so the example without it must fail with '
+                f"E_INPUT_SCHEMA, but it answered {answered}."
+            )
+    return problems
+
+
+def _listed_shapes(bench: Bench) -> list[str]:
+    listing = bench.run(["commands", *FIXED], bench.fresh_home())
+    listed = _field(listing.envelope, "data", "commands")
+    problems = _must_succeed(listing)
+    for entry in listed if isinstance(listed, list) else []:
+        if isinstance(entry, dict):
+            problems.extend(_shape_problems_of(bench, entry))
+    return problems
+
+
 CHECKS: tuple[tuple[str, str, Callable[[Bench], list[str]]], ...] = (
     ("envelope-shape", "Every command prints one envelope that matches the schema", _envelope_shape),
     ("exit-codes", "Exit code is 0 for ok, 1 for a caller error, 2 for an internal error", _exit_codes),
@@ -358,6 +477,11 @@ CHECKS: tuple[tuple[str, str, Callable[[Bench], list[str]]], ...] = (
     ("agent-data-refusal", "Every path under the bot's private data directory is refused", _agent_data_refusal),
     ("read-only-analysis", "Read commands never create or change the database", _read_only_analysis),
     ("no-stdout-noise", "Nothing but the envelope is ever written to stdout", _no_stdout_noise),
+    (
+        "listed-shapes",
+        "A listed example is valid input, and a field listed as required is required",
+        _listed_shapes,
+    ),
 )
 
 
