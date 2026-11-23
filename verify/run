@@ -18,6 +18,13 @@ echo "== copy, lint, types, tests =="
 
 echo "== build and contract =="
 "$PY" scripts/build.py
+"$PY" - <<'PY'
+from zipfile import ZipFile
+
+with ZipFile("dist/ambitious-video.pyz") as archive:
+    if any(".ruff_cache" in name.split("/") for name in archive.namelist()):
+        raise SystemExit("zipapp contains the Ruff cache")
+PY
 "$PY" -m ambitious_kit.contract dist/ambitious-video.pyz
 
 HOME="$(mktemp -d)"

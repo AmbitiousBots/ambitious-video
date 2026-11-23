@@ -2,7 +2,7 @@
 
 The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, speech, generated scenes, lip-sync, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
 
-The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
+The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python kit in `vendor/` comes from release `kit-v0.4.9`.
 
 Version 0.1.1. One binary, `ambitious-video`, reads a script from `--in <file>`, or from stdin with `--in -`, and prints one JSON envelope. `help` and `-h` print the usage, and `--version` prints the version, each as envelope data, and they exit 0. `--help` lists commands the way `commands` does and does not run a command. With `--in <file>` stdin is never read, and ffmpeg and ffprobe never see it, so a caller that leaves stdin open (a tool runner, for example) does not make a command hang. Without `--in`, a script piped on stdin is still read: the command waits at most two seconds for the first byte, and once any byte has arrived it reads to the end of stdin, so a slow writer never has its script cut short. A program that generates a script should send it with `--in -`, which waits for the end of stdin however long the first byte takes; on Windows the two-second wait is not available for pipes, so `--in -` is the only way to send a script on stdin there. Paths in a script are relative to the directory that holds the script. The database is `$AMBITIOUS_HOME/video/video.sqlite` and the step cache is `$AMBITIOUS_HOME/video/cache` (`AMBITIOUS_HOME` defaults to `/workspace/ambitious`).
 
@@ -275,6 +275,8 @@ budget: { maxUsd: 5 }
 ambitious-video estimate --in script.yaml --max-usd 2.50
 ambitious-video render --in script.yaml --max-usd 2.50
 ```
+
+PyYAML 6.0.4 uses the later `maxUsd` when a YAML merge list supplies two caps. For example, `budget: {<<: [{maxUsd: 0.01}, {maxUsd: 100}]}` sets a $100 cap. PyYAML 6.0.3 used the first cap.
 
 The lower of `budget.maxUsd` and `--max-usd` applies, so the flag can tighten the cap of a script for one run and cannot raise it. Without either there is no cap. `--max-usd` takes a plain amount in US dollars from 0 to 1000000 with at most six decimal places.
 

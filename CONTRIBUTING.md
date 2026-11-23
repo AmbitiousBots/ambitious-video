@@ -17,6 +17,8 @@ python3 -m venv .venv
 .venv/bin/python -m pip install --require-hashes --only-binary :all: --requirement scripts/dev-requirements.txt
 ```
 
+To verify the vendored kit, download `ambitious_kit-0.4.9.pyz` and `SHA256SUMS` from the `kit-v0.4.9` release into one directory. Compare the zipapp entry in the release checksums with `vendor/SHA256SUMS`. From the download directory, run `shasum -a 256 -c /path/to/checkout/vendor/SHA256SUMS`. Unpack the verified archive to compare its `__main__.py` and `ambitious_kit/` with `vendor/`.
+
 ## Checks
 
 ```sh
