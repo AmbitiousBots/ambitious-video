@@ -22,7 +22,6 @@ from typing import Final
 from unittest.mock import MagicMock
 
 import pytest
-import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
 from ambitious_kit.domain.envelope import Failure, JsonObject
 
@@ -139,7 +138,7 @@ def fake_speech() -> Iterator[TestSpeech]:
 def _project(dest: Path, provider: str, model: str) -> tuple[dict[str, object], Path]:
     folder = dest / "project"
     shutil.copytree(SAMPLE, folder)
-    script = yaml.safe_load((folder / "script.yaml").read_text(encoding="utf-8"))
+    script = json.loads((folder / "script.json").read_text(encoding="utf-8"))
     assert isinstance(script, dict)
     for track in script["tracks"]:
         for clip in track.get("clips", []):

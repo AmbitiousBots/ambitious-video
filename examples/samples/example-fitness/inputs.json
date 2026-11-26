@@ -1,0 +1,21 @@
+{
+  "template": "announcement",
+  "inputs": {
+    "business_name": "Example Fitness Studio",
+    "tagline": "SAMPLE DATA",
+    "opening_line": "Start the day stronger.",
+    "picture_1": "assets/still-1.png",
+    "line_1": "Small groups, so the coach knows your name.",
+    "announcement": "New morning classes",
+    "picture_2": "assets/still-2.png",
+    "line_2": "New classes at six and seven every weekday.",
+    "picture_3": "assets/still-3.png",
+    "line_3": "All levels are welcome.",
+    "call_to_action": "First class free",
+    "web_address": "fitness.example.com",
+    "closing_line": "Your first class is free."
+  },
+  "output": {
+    "path": "out/example-fitness.mp4"
+  }
+}

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 
-import yaml
 from ambitious_kit.domain.envelope import ErrorEntry, Failure, JsonObject, JsonValue, failure
 from ambitious_kit.paths import refuse_agent_data
 
@@ -14,16 +14,9 @@ from ambitious_video.domain.plan import canonical, digest_text, sorted_json
 from ambitious_video.domain.template import IN_TEMPLATE, Expansion, Located, Template, expand, load_template
 from ambitious_video.domain.types import TEMPLATE_ID_PATTERN, TEMPLATE_VERSION
 
-STARTER_SUFFIX = ".yaml"
-JSON_SUFFIX = ".json"
-YAML_WIDTH = 120
+STARTER_SUFFIX = ".json"
 MAX_ERRORS = 20
 HINT = "Fix the field named in data.problems."
-WRITTEN_BY = (
-    "# Written by the expand command. ",
-    "Change the template or the inputs, ",
-    "then run it again.\n",
-)
 
 Loads = Callable[[str], object]
 
@@ -70,7 +63,7 @@ def read_template(named: str, loads: Loads) -> Template:
     try:
         raw = loads(_template_text(named))
     except ValueError:
-        raise refuse((Located(IN_TEMPLATE, "", "The template is not YAML or JSON."),)) from None
+        raise refuse((Located(IN_TEMPLATE, "", "The template is not valid JSON."),)) from None
     template, problems = load_template(raw)
     if template is None:
         raise refuse(problems)
@@ -88,18 +81,15 @@ def _brand(template: Template, root: Path, loads: Loads) -> object | None:
         raise unreadable from None
 
 
-def script_text(script: object, suffix: str) -> str:
-    if suffix == JSON_SUFFIX:
-        return canonical(script) + "\n"
-    dumped = yaml.safe_dump(script, sort_keys=False, default_flow_style=None, allow_unicode=True, width=YAML_WIDTH)
-    return "".join(WRITTEN_BY) + str(dumped)
+def script_text(script: object) -> str:
+    return json.dumps(script, indent=2, ensure_ascii=False) + "\n"
 
 
 def _written(script: object, out: Path) -> None:
     target = Path(refuse_agent_data(str(out)))
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(script_text(script, target.suffix), encoding="utf-8")
+        target.write_text(script_text(script), encoding="utf-8")
     except OSError:
         raise failure("E_USAGE", f"The file {out} could not be written.", "Pass --out a writable path.") from None
 

@@ -58,6 +58,6 @@ def guide_data(starters: list[JsonValue]) -> JsonObject:
     templates = data.get("templates")
     data["templates"] = {**templates, "starters": starters} if isinstance(templates, dict) else {"starters": starters}
     example = data.get("example")
-    script = files("ambitious_video").joinpath("guide.yaml").read_text(encoding="utf-8")
+    script = files("ambitious_video").joinpath("guide.json").read_text(encoding="utf-8")
     data["example"] = {**example, "script": script} if isinstance(example, dict) else {"script": script}
     return data

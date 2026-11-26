@@ -1,0 +1,21 @@
+{
+  "template": "short-explainer",
+  "inputs": {
+    "business_name": "Example Accounting Office",
+    "tagline": "Books and tax returns (SAMPLE DATA)",
+    "opening_line": "Numbers in order, all year round.",
+    "headline": "Three things we take off your desk",
+    "point_1": "One: monthly bookkeeping, checked by a person.",
+    "point_1_picture": "assets/still-1.png",
+    "point_2": "Two: payroll that goes out on time.",
+    "point_2_picture": "assets/still-2.png",
+    "point_3": "Three: tax returns filed before the deadline.",
+    "point_3_picture": "assets/still-3.png",
+    "call_to_action": "Ask for a first meeting",
+    "web_address": "accounting.example.com",
+    "closing_line": "The first meeting is free."
+  },
+  "output": {
+    "path": "out/example-accounting.mp4"
+  }
+}

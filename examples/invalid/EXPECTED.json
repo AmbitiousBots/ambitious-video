@@ -1,249 +1,249 @@
 {
-  "unknown-clip-type.yaml": {
+  "unknown-clip-type.json": {
     "keyword": "enum",
     "at": "/tracks/0/clips/0/type"
   },
-  "clip-without-type.yaml": {
+  "clip-without-type.json": {
     "keyword": "required",
     "at": "/tracks/0/clips/0"
   },
-  "title-card-without-text.yaml": {
+  "title-card-without-text.json": {
     "keyword": "required",
     "at": "/tracks/0/clips/0"
   },
-  "title-card-duration-zero.yaml": {
+  "title-card-duration-zero.json": {
     "keyword": "exclusiveMinimum",
     "at": "/tracks/0/clips/0/duration"
   },
-  "title-card-with-image-option.yaml": {
+  "title-card-with-image-option.json": {
     "keyword": "additionalProperties",
     "at": "/tracks/0/clips/0"
   },
-  "screen-recording-of-a-local-file.yaml": {
+  "screen-recording-of-a-local-file.json": {
     "keyword": "pattern",
     "at": "/tracks/0/clips/0/url"
   },
-  "screen-recording-without-duration.yaml": {
+  "screen-recording-without-duration.json": {
     "keyword": "required",
     "at": "/tracks/0/clips/0"
   },
-  "action-with-two-kinds.yaml": {
+  "action-with-two-kinds.json": {
     "keyword": "maxProperties",
     "at": "/tracks/0/clips/0/actions/0"
   },
-  "action-of-unknown-kind.yaml": {
+  "action-of-unknown-kind.json": {
     "keyword": "additionalProperties",
     "at": "/tracks/0/clips/0/actions/0"
   },
-  "action-wait-zero.yaml": {
+  "action-wait-zero.json": {
     "keyword": "exclusiveMinimum",
     "at": "/tracks/0/clips/0/actions/0/wait"
   },
-  "video-path-absolute.yaml": {
+  "video-path-absolute.json": {
     "keyword": "pattern",
     "at": "/tracks/0/clips/0/path"
   },
-  "video-in-negative.yaml": {
+  "video-in-negative.json": {
     "keyword": "minimum",
     "at": "/tracks/0/clips/0/in"
   },
-  "image-without-duration.yaml": {
+  "image-without-duration.json": {
     "keyword": "required",
     "at": "/tracks/0/clips/0"
   },
-  "image-path-steps-out.yaml": {
+  "image-path-steps-out.json": {
     "keyword": "pattern",
     "at": "/tracks/0/clips/0/path"
   },
-  "image-kenburns-zooms-out-past-the-frame.yaml": {
+  "image-kenburns-zooms-out-past-the-frame.json": {
     "keyword": "minimum",
     "at": "/tracks/0/clips/0/kenburns/from"
   },
-  "voiceover-at-negative.yaml": {
+  "voiceover-at-negative.json": {
     "keyword": "minimum",
     "at": "/tracks/1/clips/0/at"
   },
-  "voiceover-with-empty-text.yaml": {
+  "voiceover-with-empty-text.json": {
     "keyword": "minLength",
     "at": "/tracks/1/clips/0/text"
   },
-  "audio-gain-too-loud.yaml": {
+  "audio-gain-too-loud.json": {
     "keyword": "maximum",
     "at": "/tracks/1/clips/0/gain_db"
   },
-  "audio-without-at.yaml": {
+  "audio-without-at.json": {
     "keyword": "required",
     "at": "/tracks/1/clips/0"
   },
-  "track-with-clips-and-from.yaml": {
+  "track-with-clips-and-from.json": {
     "keyword": "oneOf",
     "at": "/tracks/2"
   },
-  "track-without-clips-or-from.yaml": {
+  "track-without-clips-or-from.json": {
     "keyword": "oneOf",
     "at": "/tracks/1"
   },
-  "track-with-no-clips.yaml": {
+  "track-with-no-clips.json": {
     "keyword": "minItems",
     "at": "/tracks/1/clips"
   },
-  "track-id-with-capitals.yaml": {
+  "track-id-with-capitals.json": {
     "keyword": "pattern",
     "at": "/tracks/1/id"
   },
-  "track-option-unknown.yaml": {
+  "track-option-unknown.json": {
     "keyword": "additionalProperties",
     "at": "/tracks/1"
   },
-  "no-tracks.yaml": {
+  "no-tracks.json": {
     "keyword": "minItems",
     "at": "/tracks"
   },
-  "tracks-missing.yaml": {
+  "tracks-missing.json": {
     "keyword": "required",
     "at": ""
   },
-  "schema-version-one.yaml": {
+  "schema-version-one.json": {
     "keyword": "const",
     "at": "/schemaVersion"
   },
-  "schema-version-missing.yaml": {
+  "schema-version-missing.json": {
     "keyword": "required",
     "at": ""
   },
-  "top-level-option-unknown.yaml": {
+  "top-level-option-unknown.json": {
     "keyword": "additionalProperties",
     "at": ""
   },
-  "output-without-fps.yaml": {
+  "output-without-fps.json": {
     "keyword": "required",
     "at": "/output"
   },
-  "output-width-odd.yaml": {
+  "output-width-odd.json": {
     "keyword": "multipleOf",
     "at": "/output/width"
   },
-  "output-encode-unknown.yaml": {
+  "output-encode-unknown.json": {
     "keyword": "enum",
     "at": "/output/encode"
   },
-  "output-fps-zero.yaml": {
+  "output-fps-zero.json": {
     "keyword": "minimum",
     "at": "/output/fps"
   },
-  "output-path-steps-out.yaml": {
+  "output-path-steps-out.json": {
     "keyword": "pattern",
     "at": "/output/path"
   },
-  "output-path-absolute.yaml": {
+  "output-path-absolute.json": {
     "keyword": "pattern",
     "at": "/output/path"
   },
-  "brand-color-not-hex.yaml": {
+  "brand-color-not-hex.json": {
     "keyword": "pattern",
     "at": "/brand/colors/fg"
   },
-  "brand-colors-incomplete.yaml": {
+  "brand-colors-incomplete.json": {
     "keyword": "required",
     "at": "/brand/colors"
   },
-  "top-level-voice-block.yaml": {
+  "top-level-voice-block.json": {
     "keyword": "additionalProperties",
     "at": ""
   },
-  "speech-without-provider.yaml": {
+  "speech-without-provider.json": {
     "keyword": "required",
     "at": "/tracks/1/clips/0"
   },
-  "speech-without-model.yaml": {
+  "speech-without-model.json": {
     "keyword": "required",
     "at": "/tracks/1/clips/0"
   },
-  "speech-without-voice.yaml": {
+  "speech-without-voice.json": {
     "keyword": "required",
     "at": "/tracks/1/clips/0"
   },
-  "speech-provider-with-capitals.yaml": {
+  "speech-provider-with-capitals.json": {
     "keyword": "pattern",
     "at": "/tracks/1/clips/0/provider"
   },
-  "speech-with-a-key.yaml": {
+  "speech-with-a-key.json": {
     "keyword": "additionalProperties",
     "at": "/tracks/1/clips/0"
   },
-  "cut-transition-unknown.yaml": {
+  "cut-transition-unknown.json": {
     "keyword": "enum",
     "at": "/cuts/0/transition"
   },
-  "cut-duration-zero.yaml": {
+  "cut-duration-zero.json": {
     "keyword": "exclusiveMinimum",
     "at": "/cuts/0/duration"
   },
-  "cut-without-at.yaml": {
+  "cut-without-at.json": {
     "keyword": "required",
     "at": "/cuts/0"
   },
-  "track-id-used-twice.yaml": {
+  "track-id-used-twice.json": {
     "rule": "track-ids-unique"
   },
-  "captions-from-a-missing-track.yaml": {
+  "captions-from-a-missing-track.json": {
     "rule": "captions-from-a-voiceover-track"
   },
-  "captions-from-a-track-without-voiceover.yaml": {
+  "captions-from-a-track-without-voiceover.json": {
     "rule": "captions-from-a-voiceover-track"
   },
-  "duck-under-its-own-track.yaml": {
+  "duck-under-its-own-track.json": {
     "rule": "duck-under-another-track"
   },
-  "duck-under-a-missing-track.yaml": {
+  "duck-under-a-missing-track.json": {
     "rule": "duck-under-another-track"
   },
-  "video-out-before-in.yaml": {
+  "video-out-before-in.json": {
     "rule": "video-out-after-in"
   },
-  "cache-dir-outside-the-folder.yaml": {
+  "cache-dir-outside-the-folder.json": {
     "keyword": "pattern",
     "at": "/cache/dir"
   },
-  "generated-scene-without-disclosure.yaml": {
+  "generated-scene-without-disclosure.json": {
     "rule": "generated-scenes-need-disclosure"
   },
-  "generated-scene-without-fallback.yaml": {
+  "generated-scene-without-fallback.json": {
     "keyword": "required",
     "at": "/tracks/0/clips/0"
   },
-  "generated-scene-with-a-key.yaml": {
+  "generated-scene-with-a-key.json": {
     "keyword": "additionalProperties",
     "at": "/tracks/0/clips/0"
   },
-  "generated-scene-fallback-with-a-duration.yaml": {
+  "generated-scene-fallback-with-a-duration.json": {
     "keyword": "additionalProperties",
     "at": "/tracks/0/clips/0/fallback"
   },
-  "generated-scene-fallback-of-another-kind.yaml": {
+  "generated-scene-fallback-of-another-kind.json": {
     "keyword": "enum",
     "at": "/tracks/0/clips/0/fallback/type"
   },
-  "lip-sync-without-voice.yaml": {
+  "lip-sync-without-voice.json": {
     "keyword": "required",
     "at": "/tracks/0/clips/0"
   },
-  "lip-sync-with-a-video-and-a-picture.yaml": {
+  "lip-sync-with-a-video-and-a-picture.json": {
     "keyword": "oneOf",
     "at": "/tracks/0/clips/0"
   },
-  "lip-sync-fallback-of-another-kind.yaml": {
+  "lip-sync-fallback-of-another-kind.json": {
     "keyword": "enum",
     "at": "/tracks/0/clips/0/fallback/type"
   },
-  "lip-sync-mouth-without-height.yaml": {
+  "lip-sync-mouth-without-height.json": {
     "keyword": "required",
     "at": "/tracks/0/clips/0/fallback"
   },
-  "lip-sync-voice-track-without-sound.yaml": {
+  "lip-sync-voice-track-without-sound.json": {
     "rule": "lip-sync-voice-is-a-sound-track"
   },
-  "lip-sync-without-disclosure.yaml": {
+  "lip-sync-without-disclosure.json": {
     "rule": "generated-scenes-need-disclosure"
   }
 }

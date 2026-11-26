@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 2,
+  "template": {
+    "id": "welcome",
+    "templateVersion": 1
+  },
+  "budget": {
+    "maxUsd": 5
+  },
+  "disclosure": "AI-generated scenes",
+  "output": {
+    "path": "out/example-plumbing.mp4",
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "brand": {
+    "colors": {
+      "bg": "#0F2A3D",
+      "fg": "#F4F7FA",
+      "accent": "#2E9BD6"
+    },
+    "logo": "assets/logo.png"
+  },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "title_card",
+          "duration": 3.0,
+          "text": "Example Plumbing Co.",
+          "subtitle": "Repairs and installations (SAMPLE DATA)"
+        },
+        {
+          "type": "image",
+          "path": "assets/still-1.png",
+          "duration": 4.0,
+          "kenburns": {
+            "from": 1.0,
+            "to": 1.08
+          }
+        },
+        {
+          "type": "image",
+          "path": "assets/still-2.png",
+          "duration": 4.0,
+          "kenburns": {
+            "from": 1.08,
+            "to": 1.0
+          }
+        },
+        {
+          "type": "title_card",
+          "duration": 2.5,
+          "text": "Same-week visits"
+        },
+        {
+          "type": "image",
+          "path": "assets/still-3.png",
+          "duration": 3.5
+        },
+        {
+          "type": "title_card",
+          "duration": 3.0,
+          "text": "Book a visit",
+          "subtitle": "plumbing.example.com"
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "clips": [
+        {
+          "type": "voiceover",
+          "at": 0.5,
+          "duration": 2.0,
+          "text": "A leak does not wait, and neither do we."
+        },
+        {
+          "type": "voiceover",
+          "at": 3.5,
+          "duration": 3.0,
+          "text": "We repair taps, pipes and boilers in homes and small shops."
+        },
+        {
+          "type": "voiceover",
+          "at": 7.5,
+          "duration": 3.0,
+          "text": "Every job gets a written price before the work starts."
+        },
+        {
+          "type": "voiceover",
+          "at": 14.0,
+          "duration": 2.5,
+          "text": "Most visits happen within the week."
+        },
+        {
+          "type": "voiceover",
+          "at": 17.5,
+          "duration": 2.0,
+          "text": "Book a visit online today."
+        }
+      ]
+    },
+    {
+      "id": "captions",
+      "from": "voice"
+    }
+  ],
+  "cuts": [
+    {
+      "at": 3.0,
+      "transition": "crossfade",
+      "duration": 0.4
+    },
+    {
+      "at": 17.0,
+      "transition": "crossfade",
+      "duration": 0.4
+    }
+  ]
+}

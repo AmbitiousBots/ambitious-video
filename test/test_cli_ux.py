@@ -6,10 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-import yaml
 from test_render import ENV_PATH, ROOT, run, subprocess_verify
 
-EXAMPLE = ROOT / "examples" / "titles-and-captions.yaml"
+EXAMPLE = ROOT / "examples" / "titles-and-captions.json"
 
 
 def data_of(payload: dict[str, object]) -> dict[str, object]:
@@ -51,7 +50,7 @@ def test_guide_prints_the_example_script(tmp_path: Path) -> None:
     example = data["example"]
     assert isinstance(example, dict)
     assert example["script"] == EXAMPLE.read_text(encoding="utf-8")
-    assert example["repositoryPath"] == "examples/titles-and-captions.yaml"
+    assert example["repositoryPath"] == "examples/titles-and-captions.json"
     notes = data["notes"]
     assert isinstance(notes, list) and any("use a speech clip" in str(note) for note in notes)
     assert isinstance(data["steps"], list) and data["steps"]
@@ -59,9 +58,8 @@ def test_guide_prints_the_example_script(tmp_path: Path) -> None:
 
 def test_the_example_is_title_cards_captions_and_one_crossfade() -> None:
     text = EXAMPLE.read_text(encoding="utf-8")
-    script = yaml.safe_load(text)
+    script = json.loads(text)
     assert "voice" not in script and "brand" not in script
-    assert "nothing is spoken" in text and "`speech` clip" in text
     kinds = {clip["type"] for track in script["tracks"] for clip in track.get("clips", [])}
     assert kinds == {"title_card", "voiceover"}
     assert [track["from"] for track in script["tracks"] if "from" in track] == ["voice"]

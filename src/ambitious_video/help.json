@@ -1,7 +1,7 @@
 {
   "help": {
     "usage": "ambitious-video <command> [--in file] [--template file] [--out file] [--db path] [--cache dir] [--max-usd amount] [--offline] [--resend] [--now ISO8601] [--seed int] [--json]",
-    "summary": "Renders a video from a script written as YAML or JSON. Every command prints one JSON envelope on stdout and nothing else.",
+    "summary": "Renders a video from a JSON script or shared DSL v1 JSON recipe. Every command prints one JSON envelope on stdout and nothing else.",
     "commands": [
       { "name": "guide", "summary": "Print an example script to copy, the starter templates with their inputs, and the steps to render." },
       { "name": "expand", "summary": "Fill a template (--template <file or starter id>) with an inputs file and return the script in data.script. Reads the inputs." },
@@ -22,7 +22,7 @@
     "flags": [
       { "flag": "--in file", "meaning": "Read the script or other input from this file instead of stdin." },
       { "flag": "--template file", "meaning": "For expand: the template to fill. A file, or the id of a starter template: announcement, short-explainer or welcome." },
-      { "flag": "--out file", "meaning": "For expand: also write the script to this file, as JSON when the name ends in .json and as YAML otherwise. Write it next to the inputs file, because paths in a script are relative to the script." },
+      { "flag": "--out file", "meaning": "For expand: also write the script to this file as JSON. Write it next to the inputs file, because paths in a script are relative to the script." },
       { "flag": "--db path", "meaning": "Use this SQLite file instead of $AMBITIOUS_HOME/video/video.sqlite." },
       { "flag": "--cache dir", "meaning": "For plan, estimate, render, cache list and cache prune: use this step cache folder instead of $AMBITIOUS_HOME/video/cache." },
       { "flag": "--max-usd amount", "meaning": "For estimate and render: the most this run may cost in US dollars, such as 5 or 2.50. The lower of this and budget.maxUsd in the script applies. When the steps that are not in the step cache cost more, the command stops with E_BUDGET before any provider is called." },
@@ -39,29 +39,29 @@
   },
   "guide": {
     "example": {
-      "name": "titles-and-captions.yaml",
-      "repositoryPath": "examples/titles-and-captions.yaml",
+      "name": "titles-and-captions.json",
+      "repositoryPath": "examples/titles-and-captions.json",
       "needs": "No media files and no API key."
     },
     "steps": [
-      "Save data.example.script as video.yaml in an empty folder.",
-      "ambitious-video validate --in video.yaml",
-      "ambitious-video estimate --in video.yaml",
-      "ambitious-video render --in video.yaml",
+      "Save data.example.script as video.json in an empty folder.",
+      "ambitious-video validate --in video.json",
+      "ambitious-video estimate --in video.json",
+      "ambitious-video render --in video.json",
       "Write { \"jobId\": \"<data.jobId from render>\" } to job.json, then: ambitious-video verify --in job.json"
     ],
     "templates": {
       "steps": [
         "Pick a starter in data.templates.starters. Each one lists its inputs: name, type, whether it is required, and what it is for. text is the template itself, to save and change when the owner wants another layout.",
-        "In the owner's folder, write brand.yaml (colors: { bg, fg, accent } as #RRGGBB, an optional logo and font file) and inputs.yaml: { template: <starter id>, inputs: { <name>: <value>, ... } }. An image, video or audio input is the path of a file in that folder.",
-        "ambitious-video expand --template <starter id or file> --in inputs.yaml --out script.yaml",
-        "ambitious-video validate --in script.yaml, then estimate --in script.yaml. Show the owner the estimate and wait for a go-ahead before render.",
-        "ambitious-video render --in script.yaml, or with --offline to take the free fallback of every paid step."
+        "In the owner's folder, write brand.json (colors: { bg, fg, accent } as #RRGGBB, an optional logo and font file) and inputs.json: { \"template\": \"<starter id>\", \"inputs\": { \"<name>\": \"<value>\" } }. An image, video or audio input is the path of a file in that folder.",
+        "ambitious-video expand --template <starter id or file> --in inputs.json --out script.json",
+        "ambitious-video validate --in script.json, then estimate --in script.json. Show the owner the estimate and wait for a go-ahead before render.",
+        "ambitious-video render --in script.json, or with --offline to take the free fallback of every paid step."
       ],
       "notes": [
         "A template is data that its owner keeps and changes: typed inputs (text, image, video, audio, color, voice, choice), a brand, ordered scenes with {{input}} slots, an optional endCard, budget.maxUsd, and disclosure, the text drawn on generated scenes. A scene can show a title_card, an image, a video, a generated_scene or a lip_sync clip. No starter uses lip_sync; a video has it only when its template asks for it. Substitution is plain: a slot is replaced by one value, and there is no expression language.",
         "expand is pure. The same template, inputs and brand file give the same script, byte for byte. An input the template does not have, a missing required input and a value of the wrong type are refused with E_INPUT_SCHEMA; data.problems names the document (in) and the place (at) of each.",
-        "inputs.yaml may also hold output: { path, width, height, fps, encode } to replace the template's output, for example an upright size.",
+        "inputs.json may also hold output: { path, width, height, fps, encode } to replace the template's output, for example an upright size.",
         "A step whose slot has no value takes the fallback the template names: a scene shows its fallback clip, speech becomes captions only (fallbacks.speech: captions), and music is left out (fallbacks.music: none). data.fallbacks lists each one taken. Without a named fallback the missing value is an error.",
         "The starters speak the lines only when the voice input is given, with the provider and model written in the template. Without a voice the lines are captions and the video costs nothing.",
         "Each starter sets budget.maxUsd to 5, the most one video may cost in US dollars, and expand copies it into the script. estimate and render add up the paid steps that are not in the step cache yet. When that is more than the cap they stop with E_BUDGET before any provider is called: nothing is sent, nothing is charged and no job is created. data holds estimate, cap and source (budget.maxUsd or --max-usd), and estimate adds the breakdown. A step that is already in the cache counts as 0.",

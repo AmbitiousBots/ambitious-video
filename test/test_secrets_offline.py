@@ -22,7 +22,6 @@ from typing import Final
 
 import ambitious_kit.cli.runner as runner
 import pytest
-import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
 from ambitious_kit.domain.envelope import ErrorEntry, Failure, JsonObject
 from PIL import Image
@@ -123,7 +122,7 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 def _sample(dest: Path, slug: str, spoken_by: tuple[str, ...]) -> tuple[dict[str, object], Path]:
     folder = dest / slug
     shutil.copytree(SAMPLES / slug, folder)
-    script = yaml.safe_load((folder / "script.yaml").read_text(encoding="utf-8"))
+    script = json.loads((folder / "script.json").read_text(encoding="utf-8"))
     assert isinstance(script, dict)
     script["output"] = {**script["output"], **SMALL}
     count = 0
@@ -724,7 +723,7 @@ def test_a_fallback_is_a_free_clip_with_the_same_words_and_time() -> None:
     line = Speech(1.5, "Hello there.", 2.0, "xai-speech", "tts", "eve")
     found = fallback_of(line)
     assert (found.name, found.clip, found.instead_of) == (CAPTIONS, Voiceover(1.5, "Hello there.", 2.0), line)
-    raw = yaml.safe_load((ROOT / "examples" / "all-clip-types.yaml").read_text(encoding="utf-8"))
+    raw = json.loads((ROOT / "examples" / "all-clip-types.json").read_text(encoding="utf-8"))
     script, problems = load_script(raw)
     assert script is not None and problems == ()
     changed, taken = with_fallbacks(script, lambda clip: clip.at < 10)
@@ -785,7 +784,7 @@ def test_the_offline_flag_plans_prices_renders_and_verifies_with_no_key(tmp_path
 
 def test_the_offline_flag_is_refused_where_it_means_nothing(tmp_path: Path) -> None:
     home = tmp_path / "home"
-    source = ["--in", str(SAMPLES / "example-bookshop" / "script.yaml")]
+    source = ["--in", str(SAMPLES / "example-bookshop" / "script.json")]
     wrong = (["plan", "--resend"], ["estimate", "--resend"], ["render", "--resend=yes"])
     for args in (["validate", "--offline"], ["render", "--offline=yes"], ["ledger", "--offline"], *wrong):
         refused = _cli(home, [*args, *source] if args[0] != "ledger" else args)

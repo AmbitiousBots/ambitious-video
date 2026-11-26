@@ -16,7 +16,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
-import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
 from ambitious_kit.domain.envelope import Failure
 from PIL import Image
@@ -926,7 +925,7 @@ def test_a_template_asks_for_lip_sync_with_slots_and_needs_disclosure(tmp_path: 
     refused, why = load_template(wrong)
     assert refused is None and [item.at for item in why] == ["/scenes/0/show/video"]
     for name in ("announcement", "short-explainer", "welcome"):
-        starter = (ROOT / "templates" / f"{name}.yaml").read_text(encoding="utf-8")
+        starter = (ROOT / "templates" / f"{name}.json").read_text(encoding="utf-8")
         assert "lip_sync" not in starter
 
 
@@ -959,7 +958,7 @@ def test_the_fallback_of_a_lip_sync_is_the_presenter_or_the_mouth() -> None:
 
 
 def test_the_lip_sync_example_plans_and_prices(no_network: None, tmp_path: Path) -> None:
-    raw = yaml.safe_load((ROOT / "examples" / "lip-sync.yaml").read_text(encoding="utf-8"))
+    raw = json.loads((ROOT / "examples" / "lip-sync.json").read_text(encoding="utf-8"))
     env = {"AMBITIOUS_HOME": str(tmp_path / "home")}
     data = engine.estimate_data(raw, ROOT / "examples", env)
     lip = _rows(data, "breakdown")[1]

@@ -1,4 +1,0 @@
-# SAMPLE DATA. Example Fitness Studio is a fictional business.
-# An optional `font` may be added here; it is left unset in this sample.
-colors: { bg: "#1B1B2F", fg: "#FFFFFF", accent: "#E4572E" }
-logo: assets/logo.png

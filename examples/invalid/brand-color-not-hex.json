@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 2,
+  "output": {
+    "path": "out/example.mp4",
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "title_card",
+          "duration": 3.0,
+          "text": "Hello"
+        }
+      ]
+    }
+  ],
+  "brand": {
+    "colors": {
+      "bg": "#0B0B0B",
+      "fg": "white",
+      "accent": "#3B82F6"
+    }
+  }
+}

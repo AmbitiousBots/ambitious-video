@@ -1,30 +1,37 @@
 # Schemas
 
-`video-script.v2.json` is the JSON Schema (draft 2020-12) for a video script: the YAML or JSON document that describes a video as data. `examples/minimal.yaml`, `examples/titles-and-captions.yaml`, `examples/all-clip-types.yaml`, `examples/generated-scenes.yaml` and `examples/lip-sync.yaml` are such documents, and each folder under `examples/samples/` holds one more. `titles-and-captions.yaml` is the one to copy first: it needs no media files and no key, and the `guide` command prints it.
+`video-script.v2.json` is the JSON Schema (draft 2020-12) for a video script: the JSON document that describes a video as data. `video-recipe.v1.json` is the JSON Schema (draft 2020-12) for a shared JSON DSL v1 recipe (`dslVersion: 1`, `kind: "recipe"`, see `examples/promo-video-recipe.json`) that compiles into a validated video script. `examples/minimal.json`, `examples/titles-and-captions.json`, `examples/all-clip-types.json`, `examples/generated-scenes.json` and `examples/lip-sync.json` are video scripts, and each folder under `examples/samples/` holds one more. `titles-and-captions.json` is the one to copy first: it needs no media files and no key, and the `guide` command prints it.
 
-```yaml
-schemaVersion: 2
-template: { id: welcome, templateVersion: 1 }
-budget: { maxUsd: 5 }
-output: { path: out/demo.mp4, width: 1920, height: 1080, fps: 30, encode: web }
-brand: { font: assets/font.ttf, colors: { bg: "#0B0B0B", fg: "#FFFFFF", accent: "#3B82F6" }, logo: assets/logo.png }
-cache: { dir: .video-cache }
-tracks:
-  - id: main
-    clips:
-      - { type: title_card, duration: 3.0, text: "Hello", subtitle: "optional" }
-      - { type: screen_recording, url: "https://example.com", duration: 8.0, actions: [{ click: "#start" }, { wait: 1.5 }, { scroll: 600 }] }
-      - { type: video, path: assets/broll.mp4, in: 2.0, out: 6.0 }
-      - { type: image, path: assets/shot.png, duration: 4.0, kenburns: { from: 1.0, to: 1.1 } }
-  - id: voice
-    clips:
-      - { type: speech, at: 0.5, text: "Narration line", provider: xai-speech, model: tts, voice: eve }
-      - { type: voiceover, at: 4.0, text: "A caption that is not spoken" }
-  - id: captions
-    from: voice
-  - id: music
-    clips: [{ type: audio, path: assets/bed.mp3, at: 0, gain_db: -18, duck_under: voice }]
-cuts: [{ at: 11.0, transition: crossfade, duration: 0.4 }]
+```json
+{
+  "schemaVersion": 2,
+  "template": { "id": "welcome", "templateVersion": 1 },
+  "budget": { "maxUsd": 5 },
+  "output": { "path": "out/demo.mp4", "width": 1920, "height": 1080, "fps": 30, "encode": "web" },
+  "brand": { "font": "assets/font.ttf", "colors": { "bg": "#0B0B0B", "fg": "#FFFFFF", "accent": "#3B82F6" }, "logo": "assets/logo.png" },
+  "cache": { "dir": ".video-cache" },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        { "type": "title_card", "duration": 3.0, "text": "Hello", "subtitle": "optional" },
+        { "type": "screen_recording", "url": "https://example.com", "duration": 8.0, "actions": [{ "click": "#start" }, { "wait": 1.5 }, { "scroll": 600 }] },
+        { "type": "video", "path": "assets/broll.mp4", "in": 2.0, "out": 6.0 },
+        { "type": "image", "path": "assets/shot.png", "duration": 4.0, "kenburns": { "from": 1.0, "to": 1.1 } }
+      ]
+    },
+    {
+      "id": "voice",
+      "clips": [
+        { "type": "speech", "at": 0.5, "text": "Narration line", "provider": "xai-speech", "model": "tts", "voice": "eve" },
+        { "type": "voiceover", "at": 4.0, "text": "A caption that is not spoken" }
+      ]
+    },
+    { "id": "captions", "from": "voice" },
+    { "id": "music", "clips": [{ "type": "audio", "path": "assets/bed.mp3", "at": 0, "gain_db": -18, "duck_under": "voice" }] }
+  ],
+  "cuts": [{ "at": 11.0, "transition": "crossfade", "duration": 0.4 }]
+}
 ```
 
 ## What the schema says
@@ -75,34 +82,42 @@ Rules that need the media files or the computed timeline (clips on a track do no
 
 `video-template.v1.json` is the JSON Schema (draft 2020-12) for a video template: a video with named inputs. The `expand` command fills a template with the values of an inputs file and writes a video script as described above. The format belongs to this command-line tool alone; nothing else has to read it. `templates/` holds three starter templates, and each sample project under `examples/samples/` is made from one of them.
 
-```yaml
-templateVersion: 1
-id: shop-news
-title: Shop news
-description: Optional. Says what the template is for.
-inputs:
-  name: { type: text, required: true, maxLength: 40, description: "Shown on the first card." }
-  mood: { type: choice, options: [calm, bright], default: calm }
-  paper: { type: color, default: "#101010" }
-  clip: { type: video }
-  voice: { type: voice }
-  tune: { type: audio }
-brand: { colors: { bg: "{{paper}}", fg: "#FFFFFF", accent: "#3366AA" } }   # or: brand: { file: brand.yaml }
-output: { path: out/news.mp4, width: 1920, height: 1080, fps: 30 }
-budget: { maxUsd: 5 }
-speech: { provider: xai-speech, model: tts, voice: "{{voice}}" }
-music: { path: "{{tune}}", gain_db: -18 }
-fallbacks: { speech: captions, music: none }
-disclosure: "AI-generated scenes"
-scenes:
-  - id: hello
-    show: { type: title_card, duration: 2.0, text: "{{name}}", subtitle: "A {{mood}} day" }
-    say: [{ at: 0.5, text: "Hello from {{name}}." }]
-    cut: { transition: crossfade, duration: 0.2 }
-  - id: moving
-    show: { type: video, path: "{{clip}}", in: 1.0, out: 2.5 }
-    fallback: { type: title_card, duration: 1.5, text: "{{name}} in pictures" }
-endCard: { duration: 2.0, text: "See you at {{name}}", say: [{ at: 0.25, text: "Goodbye." }] }
+```json
+{
+  "templateVersion": 1,
+  "id": "shop-news",
+  "title": "Shop news",
+  "description": "Optional. Says what the template is for.",
+  "inputs": {
+    "name": { "type": "text", "required": true, "maxLength": 40, "description": "Shown on the first card." },
+    "mood": { "type": "choice", "options": ["calm", "bright"], "default": "calm" },
+    "paper": { "type": "color", "default": "#101010" },
+    "clip": { "type": "video" },
+    "voice": { "type": "voice" },
+    "tune": { "type": "audio" }
+  },
+  "brand": { "colors": { "bg": "{{paper}}", "fg": "#FFFFFF", "accent": "#3366AA" } },
+  "output": { "path": "out/news.mp4", "width": 1920, "height": 1080, "fps": 30 },
+  "budget": { "maxUsd": 5 },
+  "speech": { "provider": "xai-speech", "model": "tts", "voice": "{{voice}}" },
+  "music": { "path": "{{tune}}", "gain_db": -18 },
+  "fallbacks": { "speech": "captions", "music": "none" },
+  "disclosure": "AI-generated scenes",
+  "scenes": [
+    {
+      "id": "hello",
+      "show": { "type": "title_card", "duration": 2.0, "text": "{{name}}", "subtitle": "A {{mood}} day" },
+      "say": [{ "at": 0.5, "text": "Hello from {{name}}." }],
+      "cut": { "transition": "crossfade", "duration": 0.2 }
+    },
+    {
+      "id": "moving",
+      "show": { "type": "video", "path": "{{clip}}", "in": 1.0, "out": 2.5 },
+      "fallback": { "type": "title_card", "duration": 1.5, "text": "{{name}} in pictures" }
+    }
+  ],
+  "endCard": { "duration": 2.0, "text": "See you at {{name}}", "say": [{ "at": 0.25, "text": "Goodbye." }] }
+}
 ```
 
 - **`templateVersion`** is 1. **`id`** is lower-case letters, digits and hyphens; **`title`** and the optional **`description`** are for people.
@@ -119,7 +134,7 @@ endCard: { duration: 2.0, text: "See you at {{name}}", say: [{ at: 0.25, text: "
   | `voice` | The name of a voice of the speech provider. | `speech.voice`. |
 
 - **Slots.** `{{name}}` in a text is replaced by the value of the input `name`. Text places may mix slots and words. A path, a color or a voice is either written out or is exactly one slot. Substitution happens once and is plain: there are no conditions, loops, filters or arithmetic, `{{ name | upper }}` is rejected, and a value that itself holds `{{...}}` is not expanded again.
-- **`brand`** is either `{ file: brand.yaml }`, the owner's brand file read from the folder of the inputs file, or a brand written in the template as in a script, where a color or the logo may be a slot. A brand file holds what a script's `brand` block holds: `colors`, `logo` and `font`.
+- **`brand`** is either `{ "file": "brand.json" }`, the owner's brand file read from the folder of the inputs file, or a brand written in the template as in a script, where a color or the logo may be a slot. A brand file holds what a script's `brand` block holds: `colors`, `logo` and `font`.
 - **`output`** is the output of the script. An inputs file can replace any part of it.
 - **`budget.maxUsd`** is the most one video from this template may cost, in US dollars. The starter templates set 5. `expand` copies it into the script, where `estimate` and `render` refuse to go above it.
 - **`speech`** says who speaks the lines: a `provider` and a `model`, both written out, and a `voice` that is written out or a slot. A template without `speech` makes captions only.
@@ -135,10 +150,10 @@ What the template schema cannot say is checked by `expand`: a slot names an inpu
 
 ## Examples
 
-- `examples/*.yaml` must be accepted and break no rule. Together they must use every clip type. `all-clip-types.yaml` uses every free type and `speech`, `generated-scenes.yaml` adds `generated_scene`, and `lip-sync.yaml` adds `lip_sync`; their paid clips name a provider, so they show a price in `estimate`.
-- `examples/samples/<name>/` holds four sample projects for four made-up businesses (a plumber, an accounting office, a fitness studio and a bookshop). Everything in them is SAMPLE DATA. Each has an `inputs.yaml` with the values for one starter template, a `brand.yaml`, the `script.yaml` that `expand` writes from the two (it must be accepted, break no rule, and be exactly what `expand` writes), a `README.md`, and placeholder pictures in `assets/`. They need no key and no network. `python3 scripts/make_sample_assets.py` draws the pictures again; it uses only the Python standard library.
-- `templates/*.yaml` are the three starter templates. Each must be accepted by the template schema and by `expand`, have its file name as its `id`, and be the same as its copy in `src/ambitious_video/templates/`.
-- `examples/invalid/*.yaml` must each be rejected for the reason listed for it in `examples/invalid/EXPECTED.json`: `{ "keyword", "at" }` names the schema keyword that rejects it and where, and `{ "rule" }` names the one rule above that it breaks while passing the schema.
+- `examples/*.json` must be accepted and break no rule. Together they must use every clip type. `all-clip-types.json` uses every free type and `speech`, `generated-scenes.json` adds `generated_scene`, `lip-sync.json` adds `lip_sync`, and `promo-video-recipe.json` validates against `schemas/video-recipe.v1.json` and compiles into a validated script; their paid clips name a provider, so they show a price in `estimate`.
+- `examples/samples/<name>/` holds four sample projects for four made-up businesses (a plumber, an accounting office, a fitness studio and a bookshop). Everything in them is SAMPLE DATA. Each has an `inputs.json` with the values for one starter template, a `brand.json`, the `script.json` that `expand` writes from the two (it must be accepted, break no rule, and be exactly what `expand` writes), a `README.md`, and placeholder pictures in `assets/`. They need no key and no network. `python3 scripts/make_sample_assets.py` draws the pictures again; it uses only the Python standard library.
+- `templates/*.json` are the three starter templates. Each must be accepted by the template schema and by `expand`, have its file name as its `id`, and be the same as its copy in `src/ambitious_video/templates/`.
+- `examples/invalid/*.json` must each be rejected for the reason listed for it in `examples/invalid/EXPECTED.json`: `{ "keyword", "at" }` names the schema keyword that rejects it and where, and `{ "rule" }` names the one rule above that it breaks while passing the schema.
 
 ## Check
 
@@ -146,6 +161,6 @@ What the template schema cannot say is checked by `expand`: a slot names an inpu
 python3 scripts/check_schemas.py
 ```
 
-The script itself uses only the Python standard library. On first run it creates `.venv/` and installs the two packages it checks with, `jsonschema` and `PyYAML`, from `scripts/dev-requirements.txt`, where every file is pinned by SHA-256 (`scripts/dev-requirements.in` lists the two versions; `uv pip compile --generate-hashes --universal` writes the pinned file). It needs Python 3.13 or newer and starts itself again with the Python pinned in `.mise.toml` when it is run by an older one. It also checks that the schema, the model in `spec/` and `src/ambitious_video/domain/types.py` name the same clip types, actions, transitions, output encodings, patterns, rules, job states and moves, and that the template schema and `types.py` name the same input types, scene clips, patterns and template version. It ends with `check_schemas: ok`.
+The script itself uses only the Python standard library. On first run it creates `.venv/` and installs the pinned dev packages (including `jsonschema`, with no YAML dependency) from `scripts/dev-requirements.txt`, where every file is pinned by SHA-256 (`scripts/dev-requirements.in` lists the versions; `uv pip compile --generate-hashes --universal` writes the pinned file). It needs Python 3.13 or newer and starts itself again with the Python pinned in `.mise.toml` when it is run by an older one. It also checks that the schema, the model in `spec/` and `src/ambitious_video/domain/types.py` name the same clip types, actions, transitions, output encodings, patterns, rules, job states and moves, that `schemas/video-recipe.v1.json` is valid, and that the template schema and `types.py` name the same input types, scene clips, patterns and template version. It ends with `check_schemas: ok`.
 
 A change that makes a valid script invalid belongs in a new schema file with a new version number. Version 2 replaced the script-wide `voice` block of version 1 with the `speech` clip; a version 1 script is rejected.

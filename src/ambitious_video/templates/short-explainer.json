@@ -1,0 +1,224 @@
+{
+  "templateVersion": 1,
+  "id": "short-explainer",
+  "title": "Short explainer",
+  "description": "Explains one idea in three points in about 20 seconds. Each point shows a picture, or a card with the point when no picture is given.",
+  "inputs": {
+    "business_name": {
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "description": "The name shown on the opening card."
+    },
+    "tagline": {
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "description": "One short line under the name."
+    },
+    "opening_line": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "The first sentence of the narration."
+    },
+    "headline": {
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "description": "The idea that the three points explain."
+    },
+    "point_1": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "The first point, as one sentence."
+    },
+    "point_1_picture": {
+      "type": "image",
+      "description": "A picture for the first point. Without it the point is shown on a card."
+    },
+    "point_2": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "The second point."
+    },
+    "point_2_picture": {
+      "type": "image",
+      "description": "A picture for the second point. Optional."
+    },
+    "point_3": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "The third point."
+    },
+    "point_3_picture": {
+      "type": "image",
+      "description": "A picture for the third point. Optional."
+    },
+    "call_to_action": {
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "description": "What the viewer should do next."
+    },
+    "web_address": {
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "description": "Where to find the business."
+    },
+    "closing_line": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "The last sentence of the narration."
+    },
+    "voice": {
+      "type": "voice",
+      "description": "A voice of the speech provider. Without it the lines are captions only."
+    },
+    "music": {
+      "type": "audio",
+      "description": "A music file played quietly under the video. Optional."
+    }
+  },
+  "brand": {
+    "file": "brand.json"
+  },
+  "output": {
+    "path": "out/short-explainer.mp4",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+  "budget": {
+    "maxUsd": 5
+  },
+  "speech": {
+    "provider": "xai-speech",
+    "model": "tts",
+    "voice": "{{voice}}"
+  },
+  "music": {
+    "path": "{{music}}",
+    "gain_db": -18
+  },
+  "fallbacks": {
+    "speech": "captions",
+    "music": "none"
+  },
+  "disclosure": "AI-generated scenes",
+  "scenes": [
+    {
+      "id": "opening",
+      "show": {
+        "type": "title_card",
+        "duration": 3.0,
+        "text": "{{business_name}}",
+        "subtitle": "{{tagline}}"
+      },
+      "say": [
+        {
+          "at": 0.5,
+          "duration": 2.0,
+          "text": "{{opening_line}}"
+        }
+      ]
+    },
+    {
+      "id": "headline",
+      "show": {
+        "type": "title_card",
+        "duration": 2.5,
+        "text": "{{headline}}"
+      }
+    },
+    {
+      "id": "point-1",
+      "show": {
+        "type": "image",
+        "path": "{{point_1_picture}}",
+        "duration": 3.5,
+        "kenburns": {
+          "from": 1.0,
+          "to": 1.05
+        }
+      },
+      "fallback": {
+        "type": "title_card",
+        "duration": 3.5,
+        "text": "{{point_1}}"
+      },
+      "say": [
+        {
+          "at": 0.0,
+          "duration": 3.0,
+          "text": "{{point_1}}"
+        }
+      ]
+    },
+    {
+      "id": "point-2",
+      "show": {
+        "type": "image",
+        "path": "{{point_2_picture}}",
+        "duration": 3.5,
+        "kenburns": {
+          "from": 1.0,
+          "to": 1.05
+        }
+      },
+      "fallback": {
+        "type": "title_card",
+        "duration": 3.5,
+        "text": "{{point_2}}"
+      },
+      "say": [
+        {
+          "at": 0.0,
+          "duration": 3.0,
+          "text": "{{point_2}}"
+        }
+      ]
+    },
+    {
+      "id": "point-3",
+      "show": {
+        "type": "image",
+        "path": "{{point_3_picture}}",
+        "duration": 3.5,
+        "kenburns": {
+          "from": 1.0,
+          "to": 1.05
+        }
+      },
+      "fallback": {
+        "type": "title_card",
+        "duration": 3.5,
+        "text": "{{point_3}}"
+      },
+      "say": [
+        {
+          "at": 0.0,
+          "duration": 3.0,
+          "text": "{{point_3}}"
+        }
+      ]
+    }
+  ],
+  "endCard": {
+    "duration": 3.0,
+    "text": "{{call_to_action}}",
+    "subtitle": "{{web_address}}",
+    "say": [
+      {
+        "at": 0.5,
+        "duration": 2.0,
+        "text": "{{closing_line}}"
+      }
+    ]
+  }
+}

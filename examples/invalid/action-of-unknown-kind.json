@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "output": {
+    "path": "out/example.mp4",
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "screen_recording",
+          "url": "https://example.com",
+          "duration": 5.0,
+          "actions": [
+            {
+              "hover": "#start"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

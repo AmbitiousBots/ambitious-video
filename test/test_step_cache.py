@@ -18,7 +18,6 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
 from ambitious_kit.domain.envelope import Failure
 
@@ -96,7 +95,7 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 def _project(dest: Path) -> tuple[dict[str, object], Path]:
     folder = dest / "project"
     shutil.copytree(SAMPLE, folder)
-    script = yaml.safe_load((folder / "script.yaml").read_text(encoding="utf-8"))
+    script = json.loads((folder / "script.json").read_text(encoding="utf-8"))
     assert isinstance(script, dict)
     for track in script["tracks"]:
         for clip in track.get("clips", []):
@@ -435,7 +434,7 @@ def test_cache_flags_are_refused_where_they_mean_nothing(tmp_path: Path) -> None
     home = tmp_path / "home"
     planned = _cli(
         home,
-        ["validate", "--cache", str(tmp_path / "cache"), "--in", str(SAMPLE / "script.yaml")],
+        ["validate", "--cache", str(tmp_path / "cache"), "--in", str(SAMPLE / "script.json")],
         "2026-01-01T00:00:00Z",
     )
     assert planned["exit"] == 1 and planned["errors"][0]["code"] == "E_USAGE"

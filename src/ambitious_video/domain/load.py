@@ -653,6 +653,13 @@ def load_script(raw: object) -> tuple[Script, tuple[ScriptProblem, ...]] | tuple
     document = as_object(bag, raw, "")
     if document is None:
         return None, tuple(bag.items)
+    if "dslVersion" in document:
+        from ambitious_video.domain.recipe import compile_recipe
+
+        compiled, problems = compile_recipe(document)
+        if compiled is None:
+            return None, problems
+        document = compiled
     only_keys(bag, document, TOP_LEVEL, "")
     if "schemaVersion" not in document:
         bag.schema("", "Field schemaVersion is required.")

@@ -8,7 +8,6 @@ from types import ModuleType
 
 import jsonschema
 import pytest
-import yaml
 from PIL import Image
 
 from ambitious_video.cli import engine
@@ -26,8 +25,8 @@ SLUGS = sorted(NAMES)
 MAX_BINARY_BYTES = 60_000
 
 
-def _yaml(path: Path) -> dict[str, object]:
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+def _json(path: Path) -> dict[str, object]:
+    loaded = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return loaded
 
@@ -64,7 +63,7 @@ def test_the_four_samples_are_present() -> None:
 
 @pytest.mark.parametrize("slug", SLUGS)
 def test_sample_script_matches_the_schema(slug: str) -> None:
-    script = _yaml(SAMPLES / slug / "script.yaml")
+    script = _json(SAMPLES / slug / "script.json")
     jsonschema.Draft202012Validator(_schema()).validate(script)
     assert script["schemaVersion"] == 2
     tracks = script["tracks"]
@@ -74,16 +73,16 @@ def test_sample_script_matches_the_schema(slug: str) -> None:
 
 @pytest.mark.parametrize("slug", SLUGS)
 def test_sample_validates_offline(slug: str, no_network: None) -> None:
-    script = _yaml(SAMPLES / slug / "script.yaml")
+    script = _json(SAMPLES / slug / "script.json")
     checked = engine.validate_data(script, SAMPLES / slug)
     assert checked["ok"] is True and checked["problems"] == []
 
 
 @pytest.mark.parametrize("slug", SLUGS)
 def test_sample_plans_offline_and_the_same_twice(slug: str, no_network: None) -> None:
-    script = _yaml(SAMPLES / slug / "script.yaml")
+    script = _json(SAMPLES / slug / "script.json")
     first = engine.canonical(engine.plan_data(script, SAMPLES / slug))
-    second = engine.canonical(engine.plan_data(_yaml(SAMPLES / slug / "script.yaml"), SAMPLES / slug))
+    second = engine.canonical(engine.plan_data(_json(SAMPLES / slug / "script.json"), SAMPLES / slug))
     assert first == second
     plan = json.loads(first)
     assert {step["type"] for step in plan["steps"]} == {"title_card", "image", "voiceover"}
@@ -93,8 +92,8 @@ def test_sample_plans_offline_and_the_same_twice(slug: str, no_network: None) ->
 
 @pytest.mark.parametrize("slug", SLUGS)
 def test_sample_brand_file_matches_its_script(slug: str) -> None:
-    brand = _yaml(SAMPLES / slug / "brand.yaml")
-    script = _yaml(SAMPLES / slug / "script.yaml")
+    brand = _json(SAMPLES / slug / "brand.json")
+    script = _json(SAMPLES / slug / "script.json")
     assert script["brand"] == brand
     assert "font" not in brand
     assert brand["logo"] == "assets/logo.png"
@@ -107,8 +106,8 @@ def test_sample_brand_file_matches_its_script(slug: str) -> None:
 def test_sample_says_it_is_fictional_sample_data(slug: str) -> None:
     readme = (SAMPLES / slug / "README.md").read_text(encoding="utf-8")
     assert "SAMPLE DATA" in readme and "fictional" in readme and NAMES[slug] in readme
-    assert "SAMPLE DATA" in (SAMPLES / slug / "inputs.yaml").read_text(encoding="utf-8")
-    script = _yaml(SAMPLES / slug / "script.yaml")
+    assert "SAMPLE DATA" in (SAMPLES / slug / "inputs.json").read_text(encoding="utf-8")
+    script = _json(SAMPLES / slug / "script.json")
     tracks = script["tracks"]
     assert isinstance(tracks, list)
     opening = tracks[0]["clips"][0]
@@ -118,7 +117,7 @@ def test_sample_says_it_is_fictional_sample_data(slug: str) -> None:
 
 @pytest.mark.parametrize("slug", SLUGS)
 def test_sample_binaries_stay_small(slug: str) -> None:
-    binaries = [path for path in (SAMPLES / slug).rglob("*") if path.is_file() and path.suffix not in {".yaml", ".md"}]
+    binaries = [path for path in (SAMPLES / slug).rglob("*") if path.is_file() and path.suffix not in {".json", ".md"}]
     assert {path.suffix for path in binaries} == {".png"}
     assert sum(path.stat().st_size for path in binaries) < MAX_BINARY_BYTES
 
@@ -137,6 +136,6 @@ def test_sample_pictures_come_from_the_committed_script(tmp_path: Path) -> None:
 def test_sample_pictures_use_the_brand_colors() -> None:
     generator = _generator()
     for sample in generator.SAMPLE_COLORS:
-        colors = _yaml(SAMPLES / sample.slug / "brand.yaml")["colors"]
+        colors = _json(SAMPLES / sample.slug / "brand.json")["colors"]
         assert isinstance(colors, dict)
         assert [generator.rgb(colors[key]) for key in ("bg", "fg", "accent")] == [sample.bg, sample.fg, sample.accent]

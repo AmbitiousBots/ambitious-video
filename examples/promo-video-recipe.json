@@ -1,0 +1,81 @@
+{
+  "dslVersion": 1,
+  "kind": "recipe",
+  "id": "promo-video-render",
+  "version": 1,
+  "title": "Promo video render",
+  "activation": "auto",
+  "budget": { "maxUsd": 5 },
+  "triggers": [{ "kind": "manual" }],
+  "steps": [
+    {
+      "id": "scene",
+      "kind": "ai",
+      "executor": "bot",
+      "provider": "xai-video",
+      "model": "grok-imagine-video",
+      "cache": "step_key",
+      "disclosure": "AI-generated scenes",
+      "params": {
+        "prompt": "A slow aerial shot of a small town at sunrise, soft light, no people, no text",
+        "duration": 6,
+        "resolution": "720p",
+        "aspect_ratio": "16:9"
+      },
+      "fallback": {
+        "type": "image",
+        "path": "assets/still.png",
+        "kenburns": { "from": 1.0, "to": 1.06 }
+      }
+    },
+    {
+      "id": "speech",
+      "kind": "ai",
+      "executor": "bot",
+      "provider": "xai-speech",
+      "model": "tts",
+      "cache": "step_key",
+      "params": {
+        "at": 0.5,
+        "duration": 4.0,
+        "text": "Welcome to a short video rendered from a shared JSON recipe.",
+        "voice": "eve"
+      },
+      "fallback": { "type": "captions_only" }
+    },
+    {
+      "id": "assemble",
+      "kind": "tool",
+      "needs": ["scene", "speech"],
+      "action": "bot.ffmpeg_assemble",
+      "input": {
+        "output": { "path": "out/promo-video-recipe.mp4", "width": 1280, "height": 720, "fps": 30 },
+        "brand": { "colors": { "bg": "#0B0B0B", "fg": "#FFFFFF", "accent": "#3B82F6" } },
+        "tracks": [
+          {
+            "id": "main",
+            "clips": [
+              { "type": "title_card", "duration": 2.0, "text": "Example Co.", "subtitle": "SAMPLE DATA" },
+              { "refStep": "scene" }
+            ]
+          },
+          {
+            "id": "voice",
+            "clips": [{ "refStep": "speech" }]
+          },
+          {
+            "id": "captions",
+            "from": "voice"
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "kind": "return",
+      "needs": ["assemble"],
+      "status": "completed",
+      "output": { "artifact": { "$": "steps.assemble.output" } }
+    }
+  ]
+}

@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-import yaml
 from ambitious_kit.db.sqlite import Db, load_migrations, migrate, open_db
 from ambitious_kit.domain.envelope import Failure, JsonObject
 from PIL import Image
@@ -1121,7 +1120,7 @@ def test_xai_image_asks_for_one_picture_and_writes_its_bytes(tmp_path: Path, ser
 
 
 def test_the_example_with_generated_scenes_plans_and_prices(no_network: None, tmp_path: Path) -> None:
-    raw = yaml.safe_load((ROOT / "examples" / "generated-scenes.yaml").read_text(encoding="utf-8"))
+    raw = json.loads((ROOT / "examples" / "generated-scenes.json").read_text(encoding="utf-8"))
     env = {"AMBITIOUS_HOME": str(tmp_path / "home")}
     data = engine.estimate_data(raw, ROOT / "examples", env)
     assert data["usd"] == "0.420000" and data["durationSec"] == 16

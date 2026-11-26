@@ -96,27 +96,35 @@ def shows(found: object, wanted: tuple[int, int, int], encode: str) -> bool:
     return all(abs(int(have) - want) <= slack for have, want in zip(found, wanted, strict=True))
 
 
-def script_of(output: str, clips: list[str], logo: str | None = None, encode: str | None = None) -> str:
-    brand = '  colors: { bg: "#204060", fg: "#ffffff", accent: "#ff8800" }'
-    stored = "" if encode is None else f", encode: {encode}"
-    lines = [
-        "schemaVersion: 2",
-        f"output: {{ path: {output}, width: 320, height: 180, fps: 10{stored} }}",
-        "brand:",
-        brand,
-        *([] if logo is None else [f"  logo: {logo}"]),
-        "tracks:",
-        "  - id: main",
-        "    clips:",
-        *[f"      - {clip}" for clip in clips],
-        "",
-    ]
-    return "\n".join(lines)
+def script_of(
+    output: str,
+    clips: list[dict[str, object]],
+    logo: str | None = None,
+    encode: str | None = None,
+) -> str:
+    out_obj: dict[str, object] = {"path": output, "width": 320, "height": 180, "fps": 10}
+    if encode is not None:
+        out_obj["encode"] = encode
+    brand_obj: dict[str, object] = {"colors": {"bg": "#204060", "fg": "#ffffff", "accent": "#ff8800"}}
+    if logo is not None:
+        brand_obj["logo"] = logo
+    return (
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "output": out_obj,
+                "brand": brand_obj,
+                "tracks": [{"id": "main", "clips": clips}],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def rendered(home: Path, work: Path, script: str) -> dict[str, object]:
-    (work / "script.yaml").write_text(script, encoding="utf-8")
-    result = run(home, work, ["render", "--in", str(work / "script.yaml")])
+    (work / "script.json").write_text(script, encoding="utf-8")
+    result = run(home, work, ["render", "--in", str(work / "script.json")])
     assert result["exit"] == 0, result
     data = result["data"]
     assert isinstance(data, dict)
@@ -138,11 +146,11 @@ def test_a_clip_of_another_size_fills_its_scheduled_time(
 ) -> None:
     Image.new("RGB", image_size, (200, 30, 30)).save(tmp_path / "still.png")
     make_video(tmp_path / "clip.mp4", video_size)
-    clips = [
-        '{ type: title_card, duration: 2.0, text: "One" }',
-        "{ type: image, path: still.png, duration: 2.0 }",
-        "{ type: video, path: clip.mp4, in: 0, out: 3 }",
-        '{ type: title_card, duration: 4.0, text: "Two" }',
+    clips: list[dict[str, object]] = [
+        {"type": "title_card", "duration": 2.0, "text": "One"},
+        {"type": "image", "path": "still.png", "duration": 2.0},
+        {"type": "video", "path": "clip.mp4", "in": 0, "out": 3},
+        {"type": "title_card", "duration": 4.0, "text": "Two"},
     ]
     data = rendered(tmp_path / "home", tmp_path, script_of("out.mp4", clips, None, encode))
     assert data["durationSec"] == 11
@@ -163,7 +171,9 @@ def test_a_clip_of_another_size_fills_its_scheduled_time(
 @pytest.mark.parametrize("encode", ENCODES)
 def test_a_small_picture_alone_keeps_the_scheduled_time(tmp_path: Path, encode: str) -> None:
     Image.new("RGB", (16, 16), (10, 200, 10)).save(tmp_path / "dot.png")
-    clips = ["{ type: image, path: dot.png, duration: 3.0, kenburns: { from: 1.0, to: 1.2 } }"]
+    clips: list[dict[str, object]] = [
+        {"type": "image", "path": "dot.png", "duration": 3.0, "kenburns": {"from": 1.0, "to": 1.2}}
+    ]
     data = rendered(tmp_path / "home", tmp_path, script_of("picture.mp4", clips, None, encode))
     assert data["durationSec"] == 3
     assert frame_count(tmp_path / "picture.mp4") == 30
@@ -172,9 +182,9 @@ def test_a_small_picture_alone_keeps_the_scheduled_time(tmp_path: Path, encode: 
 
 @pytest.mark.parametrize("encode", ENCODES)
 def test_verify_names_a_short_video_instead_of_a_missing_tool(tmp_path: Path, encode: str) -> None:
-    clips = [
-        '{ type: title_card, duration: 2.0, text: "One" }',
-        '{ type: title_card, duration: 2.0, text: "Two" }',
+    clips: list[dict[str, object]] = [
+        {"type": "title_card", "duration": 2.0, "text": "One"},
+        {"type": "title_card", "duration": 2.0, "text": "Two"},
     ]
     data = rendered(tmp_path / "home", tmp_path, script_of("cards.mp4", clips, None, encode))
     output = tmp_path / "cards.mp4"
@@ -203,7 +213,7 @@ def test_verify_names_a_short_video_instead_of_a_missing_tool(tmp_path: Path, en
 
 @pytest.mark.parametrize("encode", ENCODES)
 def test_verify_names_a_file_that_is_not_a_video(tmp_path: Path, encode: str) -> None:
-    clips = ['{ type: title_card, duration: 1.0, text: "One" }']
+    clips: list[dict[str, object]] = [{"type": "title_card", "duration": 1.0, "text": "One"}]
     data = rendered(tmp_path / "home", tmp_path, script_of("card.mp4", clips, None, encode))
     (tmp_path / "card.mp4").write_bytes(b"not a video")
     checked = verified(tmp_path / "home", tmp_path, data["jobId"])
@@ -238,7 +248,7 @@ def title_frame_of(canvas: Canvas) -> Image.Image:
 @pytest.mark.parametrize("encode", ENCODES)
 def test_a_transparent_logo_renders_without_a_black_box(tmp_path: Path, encode: str) -> None:
     transparent_logo(tmp_path / "logo.png")
-    clips = ['{ type: title_card, duration: 1.0, text: "One" }']
+    clips: list[dict[str, object]] = [{"type": "title_card", "duration": 1.0, "text": "One"}]
     data = rendered(tmp_path / "home", tmp_path, script_of("logo.mp4", clips, "logo.png", encode))
     shot = frame_of(tmp_path / "logo.mp4", 5, tmp_path / "logo-frame.png")
     left, top = 320 // 24, 180 // 24
@@ -250,8 +260,11 @@ def test_a_transparent_logo_renders_without_a_black_box(tmp_path: Path, encode: 
 
 def test_no_command_hangs_when_stdin_stays_open(tmp_path: Path) -> None:
     make_video(tmp_path / "clip.mp4", "64x48")
-    clips = ['{ type: title_card, duration: 1.0, text: "One" }', "{ type: video, path: clip.mp4, in: 0, out: 1 }"]
-    path = tmp_path / "script.yaml"
+    clips: list[dict[str, object]] = [
+        {"type": "title_card", "duration": 1.0, "text": "One"},
+        {"type": "video", "path": "clip.mp4", "in": 0, "out": 1},
+    ]
+    path = tmp_path / "script.json"
     path.write_text(script_of("open.mp4", clips), encoding="utf-8")
     home = tmp_path / "home"
     for name in ["validate", "plan", "estimate"]:
@@ -276,7 +289,7 @@ def test_a_command_without_input_gives_up_on_an_open_stdin(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("flags", [["--in", "-"], ["--in=-"], []])
 def test_a_script_on_stdin_is_still_read(tmp_path: Path, flags: list[str]) -> None:
-    script = script_of("piped.mp4", ['{ type: title_card, duration: 1.0, text: "One" }'])
+    script = script_of("piped.mp4", [{"type": "title_card", "duration": 1.0, "text": "One"}])
     result = subprocess.run(
         command(["validate", *flags]),
         cwd=tmp_path,
@@ -295,7 +308,9 @@ def test_a_slow_writer_on_stdin_is_read_to_the_end(tmp_path: Path, name: str) ->
     from ambitious_video.cli.main import STDIN_WAIT_SECONDS
 
     assert SLOW_WRITER_PAUSE_SECONDS > STDIN_WAIT_SECONDS
-    cards = [f'{{ type: title_card, duration: 2.0, text: "{word}" }}' for word in ["One", "Two", "Three"]]
+    cards: list[dict[str, object]] = [
+        {"type": "title_card", "duration": 2.0, "text": word} for word in ["One", "Two", "Three"]
+    ]
     lines = script_of("slow.mp4", cards).splitlines(keepends=True)
     proc = subprocess.Popen(
         command([name]),
