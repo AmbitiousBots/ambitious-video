@@ -31,6 +31,7 @@ MINIMUM_PYTHON = (3, 13)
 
 SCHEMA = REPO / "schemas" / "video-script.v2.json"
 TEMPLATE_SCHEMA = REPO / "schemas" / "video-template.v1.json"
+RECIPE_SCHEMA = REPO / "schemas" / "video-recipe.v1.json"
 TEMPLATES = REPO / "templates"
 PACKAGED_TEMPLATES = REPO / "src" / "ambitious_video" / "templates"
 REQUIRED_TEMPLATES = ("announcement", "short-explainer", "welcome")
@@ -39,12 +40,13 @@ INVALID = EXAMPLES / "invalid"
 EXPECTED = INVALID / "EXPECTED.json"
 MODEL = REPO / "spec" / "RenderJob.tla"
 REQUIRED_EXAMPLES = (
-    "minimal.yaml",
-    "all-clip-types.yaml",
-    "titles-and-captions.yaml",
-    "generated-scenes.yaml",
-    "lip-sync.yaml",
+    "minimal.json",
+    "all-clip-types.json",
+    "titles-and-captions.json",
+    "generated-scenes.json",
+    "lip-sync.json",
 )
+REQUIRED_RECIPES = ("promo-video-recipe.json",)
 SAMPLES = EXAMPLES / "samples"
 REQUIRED_SAMPLES = ("example-accounting", "example-bookshop", "example-fitness", "example-plumbing")
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
@@ -252,14 +254,14 @@ def check_templates(
     from ambitious_video.domain.template import expand, load_template
 
     problems = []
-    names = sorted(path.stem for path in TEMPLATES.glob("*.yaml"))
+    names = sorted(path.stem for path in TEMPLATES.glob("*.json"))
     for name in REQUIRED_TEMPLATES:
         if name not in names:
-            problems.append(f"templates/{name}.yaml is missing")
+            problems.append(f"templates/{name}.json is missing")
     loaded = {}
     for name in names:
-        where = f"templates/{name}.yaml"
-        template = load(TEMPLATES / f"{name}.yaml")
+        where = f"templates/{name}.json"
+        template = load(TEMPLATES / f"{name}.json")
         found = rejections(validator, template)
         if found:
             problems.append(f"{where}: must be accepted, but the schema rejects it by {told(found)}")
@@ -270,29 +272,29 @@ def check_templates(
             continue
         if template["id"] != name:
             problems.append(f"{where}: its id must be {name}, the name of the file")
-        packaged = PACKAGED_TEMPLATES / f"{name}.yaml"
-        if not packaged.is_file() or packaged.read_bytes() != (TEMPLATES / f"{name}.yaml").read_bytes():
-            problems.append(f"{where} and src/ambitious_video/templates/{name}.yaml differ. Copy one over the other")
+        packaged = PACKAGED_TEMPLATES / f"{name}.json"
+        if not packaged.is_file() or packaged.read_bytes() != (TEMPLATES / f"{name}.json").read_bytes():
+            problems.append(f"{where} and src/ambitious_video/templates/{name}.json differ. Copy one over the other")
         loaded[name] = parsed
-    if sorted(path.stem for path in PACKAGED_TEMPLATES.glob("*.yaml")) != names:
+    if sorted(path.stem for path in PACKAGED_TEMPLATES.glob("*.json")) != names:
         problems.append("templates/ and src/ambitious_video/templates/ must hold the same files")
     for slug in sorted(path.name for path in SAMPLES.iterdir() if path.is_dir()):
         where = f"examples/samples/{slug}"
-        if not (SAMPLES / slug / "inputs.yaml").is_file() or not (SAMPLES / slug / "script.yaml").is_file():
-            problems.append(f"{where}: needs inputs.yaml")
+        if not (SAMPLES / slug / "inputs.json").is_file() or not (SAMPLES / slug / "script.json").is_file():
+            problems.append(f"{where}: needs inputs.json")
             continue
-        inputs = load(SAMPLES / slug / "inputs.yaml")
+        inputs = load(SAMPLES / slug / "inputs.json")
         if inputs.get("template") not in loaded:
-            problems.append(f"{where}/inputs.yaml: template must name a starter template in templates/")
+            problems.append(f"{where}/inputs.json: template must name a starter template in templates/")
             continue
-        made = expand(loaded[inputs["template"]], inputs, load(SAMPLES / slug / "brand.yaml"))
+        made = expand(loaded[inputs["template"]], inputs, load(SAMPLES / slug / "brand.json"))
         if made.script is None:
             first = made.problems[0]
-            problems.append(f"{where}/inputs.yaml: expand refuses it: {first.document} {first.at} {first.message}")
+            problems.append(f"{where}/inputs.json: expand refuses it: {first.document} {first.at} {first.message}")
         elif rejections(script_validator, dict(made.script)):
             problems.append(f"{where}: the expanded script does not match schemas/video-script.v2.json")
-        elif made.script != load(SAMPLES / slug / "script.yaml"):
-            problems.append(f"{where}/script.yaml is not what expand writes from inputs.yaml. Run expand again")
+        elif made.script != load(SAMPLES / slug / "script.json"):
+            problems.append(f"{where}/script.json is not what expand writes from inputs.json. Run expand again")
     return problems, len(names)
 
 
@@ -313,16 +315,37 @@ def model_matches_types(types: ModuleType) -> list[str]:
 
 
 def check_valid(
-    validator: Draft202012Validator, load: Callable[[Path], Document], types: ModuleType
-) -> tuple[list[str], int]:
+    validator: Draft202012Validator,
+    recipe_validator: Draft202012Validator,
+    load: Callable[[Path], Document],
+    types: ModuleType,
+) -> tuple[list[str], int, int]:
+    from ambitious_video.domain.recipe import compile_recipe
+
     problems = []
-    names = sorted(path.name for path in EXAMPLES.glob("*.yaml"))
+    names = sorted(path.name for path in EXAMPLES.glob("*.json"))
     used = set()
-    for name in REQUIRED_EXAMPLES:
+    for name in (*REQUIRED_EXAMPLES, *REQUIRED_RECIPES):
         if name not in names:
             problems.append(f"examples/{name} is missing")
+    recipes = 0
+    scripts = 0
     for name in names:
-        script = load(EXAMPLES / name)
+        doc = load(EXAMPLES / name)
+        if isinstance(doc, dict) and "dslVersion" in doc:
+            recipes += 1
+            found = rejections(recipe_validator, doc)
+            if found:
+                problems.append(f"examples/{name}: must be accepted, but the recipe schema rejects it by {told(found)}")
+                continue
+            compiled, faults = compile_recipe(doc)
+            if compiled is None:
+                problems.append(f"examples/{name}: compile_recipe refuses it: {faults[0]}")
+                continue
+            script = compiled
+        else:
+            scripts += 1
+            script = doc
         found = rejections(validator, script)
         if found:
             problems.append(f"examples/{name}: must be accepted, but the schema rejects it by {told(found)}")
@@ -333,7 +356,7 @@ def check_valid(
     for clip_type in members(types.ClipType):
         if clip_type not in used:
             problems.append(f"no example in examples/ uses a {clip_type} clip, so nothing shows the schema accepts one")
-    return problems, len(names)
+    return problems, scripts, recipes
 
 
 def check_samples(validator: Draft202012Validator, load: Callable[[Path], Document]) -> tuple[list[str], int]:
@@ -346,22 +369,22 @@ def check_samples(validator: Draft202012Validator, load: Callable[[Path], Docume
     brand_validator = validator.evolve(schema=brand_only)
     for slug in slugs:
         where = f"examples/samples/{slug}"
-        missing = [name for name in ("script.yaml", "brand.yaml", "README.md") if not (SAMPLES / slug / name).is_file()]
+        missing = [name for name in ("script.json", "brand.json", "README.md") if not (SAMPLES / slug / name).is_file()]
         if missing:
             problems.append(f"{where}: needs {', '.join(missing)}")
             continue
-        script = load(SAMPLES / slug / "script.yaml")
-        brand = load(SAMPLES / slug / "brand.yaml")
+        script = load(SAMPLES / slug / "script.json")
+        brand = load(SAMPLES / slug / "brand.json")
         found = rejections(validator, script)
         if found:
-            problems.append(f"{where}/script.yaml: must be accepted, but the schema rejects it by {told(found)}")
+            problems.append(f"{where}/script.json: must be accepted, but the schema rejects it by {told(found)}")
             continue
         if broken_rules(script):
-            problems.append(f"{where}/script.yaml: must be accepted, but breaks {', '.join(broken_rules(script))}")
+            problems.append(f"{where}/script.json: must be accepted, but breaks {', '.join(broken_rules(script))}")
         if not isinstance(brand, dict) or list(brand_validator.iter_errors(brand)):
-            problems.append(f"{where}/brand.yaml: must be a brand as the schema describes one")
+            problems.append(f"{where}/brand.json: must be a brand as the schema describes one")
         elif script.get("brand") != brand:
-            problems.append(f"{where}: the brand block of script.yaml and brand.yaml differ. Change both together")
+            problems.append(f"{where}: the brand block of script.json and brand.json differ. Change both together")
         if "SAMPLE DATA" not in (SAMPLES / slug / "README.md").read_text(encoding="utf-8"):
             problems.append(f"{where}/README.md: must say that the project is SAMPLE DATA")
     return problems, len(slugs)
@@ -371,7 +394,7 @@ def check_invalid(
     validator: Draft202012Validator, load: Callable[[Path], Document], types: ModuleType
 ) -> tuple[list[str], int]:
     problems = []
-    names = sorted(path.name for path in INVALID.glob("*.yaml"))
+    names = sorted(path.name for path in INVALID.glob("*.json") if path.name != EXPECTED.name)
     expected = json.loads(EXPECTED.read_text(encoding="utf-8"))
     for name in expected:
         if name not in names:
@@ -418,13 +441,12 @@ def main() -> None:
     from importlib.metadata import version
 
     import jsonschema
-    import yaml
 
     sys.path.insert(0, str(REPO / "src"))
     from ambitious_video.domain import types
 
     def load(path: Path) -> Document:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
 
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     if schema.get("$schema") != DRAFT:
@@ -438,7 +460,13 @@ def main() -> None:
     jsonschema.Draft202012Validator.check_schema(template_schema)
     template_validator = jsonschema.Draft202012Validator(template_schema)
 
-    valid_problems, valid = check_valid(validator, load, types)
+    recipe_schema = json.loads(RECIPE_SCHEMA.read_text(encoding="utf-8"))
+    if recipe_schema.get("$schema") != DRAFT:
+        stop(f"schemas/video-recipe.v1.json must declare {DRAFT}")
+    jsonschema.Draft202012Validator.check_schema(recipe_schema)
+    recipe_validator = jsonschema.Draft202012Validator(recipe_schema)
+
+    valid_problems, valid, recipes = check_valid(validator, recipe_validator, load, types)
     sample_problems, samples = check_samples(validator, load)
     invalid_problems, invalid = check_invalid(validator, load, types)
     template_problems, templates = check_templates(template_validator, validator, load)
@@ -450,13 +478,14 @@ def main() -> None:
     if problems:
         sys.exit(1)
     report = [
-        f"python {sys.version.split()[0]}, jsonschema {version('jsonschema')}, PyYAML {version('PyYAML')}",
+        f"python {sys.version.split()[0]}, jsonschema {version('jsonschema')}",
         "ok  schemas/video-script.v2.json is a valid JSON Schema (draft 2020-12)",
+        "ok  schemas/video-recipe.v1.json is a valid JSON Schema (draft 2020-12)",
         "ok  the schema and src/ambitious_video/domain/types.py agree on clip types, actions, transitions, "
         "output encodings, patterns and rules",
         "ok  the job states and moves in spec/RenderJob.tla and types.py agree",
-        f"ok  {valid} examples accepted, and together they use every clip type",
-        f"ok  {samples} sample projects accepted, each with the brand its brand.yaml names",
+        f"ok  {valid} script examples and {recipes} DSL v1 recipe examples accepted, and together they use every clip type",
+        f"ok  {samples} sample projects accepted, each with the brand its brand.json names",
         "ok  schemas/video-template.v1.json is a valid JSON Schema (draft 2020-12) and agrees with types.py",
         f"ok  {templates} starter templates accepted, each the same as its packaged copy, "
         "and every sample script is what expand writes from its inputs",

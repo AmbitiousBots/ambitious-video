@@ -25,13 +25,13 @@ WORK="$(mktemp -d)"
 cleanup() { rm -rf "$HOME" "$WORK"; }
 trap cleanup EXIT
 mkdir -p "$WORK/assets"
-cp examples/minimal.yaml "$WORK/minimal.yaml"
+cp examples/minimal.json "$WORK/minimal.json"
 cp examples/assets/still.png "$WORK/assets/still.png"
 export AMBITIOUS_HOME="$HOME"
 
 echo "== fresh selfcheck, render, verify, estimate =="
 "$PY" dist/ambitious-video.pyz selfcheck --now 2026-01-01T00:00:00Z --seed 1
-"$PY" dist/ambitious-video.pyz render --in "$WORK/minimal.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/render.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/minimal.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/render.json"
 "$PY" - "$WORK/render.json" "$WORK/job.json" <<'PY'
 import json, sys
 body = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -41,7 +41,7 @@ json.dump({"jobId": body["data"]["jobId"]}, open(sys.argv[2], "w", encoding="utf
 print(body["data"]["jobId"], body["data"]["durationSec"], body["data"]["costUsd"])
 PY
 "$PY" dist/ambitious-video.pyz verify --in "$WORK/job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null
-"$PY" dist/ambitious-video.pyz estimate --in examples/all-clip-types.yaml --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/estimate.json"
+"$PY" dist/ambitious-video.pyz estimate --in examples/all-clip-types.json --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/estimate.json"
 "$PY" - "$WORK/estimate.json" <<'PY'
 import json, sys
 body = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -55,8 +55,8 @@ print("estimate", body["data"]["usd"], "usd,", len(paid), "paid lines from", pai
 PY
 
 echo "== plan is the same bytes on another day, and the cache commands answer =="
-"$PY" dist/ambitious-video.pyz plan --in "$WORK/minimal.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/plan-a.json"
-"$PY" dist/ambitious-video.pyz plan --in "$WORK/minimal.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/plan-b.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/minimal.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/minimal.json" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/plan-b.json"
 "$PY" dist/ambitious-video.pyz cache list --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cache-list.json"
 "$PY" dist/ambitious-video.pyz cache prune --older-than 90 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cache-prune.json"
 "$PY" - "$WORK" <<'PY'
@@ -74,22 +74,28 @@ print("planSha256", one["data"]["planSha256"], "cache entries", listed["data"]["
 PY
 
 echo "== keys on demand: the estimate names the missing key, render stops before any call =="
-cat >"$WORK/spoken.yaml" <<'YAML'
-schemaVersion: 2
-output: { path: out/spoken.mp4, width: 320, height: 180, fps: 10 }
-tracks:
-  - id: main
-    clips:
-      - { type: title_card, duration: 2.0, text: "Spoken or shown" }
-  - id: voice
-    clips:
-      - { type: speech, at: 0.2, duration: 1.5, text: "A line for a voice.", provider: xai-speech, model: tts, voice: eve }
-  - id: captions
-    from: voice
-YAML
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-estimate.json"
-"$PY" dist/ambitious-video.pyz plan --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-plan.json"
-"$PY" dist/ambitious-video.pyz render --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-render.json" || true
+cat >"$WORK/spoken.json" <<'JSON'
+{
+  "schemaVersion": 2,
+  "output": { "path": "out/spoken.mp4", "width": 320, "height": 180, "fps": 10 },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [{ "type": "title_card", "duration": 2.0, "text": "Spoken or shown" }]
+    },
+    {
+      "id": "voice",
+      "clips": [
+        { "type": "speech", "at": 0.2, "duration": 1.5, "text": "A line for a voice.", "provider": "xai-speech", "model": "tts", "voice": "eve" }
+      ]
+    },
+    { "id": "captions", "from": "voice" }
+  ]
+}
+JSON
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/spoken.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-estimate.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/spoken.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-plan.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/spoken.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/keys-render.json" || true
 "$PY" - "$WORK" <<'PY'
 import json, sys
 from pathlib import Path
@@ -109,19 +115,20 @@ PY
 
 echo "== spending cap: an estimate above the cap stops estimate and render before any call =="
 "$PY" - "$WORK" <<'PY'
-import sys
+import json, sys
 from pathlib import Path
 work = Path(sys.argv[1])
-spoken = (work / "spoken.yaml").read_text(encoding="utf-8")
-capped = spoken.replace("schemaVersion: 2\n", "schemaVersion: 2\nbudget: { maxUsd: 0.0002 }\n").replace("out/spoken.mp4", "out/capped.mp4")
-(work / "capped.yaml").write_text(capped, encoding="utf-8")
+spoken = json.loads((work / "spoken.json").read_text(encoding="utf-8"))
+spoken["budget"] = {"maxUsd": 0.0002}
+spoken["output"]["path"] = "out/capped.mp4"
+(work / "capped.json").write_text(json.dumps(spoken, indent=2), encoding="utf-8")
 PY
 "$PY" dist/ambitious-video.pyz jobs --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-before.json"
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-estimate.json" || true
-XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz render --in "$WORK/capped.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-render.json" || true
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.yaml" --max-usd 0.0001 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-flag.json" || true
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/spoken.yaml" --max-usd 1 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-under.json"
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.yaml" --offline --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-offline.json"
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-estimate.json" || true
+XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz render --in "$WORK/capped.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-render.json" || true
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.json" --max-usd 0.0001 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-flag.json" || true
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/spoken.json" --max-usd 1 --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-under.json"
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/capped.json" --offline --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-offline.json"
 "$PY" dist/ambitious-video.pyz jobs --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/cap-jobs.json"
 "$PY" - "$WORK" <<'PY'
 import json, sys
@@ -149,28 +156,38 @@ print("E_BUDGET", over["estimate"], ">", over["cap"], over["source"])
 PY
 
 echo "== two providers: only the key that is not set is asked for =="
-cat >"$WORK/two-keys.yaml" <<'YAML'
-schemaVersion: 2
-disclosure: "AI-generated scenes"
-output: { path: out/two-keys.mp4, width: 320, height: 180, fps: 10 }
-tracks:
-  - id: main
-    clips:
-      - type: generated_scene
-        provider: xai-image
-        model: grok-imagine-image
-        prompt: "A tidy shop front on a quiet street, no people, no text"
-        duration: 2
-        fallback: { type: title_card, text: "Spoken or shown" }
-  - id: voice
-    clips:
-      - { type: speech, at: 0.2, duration: 1.5, text: "A line for a voice.", provider: elevenlabs-speech, model: eleven-v4, voice: an-owner-voice-id }
-  - id: captions
-    from: voice
-YAML
-"$PY" dist/ambitious-video.pyz validate --in "$WORK/two-keys.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >/dev/null
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/two-keys.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/two-keys-none.json"
-XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz estimate --in "$WORK/two-keys.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/two-keys-one.json"
+cat >"$WORK/two-keys.json" <<'JSON'
+{
+  "schemaVersion": 2,
+  "disclosure": "AI-generated scenes",
+  "output": { "path": "out/two-keys.mp4", "width": 320, "height": 180, "fps": 10 },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "generated_scene",
+          "provider": "xai-image",
+          "model": "grok-imagine-image",
+          "prompt": "A tidy shop front on a quiet street, no people, no text",
+          "duration": 2,
+          "fallback": { "type": "title_card", "text": "Spoken or shown" }
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "clips": [
+        { "type": "speech", "at": 0.2, "duration": 1.5, "text": "A line for a voice.", "provider": "elevenlabs-speech", "model": "eleven-v4", "voice": "an-owner-voice-id" }
+      ]
+    },
+    { "id": "captions", "from": "voice" }
+  ]
+}
+JSON
+"$PY" dist/ambitious-video.pyz validate --in "$WORK/two-keys.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >/dev/null
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/two-keys.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/two-keys-none.json"
+XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz estimate --in "$WORK/two-keys.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/two-keys-one.json"
 "$PY" - "$WORK" <<'PY'
 import json, sys
 from pathlib import Path
@@ -188,11 +205,11 @@ print("secretsNeeded", speech["env"], speech["usd"], "of", one["data"]["usd"])
 PY
 
 echo "== --offline: fallbacks, 0.000000, the same plan and the same file twice =="
-"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-plan-a.json"
-"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/spoken.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/offline-plan-b.json"
-"$PY" dist/ambitious-video.pyz estimate --offline --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-estimate.json"
-"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/spoken.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-render-a.json"
-"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/spoken.yaml" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/offline-render-b.json"
+"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/spoken.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/spoken.json" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/offline-plan-b.json"
+"$PY" dist/ambitious-video.pyz estimate --offline --in "$WORK/spoken.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-estimate.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/spoken.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-render-a.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/spoken.json" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/offline-render-b.json"
 "$PY" dist/ambitious-video.pyz ledger --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/offline-ledger.json"
 "$PY" - "$WORK" <<'PY'
 import json, sys
@@ -227,13 +244,12 @@ for sample in examples/samples/*/; do
   at="$WORK/samples/$slug"
   mkdir -p "$WORK/samples"
   cp -R "$sample" "$at"
-  rm "$at/script.yaml"
+  rm "$at/script.json"
   "$PY" - "$at" <<'PY'
 import json, sys
 from pathlib import Path
-import yaml
 folder = Path(sys.argv[1])
-inputs = yaml.safe_load((folder / "inputs.yaml").read_text(encoding="utf-8"))
+inputs = json.loads((folder / "inputs.json").read_text(encoding="utf-8"))
 small = {"width": 180, "height": 320} if inputs["template"] == "announcement" else {"width": 320, "height": 180}
 inputs["inputs"]["voice"] = "narrator"
 inputs["output"] = {"path": "out/small.mp4", "fps": 10, **small}
@@ -241,17 +257,17 @@ inputs["output"] = {"path": "out/small.mp4", "fps": 10, **small}
 (folder / "template.txt").write_text(inputs["template"], encoding="utf-8")
 PY
   template="$(cat "$at/template.txt")"
-  "$PY" dist/ambitious-video.pyz expand --template "$template" --in "$at/inputs.yaml" --out "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/expand-a.json"
-  "$PY" dist/ambitious-video.pyz expand --template "templates/$template.yaml" --in "$at/inputs.yaml" --out "$at/again.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$at/expand-b.json"
-  cmp "$at/script.yaml" "${sample}script.yaml"
-  cmp "$at/script.yaml" "$at/again.yaml"
-  "$PY" dist/ambitious-video.pyz validate --in "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/validate.json"
-  "$PY" dist/ambitious-video.pyz plan --in "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/plan-a.json"
-  "$PY" dist/ambitious-video.pyz plan --in "$at/again.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$at/plan-b.json"
-  "$PY" dist/ambitious-video.pyz estimate --in "$at/script.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/estimate.json"
-  "$PY" dist/ambitious-video.pyz expand --template "$template" --in "$at/small.json" --out "$at/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-expand.json"
-  "$PY" dist/ambitious-video.pyz estimate --in "$at/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-estimate.json"
-  "$PY" dist/ambitious-video.pyz render --offline --in "$at/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-render.json"
+  "$PY" dist/ambitious-video.pyz expand --template "$template" --in "$at/inputs.json" --out "$at/script.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/expand-a.json"
+  "$PY" dist/ambitious-video.pyz expand --template "templates/$template.json" --in "$at/inputs.json" --out "$at/again.json" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$at/expand-b.json"
+  cmp "$at/script.json" "${sample}script.json"
+  cmp "$at/script.json" "$at/again.json"
+  "$PY" dist/ambitious-video.pyz validate --in "$at/script.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/validate.json"
+  "$PY" dist/ambitious-video.pyz plan --in "$at/script.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/plan-a.json"
+  "$PY" dist/ambitious-video.pyz plan --in "$at/again.json" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$at/plan-b.json"
+  "$PY" dist/ambitious-video.pyz estimate --in "$at/script.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/estimate.json"
+  "$PY" dist/ambitious-video.pyz expand --template "$template" --in "$at/small.json" --out "$at/small-script.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-expand.json"
+  "$PY" dist/ambitious-video.pyz estimate --in "$at/small-script.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-estimate.json"
+  "$PY" dist/ambitious-video.pyz render --offline --in "$at/small-script.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$at/small-render.json"
   "$PY" - "$at" "$template" <<'PY'
 import json, sys
 from pathlib import Path
@@ -291,25 +307,25 @@ done
 
 echo "== generated scenes: priced per second, key asked, fallback offline, manifest written =="
 mkdir -p "$WORK/scenes/assets"
-cp examples/generated-scenes.yaml "$WORK/scenes/scenes.yaml"
+cp examples/generated-scenes.json "$WORK/scenes/scenes.json"
 cp examples/assets/still.png "$WORK/scenes/assets/still.png"
-"$PY" - "$WORK/scenes/scenes.yaml" <<'PY'
-import sys
+"$PY" - "$WORK/scenes/scenes.json" <<'PY'
+import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-small = text.replace("width: 1280, height: 720, fps: 30", "width: 320, height: 180, fps: 10")
-if small == text:
-    raise SystemExit("the example output line changed; update verify/run")
-path.write_text(small, encoding="utf-8")
+doc = json.loads(path.read_text(encoding="utf-8"))
+doc["output"]["width"] = 320
+doc["output"]["height"] = 180
+doc["output"]["fps"] = 10
+path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 PY
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/estimate.json"
-"$PY" dist/ambitious-video.pyz plan --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/plan-a.json"
-"$PY" dist/ambitious-video.pyz plan --in "$WORK/scenes/scenes.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/scenes/plan-b.json"
-"$PY" dist/ambitious-video.pyz render --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/refused.json" || true
-"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/offline-plan.json"
-"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/scenes/scenes.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/render-a.json"
-"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/scenes/scenes.yaml" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/scenes/render-b.json"
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/scenes/scenes.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/estimate.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/scenes/scenes.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/scenes/scenes.json" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/scenes/plan-b.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/scenes/scenes.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/refused.json" || true
+"$PY" dist/ambitious-video.pyz plan --offline --in "$WORK/scenes/scenes.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/offline-plan.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/scenes/scenes.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/render-a.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/scenes/scenes.json" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/scenes/render-b.json"
 "$PY" dist/ambitious-video.pyz ledger --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/scenes/ledger.json"
 "$PY" - "$WORK/scenes" <<'PY'
 import json, sys
@@ -358,28 +374,76 @@ if not body["ok"] or not body["data"]["passed"]:
     raise SystemExit(body)
 PY
 
-echo "== lip-sync: priced per frame, both keys asked, the drawn mouth offline =="
-mkdir -p "$WORK/lips/assets"
-cp examples/lip-sync.yaml "$WORK/lips/lips.yaml"
-cp examples/assets/still.png "$WORK/lips/assets/still.png"
-"$PY" - "$WORK/lips" <<'PY'
-import sys
+echo "== shared DSL v1 JSON recipe: validate, plan, estimate, offline render, verify =="
+mkdir -p "$WORK/recipe/assets"
+cp examples/promo-video-recipe.json "$WORK/recipe/recipe.json"
+cp examples/assets/still.png "$WORK/recipe/assets/still.png"
+"$PY" - "$WORK/recipe/recipe.json" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+doc = json.loads(path.read_text(encoding="utf-8"))
+doc["steps"][2]["input"]["output"] = {"path": "out/promo-video-recipe.mp4", "width": 320, "height": 180, "fps": 10}
+path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+PY
+"$PY" dist/ambitious-video.pyz validate --in "$WORK/recipe/recipe.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >/dev/null
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/recipe/recipe.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/recipe/plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/recipe/recipe.json" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/recipe/plan-b.json"
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/recipe/recipe.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/recipe/estimate.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/recipe/recipe.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/recipe/refused.json" || true
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/recipe/recipe.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/recipe/render-a.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/recipe/recipe.json" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/recipe/render-b.json"
+"$PY" - "$WORK/recipe" <<'PY'
+import json, sys
 from pathlib import Path
 at = Path(sys.argv[1])
-text = (at / "lips.yaml").read_text(encoding="utf-8")
-small = text.replace("width: 1280, height: 720, fps: 25", "width: 320, height: 180, fps: 10")
-if small == text:
-    raise SystemExit("the example output line changed; update verify/run")
-(at / "small.yaml").write_text(small, encoding="utf-8")
+def read(name, ok=True):
+    body = json.loads((at / f"{name}.json").read_text(encoding="utf-8"))
+    if body["ok"] is not ok:
+        raise SystemExit(body)
+    return body
+plan, again, est = (read(name)["data"] for name in ("plan-a", "plan-b", "estimate"))
+if plan != again or [entry["env"] for entry in est["secretsNeeded"]] != ["XAI_API_KEY"]:
+    raise SystemExit("recipe plan must repeat and list XAI_API_KEY")
+refused = read("refused", ok=False)
+if [error["code"] for error in refused["errors"]] != ["E_NO_KEY"]:
+    raise SystemExit("recipe render without key must stop with E_NO_KEY")
+one, two = (read(name)["data"] for name in ("render-a", "render-b"))
+if one["costUsd"] != "0.000000" or one["sha256"] != two["sha256"]:
+    raise SystemExit("recipe offline renders must repeat and cost 0.000000")
+json.dump({"jobId": one["jobId"]}, open(at / "job.json", "w", encoding="utf-8"))
+print("recipe", est["usd"], "usd online,", one["costUsd"], "offline", one["sha256"][:12])
 PY
-"$PY" dist/ambitious-video.pyz validate --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >/dev/null
-"$PY" dist/ambitious-video.pyz estimate --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/estimate.json"
-XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz estimate --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/estimate-one.json"
-"$PY" dist/ambitious-video.pyz plan --in "$WORK/lips/lips.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/plan-a.json"
-"$PY" dist/ambitious-video.pyz plan --in "$WORK/lips/lips.yaml" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/lips/plan-b.json"
-"$PY" dist/ambitious-video.pyz render --in "$WORK/lips/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/refused.json" || true
-"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/lips/small.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/render-a.json"
-"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/lips/small.yaml" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/lips/render-b.json"
+"$PY" dist/ambitious-video.pyz verify --in "$WORK/recipe/job.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/recipe/verify.json"
+"$PY" - "$WORK/recipe/verify.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1], encoding="utf-8"))
+if not body["ok"] or not body["data"]["passed"]:
+    raise SystemExit(body)
+PY
+
+echo "== lip-sync: priced per frame, both keys asked, the drawn mouth offline =="
+mkdir -p "$WORK/lips/assets"
+cp examples/lip-sync.json "$WORK/lips/lips.json"
+cp examples/assets/still.png "$WORK/lips/assets/still.png"
+"$PY" - "$WORK/lips" <<'PY'
+import json, sys
+from pathlib import Path
+at = Path(sys.argv[1])
+doc = json.loads((at / "lips.json").read_text(encoding="utf-8"))
+doc["output"]["width"] = 320
+doc["output"]["height"] = 180
+doc["output"]["fps"] = 10
+(at / "small.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+PY
+"$PY" dist/ambitious-video.pyz validate --in "$WORK/lips/lips.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >/dev/null
+"$PY" dist/ambitious-video.pyz estimate --in "$WORK/lips/lips.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/estimate.json"
+XAI_API_KEY=not-a-real-key "$PY" dist/ambitious-video.pyz estimate --in "$WORK/lips/lips.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/estimate-one.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/lips/lips.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/plan-a.json"
+"$PY" dist/ambitious-video.pyz plan --in "$WORK/lips/lips.json" --now 2031-07-09T12:34:56Z --seed 2 </dev/null >"$WORK/lips/plan-b.json"
+"$PY" dist/ambitious-video.pyz render --in "$WORK/lips/small.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/refused.json" || true
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/lips/small.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/lips/render-a.json"
+"$PY" dist/ambitious-video.pyz render --offline --in "$WORK/lips/small.json" --now 2026-01-02T00:00:00Z --seed 2 </dev/null >"$WORK/lips/render-b.json"
 "$PY" - "$WORK/lips" <<'PY'
 import json, sys
 from pathlib import Path
@@ -427,7 +491,7 @@ echo "== help, version, guide: the printed example renders and verifies =="
 "$PY" dist/ambitious-video.pyz help --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/usage.json"
 "$PY" dist/ambitious-video.pyz --version --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/version.json"
 "$PY" dist/ambitious-video.pyz guide --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/guide.json"
-"$PY" - "$WORK" examples/titles-and-captions.yaml <<'PY'
+"$PY" - "$WORK" examples/titles-and-captions.json <<'PY'
 import json, sys
 from pathlib import Path
 work = Path(sys.argv[1])
@@ -446,12 +510,12 @@ if not guide["ok"] or guide["command"] != "guide":
     raise SystemExit(guide)
 script = guide["data"]["example"]["script"]
 if script != Path(sys.argv[2]).read_text(encoding="utf-8"):
-    raise SystemExit("guide does not print examples/titles-and-captions.yaml")
+    raise SystemExit("guide does not print examples/titles-and-captions.json")
 (work / "guide").mkdir()
-(work / "guide" / "video.yaml").write_text(script, encoding="utf-8")
+(work / "guide" / "video.json").write_text(script, encoding="utf-8")
 PY
-"$PY" dist/ambitious-video.pyz validate --in "$WORK/guide/video.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null
-"$PY" dist/ambitious-video.pyz render --in "$WORK/guide/video.yaml" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/guide-render.json"
+"$PY" dist/ambitious-video.pyz validate --in "$WORK/guide/video.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null
+"$PY" dist/ambitious-video.pyz render --in "$WORK/guide/video.json" --now 2026-01-01T00:00:00Z --seed 1 </dev/null >"$WORK/guide-render.json"
 "$PY" - "$WORK/guide-render.json" "$WORK/guide-job.json" <<'PY'
 import json, sys
 body = json.load(open(sys.argv[1], encoding="utf-8"))

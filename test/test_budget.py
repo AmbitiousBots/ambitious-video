@@ -15,7 +15,6 @@ from pathlib import Path
 
 import ambitious_kit.cli.runner as runner
 import pytest
-import yaml
 from test_name_scan import hits
 
 from ambitious_video import providers
@@ -110,7 +109,7 @@ def shell(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -
 def _spoken_sample(dest: Path, slug: str = "example-bookshop") -> tuple[dict[str, object], Path]:
     folder = dest / slug
     shutil.copytree(SAMPLES / slug, folder)
-    script = yaml.safe_load((folder / "script.yaml").read_text(encoding="utf-8"))
+    script = json.loads((folder / "script.json").read_text(encoding="utf-8"))
     assert isinstance(script, dict)
     script["output"] = {"path": "out/video.mp4", **SMALL}
     for track in script["tracks"]:
@@ -136,13 +135,6 @@ def _with(script: dict[str, object], cap: object | None, line: str | None = None
     if line is not None:
         changed["tracks"][1]["clips"][0]["text"] = line
     return changed
-
-
-def _merged(folder: Path, script: dict[str, object], caps: tuple[str, ...], name: str) -> str:
-    path = folder / name
-    mappings = ", ".join(f"{{maxUsd: {cap}}}" for cap in caps)
-    path.write_text(f"{yaml.safe_dump(_with(script, None))}budget:\n  <<: [{mappings}]\n", encoding="utf-8")
-    return str(path)
 
 
 def _codes(payload: dict[str, object]) -> list[str]:
@@ -200,25 +192,18 @@ def test_an_estimate_above_the_cap_stops_before_any_provider_call(
     assert not (folder / "out").exists()
 
 
-def test_the_later_of_the_merged_caps_applies(tmp_path: Path, fake_speech: type[_Speaker], shell: _Shell) -> None:
-    script, folder = _spoken_sample(tmp_path)
-    total = str(_data(shell("estimate", "--in", _saved(folder, _with(script, None), "free.json")))["usd"])
-    assert Decimal("0.001") < Decimal(total) < Decimal("100")
-    # WHY: PyYAML 6.0.4 keeps the later maxUsd when a merge repeats that multi-character key.
-    loose_later = _merged(folder, script, ("0.001", "100"), "loose-later.yaml")
-    priced = shell("estimate", "--in", loose_later)
-    assert priced["exit"] == 0 and _data(priced)["usd"] == total
-    assert _data(priced)["budget"] == {"cap": "100.000000", "source": "budget.maxUsd"}
+def test_non_json_yaml_script_is_rejected_before_any_provider_call(
+    tmp_path: Path, fake_speech: type[_Speaker], shell: _Shell
+) -> None:
+    folder = tmp_path / "yaml"
+    folder.mkdir()
+    yaml_path = folder / "legacy.yaml"
+    yaml_path.write_text("schemaVersion: 2\nbudget:\n  maxUsd: 5\n", encoding="utf-8")
+    for command in ("validate", "estimate", "render"):
+        stopped = shell(command, "--in", str(yaml_path))
+        assert stopped["exit"] == 1 and _codes(stopped) == ["E_INPUT_SCHEMA"], stopped
     assert fake_speech.seen == []
-
-    tight_later = _merged(folder, script, ("100", "0.001"), "tight-later.yaml")
-    for command in ("estimate", "render"):
-        stopped = shell(command, "--in", tight_later)
-        assert stopped["exit"] == 1 and _codes(stopped) == ["E_BUDGET"], stopped
-        assert (_data(stopped)["estimate"], _data(stopped)["cap"]) == (total, "0.001000")
-        assert _data(stopped)["source"] == "budget.maxUsd"
-    assert fake_speech.seen == []
-    assert _data(shell("ledger"))["lines"] == [] and _data(shell("jobs"))["jobs"] == []
+    assert not (tmp_path / "home").exists()
 
 
 def test_a_cached_rerun_passes_under_a_cap_that_the_first_run_would_not(
@@ -373,22 +358,22 @@ def test_each_sample_business_goes_from_its_template_to_a_paid_verified_video(
 ) -> None:
     folder = tmp_path / slug
     shutil.copytree(SAMPLES / slug, folder)
-    (folder / "script.yaml").unlink()
-    document = yaml.safe_load((folder / "inputs.yaml").read_text(encoding="utf-8"))
+    (folder / "script.json").unlink()
+    document = json.loads((folder / "inputs.json").read_text(encoding="utf-8"))
     starter = document["template"]
     document["inputs"]["voice"] = "narrator"
     size = UPRIGHT if starter == "announcement" else SMALL
     document["output"] = {"path": "out/video.mp4", **size, "encode": "lossless"}
     inputs = _saved(folder, document, "inputs.json")
-    script = folder / "video.yaml"
+    script = folder / "video.json"
     source = ("--in", str(script))
     monkeypatch.delenv("XAI_API_KEY")
 
     made = shell("expand", "--template", starter, "--in", inputs, "--out", str(script))
     assert made["exit"] == 0, made
-    written = yaml.safe_load(script.read_text(encoding="utf-8"))
+    written = json.loads(script.read_text(encoding="utf-8"))
     assert written["budget"] == {"maxUsd": 5} and written["template"] == {"id": starter, "templateVersion": 1}
-    assert written["brand"] == yaml.safe_load((folder / "brand.yaml").read_text(encoding="utf-8"))
+    assert written["brand"] == json.loads((folder / "brand.json").read_text(encoding="utf-8"))
 
     checked = shell("validate", *source)
     assert checked["exit"] == 0 and _data(checked)["problems"] == []

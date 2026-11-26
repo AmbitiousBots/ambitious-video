@@ -10,7 +10,6 @@ from pathlib import Path
 
 import jsonschema
 import pytest
-import yaml
 
 from ambitious_video.cli import engine
 from ambitious_video.cli import expand as expander
@@ -37,8 +36,8 @@ SMALL = {"width": 320, "height": 180, "fps": 10}
 UPRIGHT = {"width": 180, "height": 320, "fps": 10}
 
 
-def _yaml(path: Path) -> dict[str, object]:
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+def _json(path: Path) -> dict[str, object]:
+    loaded = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return loaded
 
@@ -89,12 +88,12 @@ def _problems(payload: dict[str, object]) -> list[tuple[str, str, str]]:
 def _copied(slug: str, dest: Path) -> Path:
     folder = dest / slug
     shutil.copytree(SAMPLES / slug, folder)
-    (folder / "script.yaml").unlink()
+    (folder / "script.json").unlink()
     return folder
 
 
 def _starter(name: str) -> dict[str, object]:
-    return _yaml(TEMPLATES / f"{name}.yaml")
+    return _json(TEMPLATES / f"{name}.json")
 
 
 def _expanded(template: dict[str, object], inputs: dict[str, object], brand: object | None = None) -> Expansion:
@@ -104,11 +103,11 @@ def _expanded(template: dict[str, object], inputs: dict[str, object], brand: obj
 
 
 def _sample_script(slug: str, change: dict[str, object] | None = None) -> dict[str, object]:
-    document = _yaml(SAMPLES / slug / "inputs.yaml")
+    document = _json(SAMPLES / slug / "inputs.json")
     inputs = document["inputs"]
     assert isinstance(inputs, dict)
     inputs.update(change or {})
-    made = _expanded(_starter(USES[slug]), document, _yaml(SAMPLES / slug / "brand.yaml"))
+    made = _expanded(_starter(USES[slug]), document, _json(SAMPLES / slug / "brand.json"))
     assert made.script is not None, made.problems
     return dict(made.script)
 
@@ -177,11 +176,11 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_three_starter_templates_are_present_and_packaged() -> None:
-    assert sorted(path.stem for path in TEMPLATES.glob("*.yaml")) == STARTERS
+    assert sorted(path.stem for path in TEMPLATES.glob("*.json")) == STARTERS
     assert list(expander.starter_ids()) == STARTERS
     for name in STARTERS:
-        text = (TEMPLATES / f"{name}.yaml").read_text(encoding="utf-8")
-        assert (PACKAGED / f"{name}.yaml").read_text(encoding="utf-8") == text
+        text = (TEMPLATES / f"{name}.json").read_text(encoding="utf-8")
+        assert (PACKAGED / f"{name}.json").read_text(encoding="utf-8") == text
         assert expander.starter_text(name) == text
 
 
@@ -193,36 +192,36 @@ def test_starter_template_matches_the_schema_and_caps_spend_at_five_dollars(name
     assert loaded is not None and problems == ()
     assert (loaded.id, template["templateVersion"]) == (name, 1)
     assert template["budget"] == {"maxUsd": 5}
-    assert template["brand"] == {"file": "brand.yaml"}
+    assert template["brand"] == {"file": "brand.json"}
     assert loaded.fallbacks == {"speech": "captions", "music": "none"}
     assert loaded.speech == {"provider": "xai-speech", "model": "tts", "voice": "{{voice}}"}
     assert all(spec.description for spec in loaded.inputs.values())
-    assert "example" not in (TEMPLATES / f"{name}.yaml").read_text(encoding="utf-8").lower()
+    assert "example" not in (TEMPLATES / f"{name}.json").read_text(encoding="utf-8").lower()
 
 
 @pytest.mark.parametrize("slug", SLUGS)
 def test_expand_and_plan_bytes_do_not_depend_on_the_process_or_the_clock(slug: str, tmp_path: Path) -> None:
-    template = str(TEMPLATES / f"{USES[slug]}.yaml")
+    template = str(TEMPLATES / f"{USES[slug]}.json")
     folders = [_copied(slug, tmp_path / "a"), _copied(slug, tmp_path / "b")]
     lines: list[str] = []
     plans: list[str] = []
     for folder, clock, home in zip(folders, (FIRST, LATER), ("home-a", "home-b"), strict=True):
-        source = ["--template", template, "--in", str(folder / "inputs.yaml"), "--out", str(folder / "script.yaml")]
+        source = ["--template", template, "--in", str(folder / "inputs.json"), "--out", str(folder / "script.json")]
         made, line = _cli(tmp_path / home, ["expand", *source], clock)
         assert made["exit"] == 0, made
         lines.append(_data_bytes(line).replace(str(folder), ""))
-        planned, plan_line = _cli(tmp_path / home, ["plan", "--in", str(folder / "script.yaml")], clock)
+        planned, plan_line = _cli(tmp_path / home, ["plan", "--in", str(folder / "script.json")], clock)
         assert planned["exit"] == 0, planned
         plans.append(_data_bytes(plan_line))
         assert not (tmp_path / home).exists()
     assert lines[0] == lines[1] and plans[0] == plans[1]
-    written = [(folder / "script.yaml").read_bytes() for folder in folders]
-    assert written[0] == written[1] == (SAMPLES / slug / "script.yaml").read_bytes()
+    written = [(folder / "script.json").read_bytes() for folder in folders]
+    assert written[0] == written[1] == (SAMPLES / slug / "script.json").read_bytes()
 
     data = json.loads(lines[0])
     assert lines[0] == canonical(data)
     assert data["template"]["id"] == USES[slug] and data["template"]["templateVersion"] == 1
-    assert data["script"] == yaml.safe_load(written[0])
+    assert data["script"] == json.loads(written[0])
     assert data["scriptSha256"] == expander.digest_text(canonical(data["script"]))
     assert "2026-01-01" not in lines[0] and str(tmp_path) not in lines[0] and str(ROOT) not in lines[0]
 
@@ -257,14 +256,14 @@ def test_changing_one_input_changes_only_downstream_step_keys(slug: str, no_netw
 def test_sample_goes_from_its_template_and_brand_to_a_verified_video(slug: str, tmp_path: Path) -> None:
     folder = _copied(slug, tmp_path)
     home = tmp_path / "home"
-    document = _yaml(folder / "inputs.yaml")
+    document = _json(folder / "inputs.json")
     inputs = document["inputs"]
     assert isinstance(inputs, dict)
     inputs["voice"] = "narrator"
     size = UPRIGHT if USES[slug] == "announcement" else SMALL
     document["output"] = {"path": "out/video.mp4", **size, "encode": "lossless"}
     (folder / "inputs.json").write_text(json.dumps(document), encoding="utf-8")
-    script = folder / "video.yaml"
+    script = folder / "video.json"
     source = ["--in", str(script)]
 
     filled = ["--template", USES[slug], "--in", str(folder / "inputs.json"), "--out", str(script)]
@@ -273,7 +272,7 @@ def test_sample_goes_from_its_template_and_brand_to_a_verified_video(slug: str, 
     expanded = _data(made)
     assert expanded["fallbacks"] == [{"step": "music", "scene": None, "fallback": "none", "missing": ["music"]}]
     assert expanded["written"] == str(script)
-    assert _yaml(script)["brand"] == _yaml(folder / "brand.yaml")
+    assert _json(script)["brand"] == _json(folder / "brand.json")
 
     checked, _line = _cli(home, ["validate", *source])
     assert checked["exit"] == 0 and _data(checked)["problems"] == []
@@ -311,10 +310,9 @@ def test_sample_goes_from_its_template_and_brand_to_a_verified_video(slug: str, 
 @pytest.mark.parametrize("slug", SLUGS)
 def test_sample_script_is_what_expand_writes(slug: str, no_network: None) -> None:
     script = _sample_script(slug)
-    kept = SAMPLES / slug / "script.yaml"
-    assert expander.script_text(script, ".yaml") == kept.read_text(encoding="utf-8")
-    assert kept.read_text(encoding="utf-8").startswith("# Written by the expand command.")
-    assert _yaml(SAMPLES / slug / "inputs.yaml")["template"] == USES[slug]
+    kept = SAMPLES / slug / "script.json"
+    assert expander.script_text(script, ".json") == kept.read_text(encoding="utf-8")
+    assert _json(SAMPLES / slug / "inputs.json")["template"] == USES[slug]
     assert script["template"] == {"id": USES[slug], "templateVersion": 1} and script["budget"] == {"maxUsd": 5}
     _schema("video-script.v2.json").validate(script)
     types = {clip["type"] for track in script["tracks"] for clip in track.get("clips", [])}
@@ -478,7 +476,7 @@ TEMPLATE_PROBLEMS = [
     (["fallbacks", "speech"], "silence", "/fallbacks/speech", "This fallback must be captions.", True),
     (["music", "path"], "{{clip}}", "/music/path", "Slot clip has the wrong type.", False),
     (["brand", "colors", "bg"], "{{name}}", "/brand/colors/bg", "Slot name has the wrong type.", False),
-    (["brand", "file"], "../brand.yaml", "/brand/file", "This text has the wrong shape.", True),
+    (["brand", "file"], "../brand.json", "/brand/file", "This text has the wrong shape.", True),
     (["budget", "maxUsd"], 0, "/budget/maxUsd", "This number is too small.", True),
     (["output", "fps"], 0, "/output/fps", "This number is too small.", True),
     (["endCard", "duration"], None, "/endCard", "Field duration is required.", True),
@@ -510,14 +508,14 @@ def test_the_last_scene_cannot_cut_to_nothing() -> None:
 
 def test_expand_reports_each_problem_with_its_document_and_place(tmp_path: Path) -> None:
     folder = _copied("example-plumbing", tmp_path)
-    document = _yaml(folder / "inputs.yaml")
+    document = _json(folder / "inputs.json")
     inputs = document["inputs"]
     assert isinstance(inputs, dict)
     del inputs["tagline"]
     inputs["slogan"] = "Not an input"
     inputs["picture_1"] = "../still-1.png"
-    (folder / "inputs.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
-    source = ["--template", "welcome", "--in", str(folder / "inputs.yaml"), "--out", str(folder / "script.yaml")]
+    (folder / "inputs.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+    source = ["--template", "welcome", "--in", str(folder / "inputs.json"), "--out", str(folder / "script.json")]
     refused, _line = _cli(tmp_path / "home", ["expand", *source])
     assert refused["exit"] == 1 and refused["ok"] is False
     assert sorted(_problems(refused)) == [
@@ -528,37 +526,37 @@ def test_expand_reports_each_problem_with_its_document_and_place(tmp_path: Path)
     errors = refused["errors"]
     assert isinstance(errors, list) and {error["code"] for error in errors} == {"E_INPUT_SCHEMA"}
     assert all(error["hint"] == "Fix the field named in data.problems." for error in errors)
-    assert not (folder / "script.yaml").exists() and not (tmp_path / "home").exists()
+    assert not (folder / "script.json").exists() and not (tmp_path / "home").exists()
 
 
 def test_expand_refuses_a_broken_template_or_brand_file(tmp_path: Path) -> None:
     folder = _copied("example-fitness", tmp_path)
-    source = ["--in", str(folder / "inputs.yaml")]
-    broken = folder / "broken.yaml"
+    source = ["--in", str(folder / "inputs.json")]
+    broken = folder / "broken.json"
     template = _starter("announcement")
     scenes = template["scenes"]
     assert isinstance(scenes, list)
     scenes[0]["show"]["text"] = "{{ business_name + tagline }}"
-    broken.write_text(yaml.safe_dump(template), encoding="utf-8")
+    broken.write_text(json.dumps(template, indent=2), encoding="utf-8")
     refused, _line = _cli(tmp_path / "home", ["expand", "--template", str(broken), *source])
     assert refused["exit"] == 1
     assert _problems(refused) == [("template", "/scenes/0/show/text", "This slot has the wrong shape.")]
 
-    broken.write_text("scenes: [unclosed", encoding="utf-8")
+    broken.write_text('{"scenes": [unclosed', encoding="utf-8")
     refused, _line = _cli(tmp_path / "home", ["expand", "--template", str(broken), *source])
-    assert _problems(refused) == [("template", "", "The template is not YAML or JSON.")]
+    assert _problems(refused) == [("template", "", "The template is not valid JSON.")]
 
-    wrong = 'colors: { bg: "#GGGGGG", fg: "#FFFFFF", accent: "#000000" }\n'
-    (folder / "brand.yaml").write_text(wrong, encoding="utf-8")
+    wrong = json.dumps({"colors": {"bg": "#GGGGGG", "fg": "#FFFFFF", "accent": "#000000"}})
+    (folder / "brand.json").write_text(wrong, encoding="utf-8")
     refused, _line = _cli(tmp_path / "home", ["expand", "--template", "announcement", *source])
     assert _problems(refused) == [("brand", "/colors/bg", "This text has the wrong shape.")]
-    (folder / "brand.yaml").unlink()
+    (folder / "brand.json").unlink()
     refused, _line = _cli(tmp_path / "home", ["expand", "--template", "announcement", *source])
     assert _problems(refused) == [("template", "/brand/file", "The brand file could not be read.")]
 
 
 def test_expand_needs_a_template_and_its_flags_belong_to_it_alone(tmp_path: Path) -> None:
-    source = ["--in", str(SAMPLES / "example-bookshop" / "inputs.yaml")]
+    source = ["--in", str(SAMPLES / "example-bookshop" / "inputs.json")]
     missing, _line = _cli(tmp_path / "home", ["expand", *source])
     errors = missing["errors"]
     assert isinstance(errors, list)
@@ -568,10 +566,10 @@ def test_expand_needs_a_template_and_its_flags_belong_to_it_alone(tmp_path: Path
     errors = unknown["errors"]
     assert isinstance(errors, list) and [error["code"] for error in errors] == ["E_USAGE"]
     assert errors[0]["hint"] == "Use a file, or one of: announcement, short-explainer, welcome."
-    unread, _line = _cli(tmp_path / "home", ["expand", "--template", str(tmp_path / "none.yaml"), *source])
+    unread, _line = _cli(tmp_path / "home", ["expand", "--template", str(tmp_path / "none.json"), *source])
     errors = unread["errors"]
     assert isinstance(errors, list) and [error["code"] for error in errors] == ["E_INPUT_SCHEMA"]
-    script = ["--in", str(SAMPLES / "example-bookshop" / "script.yaml")]
+    script = ["--in", str(SAMPLES / "example-bookshop" / "script.json")]
     for command, flag in (("plan", "--template"), ("validate", "--out"), ("estimate", "--out")):
         refused, _line = _cli(tmp_path / "home", [command, flag, "welcome", *script])
         errors = refused["errors"]
@@ -580,15 +578,15 @@ def test_expand_needs_a_template_and_its_flags_belong_to_it_alone(tmp_path: Path
 
 
 def test_expand_writes_json_when_the_file_name_ends_in_json(tmp_path: Path) -> None:
-    source = ["--template", "welcome", "--in", str(SAMPLES / "example-bookshop" / "inputs.yaml")]
+    source = ["--template", "welcome", "--in", str(SAMPLES / "example-bookshop" / "inputs.json")]
     shown, line = _cli(tmp_path / "home", ["expand", *source])
     assert shown["exit"] == 0 and "written" not in _data(shown)
     target = tmp_path / "deep" / "folder" / "script.json"
     made, _line = _cli(tmp_path / "home", ["expand", *source, "--out", str(target)], LATER)
     assert made["exit"] == 0 and _data(made)["written"] == str(target)
     text = target.read_text(encoding="utf-8")
-    assert text == canonical(_data(shown)["script"]) + "\n"
-    assert _data(made)["script"] == _data(shown)["script"] == _yaml(SAMPLES / "example-bookshop" / "script.yaml")
+    assert text == (SAMPLES / "example-bookshop" / "script.json").read_text(encoding="utf-8")
+    assert _data(made)["script"] == _data(shown)["script"] == _json(SAMPLES / "example-bookshop" / "script.json")
     assert _data(made)["scriptSha256"] == _data(shown)["scriptSha256"]
     assert _data_bytes(line) == canonical(_data(shown))
 
@@ -600,7 +598,7 @@ def test_guide_and_help_describe_the_starter_templates(tmp_path: Path) -> None:
     starters = templates["starters"]
     assert [starter["id"] for starter in starters] == STARTERS
     for starter in starters:
-        assert starter["text"] == (TEMPLATES / f"{starter['id']}.yaml").read_text(encoding="utf-8")
+        assert starter["text"] == (TEMPLATES / f"{starter['id']}.json").read_text(encoding="utf-8")
         assert starter["title"] and starter["description"]
         names = [entry["name"] for entry in starter["inputs"]]
         assert names == list(_starter(starter["id"])["inputs"])
@@ -622,7 +620,7 @@ def test_guide_and_help_describe_the_starter_templates(tmp_path: Path) -> None:
 
 
 def test_a_script_without_a_template_has_none_in_its_plan() -> None:
-    script = _yaml(ROOT / "examples" / "minimal.yaml")
+    script = _json(ROOT / "examples" / "minimal.json")
     assert "template" not in engine.plan_data(script, ROOT / "examples")
     script["template"] = {"id": "welcome", "templateVersion": 2}
     loaded, problems = load_script(script)

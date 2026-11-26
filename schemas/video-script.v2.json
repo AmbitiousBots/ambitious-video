@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ambitious-video:video-script:v2",
   "title": "Video script, version 2",
-  "description": "A video described as data: what to show and say, on which track, and when. Written as YAML or JSON.",
+  "description": "A video described as data: what to show and say, on which track, and when. Written as JSON.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "output", "tracks"],

@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ambitious-video:video-recipe:v1",
+  "title": "Video Recipe (Shared DSL v1)",
+  "description": "Shared JSON DSL v1 recipe for deterministic video assembly and bot-executed AI steps.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dslVersion", "kind", "id", "version", "title", "triggers", "steps"],
+  "properties": {
+    "dslVersion": { "const": 1 },
+    "kind": { "const": "recipe" },
+    "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "version": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "activation": { "enum": ["auto", "person"] },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxUsd"],
+      "properties": {
+        "maxUsd": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 }
+      }
+    },
+    "triggers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/trigger" }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "stepId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+    "providerId": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+    "modelId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "trigger": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["manual", "event", "schedule", "signal"] }
+      },
+      "additionalProperties": true
+    },
+    "step": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stepId" },
+        "kind": { "enum": ["ai", "tool", "return"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "ai" } } }, "then": { "$ref": "#/$defs/aiStep" } },
+        { "if": { "properties": { "kind": { "const": "tool" } } }, "then": { "$ref": "#/$defs/toolStep" } },
+        { "if": { "properties": { "kind": { "const": "return" } } }, "then": { "$ref": "#/$defs/returnStep" } }
+      ]
+    },
+    "aiStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "executor", "provider", "model", "params"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stepId" },
+        "kind": { "const": "ai" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "needs": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/stepId" } },
+        "next": { "$ref": "#/$defs/stepId" },
+        "executor": { "const": "bot" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "model": { "$ref": "#/$defs/modelId" },
+        "cache": { "enum": ["step_key", "none"] },
+        "disclosure": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "params": { "type": "object" },
+        "fallback": { "type": "object" }
+      }
+    },
+    "toolStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "action", "input"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stepId" },
+        "kind": { "const": "tool" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "needs": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/stepId" } },
+        "next": { "$ref": "#/$defs/stepId" },
+        "action": { "const": "bot.ffmpeg_assemble" },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["output", "tracks"],
+          "properties": {
+            "output": { "type": "object" },
+            "brand": { "type": "object" },
+            "cache": { "type": "object" },
+            "disclosure": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "template": { "type": "object" },
+            "tracks": { "type": "array", "minItems": 1, "maxItems": 16 },
+            "cuts": { "type": "array", "maxItems": 256 }
+          }
+        }
+      }
+    },
+    "returnStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stepId" },
+        "kind": { "const": "return" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "needs": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/stepId" } },
+        "status": { "enum": ["completed", "blocked"] },
+        "output": { "type": "object" }
+      }
+    }
+  }
+}

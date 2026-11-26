@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "disclosure": "AI-generated lip movement",
+  "output": {
+    "path": "out/example.mp4",
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "lip_sync",
+          "provider": "sync-lipsync",
+          "model": "lipsync-2",
+          "video": "assets/presenter.mp4",
+          "voice": "voice",
+          "duration": 4,
+          "fallback": {
+            "type": "mouth",
+            "sprite": "assets/presenter.png",
+            "x": 0.5,
+            "y": 0.6,
+            "width": 0.1
+          }
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "clips": [
+        {
+          "type": "speech",
+          "at": 0,
+          "text": "Hello",
+          "provider": "xai-speech",
+          "model": "tts",
+          "voice": "eve"
+        }
+      ]
+    }
+  ]
+}

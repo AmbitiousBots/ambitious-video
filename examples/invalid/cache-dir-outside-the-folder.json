@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "output": {
+    "path": "out/example.mp4",
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "cache": {
+    "dir": "../shared-cache"
+  },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "title_card",
+          "duration": 3.0,
+          "text": "Hello"
+        }
+      ]
+    }
+  ]
+}

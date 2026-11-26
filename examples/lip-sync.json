@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 2,
+  "disclosure": "AI-generated lip movement",
+  "output": {
+    "path": "out/lip-sync.mp4",
+    "width": 1280,
+    "height": 720,
+    "fps": 25
+  },
+  "brand": {
+    "colors": {
+      "bg": "#0B0B0B",
+      "fg": "#FFFFFF",
+      "accent": "#3B82F6"
+    }
+  },
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "title_card",
+          "duration": 2.0,
+          "text": "Example Co.",
+          "subtitle": "SAMPLE DATA"
+        },
+        {
+          "type": "lip_sync",
+          "provider": "sync-lipsync",
+          "model": "sync-3",
+          "image": "assets/still.png",
+          "voice": "voice",
+          "duration": 6,
+          "fallback": {
+            "type": "mouth",
+            "sprite": "assets/still.png",
+            "x": 0.5,
+            "y": 0.62,
+            "width": 0.12,
+            "height": 0.08
+          }
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "clips": [
+        {
+          "type": "speech",
+          "at": 2.2,
+          "duration": 5.5,
+          "text": "Hello from Example Co. We are open every day, and we would love to see you.",
+          "provider": "xai-speech",
+          "model": "tts",
+          "voice": "eve"
+        }
+      ]
+    },
+    {
+      "id": "captions",
+      "from": "voice"
+    }
+  ]
+}

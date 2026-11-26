@@ -36,7 +36,7 @@
     "a step whose slot has no value takes the fallback the template names, and expand lists it",
     "three starter templates ship in templates/ and in the binary, each with budget.maxUsd 5 and no business name",
     "the four samples go from their template, inputs and brand to a validated, planned, priced, offline-rendered and verified video",
-    "every sample script.yaml is exactly what expand writes from its inputs.yaml",
+    "every sample script.json is exactly what expand writes from its inputs.json",
     "guide lists the starter templates with their inputs and text",
     "a generated_scene clip names its provider, model, prompt, duration and fallback, and is priced per second or per picture",
     "a scene that is not ready in time fails with E_PENDING; the retry polls the stored request id, sends nothing again and is billed once",

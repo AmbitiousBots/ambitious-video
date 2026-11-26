@@ -1,0 +1,220 @@
+{
+  "templateVersion": 1,
+  "id": "announcement",
+  "title": "Announcement",
+  "description": "Announces one piece of news in about 16 seconds, upright for a phone screen, with three pictures and a closing card.",
+  "inputs": {
+    "business_name": {
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "description": "The name shown on the opening card."
+    },
+    "tagline": {
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "description": "One short line under the name."
+    },
+    "opening_line": {
+      "type": "text",
+      "required": true,
+      "maxLength": 100,
+      "description": "The first sentence of the narration."
+    },
+    "picture_1": {
+      "type": "image",
+      "required": true,
+      "description": "The first picture, a file next to the inputs."
+    },
+    "line_1": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "What is said over the first picture."
+    },
+    "announcement": {
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "description": "The news, shown on a card."
+    },
+    "picture_2": {
+      "type": "image",
+      "required": true,
+      "description": "The second picture."
+    },
+    "line_2": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "What is said over the second picture."
+    },
+    "picture_3": {
+      "type": "image",
+      "required": true,
+      "description": "The third picture."
+    },
+    "line_3": {
+      "type": "text",
+      "required": true,
+      "maxLength": 120,
+      "description": "What is said over the third picture."
+    },
+    "call_to_action": {
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "description": "What the viewer should do next."
+    },
+    "web_address": {
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "description": "Where to find the business."
+    },
+    "closing_line": {
+      "type": "text",
+      "required": true,
+      "maxLength": 100,
+      "description": "The last sentence of the narration."
+    },
+    "voice": {
+      "type": "voice",
+      "description": "A voice of the speech provider. Without it the lines are captions only."
+    },
+    "music": {
+      "type": "audio",
+      "description": "A music file played quietly under the video. Optional."
+    }
+  },
+  "brand": {
+    "file": "brand.json"
+  },
+  "output": {
+    "path": "out/announcement.mp4",
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "budget": {
+    "maxUsd": 5
+  },
+  "speech": {
+    "provider": "xai-speech",
+    "model": "tts",
+    "voice": "{{voice}}"
+  },
+  "music": {
+    "path": "{{music}}",
+    "gain_db": -18
+  },
+  "fallbacks": {
+    "speech": "captions",
+    "music": "none"
+  },
+  "disclosure": "AI-generated scenes",
+  "scenes": [
+    {
+      "id": "opening",
+      "show": {
+        "type": "title_card",
+        "duration": 2.5,
+        "text": "{{business_name}}",
+        "subtitle": "{{tagline}}"
+      },
+      "say": [
+        {
+          "at": 0.3,
+          "duration": 2.0,
+          "text": "{{opening_line}}"
+        }
+      ],
+      "cut": {
+        "transition": "crossfade",
+        "duration": 0.3
+      }
+    },
+    {
+      "id": "picture-1",
+      "show": {
+        "type": "image",
+        "path": "{{picture_1}}",
+        "duration": 3.0,
+        "kenburns": {
+          "from": 1.0,
+          "to": 1.12
+        }
+      },
+      "say": [
+        {
+          "at": 0.3,
+          "duration": 2.5,
+          "text": "{{line_1}}"
+        }
+      ]
+    },
+    {
+      "id": "news",
+      "show": {
+        "type": "title_card",
+        "duration": 2.0,
+        "text": "{{announcement}}"
+      },
+      "cut": {
+        "transition": "crossfade",
+        "duration": 0.3
+      }
+    },
+    {
+      "id": "picture-2",
+      "show": {
+        "type": "image",
+        "path": "{{picture_2}}",
+        "duration": 3.0,
+        "kenburns": {
+          "from": 1.12,
+          "to": 1.0
+        }
+      },
+      "say": [
+        {
+          "at": 0.3,
+          "duration": 2.5,
+          "text": "{{line_2}}"
+        }
+      ]
+    },
+    {
+      "id": "picture-3",
+      "show": {
+        "type": "image",
+        "path": "{{picture_3}}",
+        "duration": 3.0
+      },
+      "say": [
+        {
+          "at": 0.3,
+          "duration": 2.5,
+          "text": "{{line_3}}"
+        }
+      ],
+      "cut": {
+        "transition": "crossfade",
+        "duration": 0.3
+      }
+    }
+  ],
+  "endCard": {
+    "duration": 2.5,
+    "text": "{{call_to_action}}",
+    "subtitle": "{{web_address}}",
+    "say": [
+      {
+        "at": 0.3,
+        "duration": 2.0,
+        "text": "{{closing_line}}"
+      }
+    ]
+  }
+}

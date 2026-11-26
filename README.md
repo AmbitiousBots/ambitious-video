@@ -1,6 +1,6 @@
 # ambitious-video
 
-The video module is a generic renderer driven by a declarative video script (a JSON or YAML spec). Composable steps such as screen recordings, title cards, speech, generated scenes, lip-sync, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts are data, and example specs live under examples/. It is a command-line tool with no UI.
+The video module is a generic renderer driven by a declarative JSON video script (`schemaVersion: 2`) or a shared JSON DSL v1 recipe (`dslVersion: 1`, `kind: "recipe"`). Composable steps such as screen recordings, title cards, speech, generated scenes, lip-sync, captions, timed cuts and b-roll are assembled with ffmpeg, with a dry-run cost estimate and a cost ledger. No business or marketing script is built in; scripts and recipes are data, and example specs live under examples/. It is a command-line tool with no UI.
 
 The module follows the module contract of the small command-line kit it is built on, `ambitious_kit`: one command-line binary, JSON in and a JSON envelope out, one SQLite file, deterministic with `--now` and `--seed`, no network except keyed AI calls. The Python copy of that kit is in `vendor/`, and `vendor/KIT_VERSION` names the pinned version.
 
@@ -26,26 +26,30 @@ Version 0.1.1. One binary, `ambitious-video`, reads a script from `--in <file>`,
 
 ## A first video
 
-`guide` prints a short example script and the steps to render it. The script is also `examples/titles-and-captions.yaml`: two title cards, captions and one crossfade. It needs no media files and no key.
+`guide` prints a short example script and the steps to render it. The script is also `examples/titles-and-captions.json`: two title cards, captions and one crossfade. It needs no media files and no key.
 
 ```sh
-ambitious-video guide                         # copy data.example.script into video.yaml
-ambitious-video validate --in video.yaml
-ambitious-video estimate --in video.yaml      # 0, because nothing is spoken
-ambitious-video render --in video.yaml        # writes out/titles-and-captions.mp4 next to video.yaml
+ambitious-video guide                         # copy data.example.script into video.json
+ambitious-video validate --in video.json
+ambitious-video estimate --in video.json      # 0, because nothing is spoken
+ambitious-video render --in video.json        # writes out/titles-and-captions.mp4 next to video.json
 ```
 
 A `voiceover` clip is a caption only. Use a `speech` clip, described below, only when you want a line spoken and have set the provider key in the environment. `estimate` lists the keys a script still needs, and `--offline` renders it without any.
+
+## Shared JSON Recipe (`dslVersion: 1`)
+
+`ambitious-video` directly validates, plans, estimates, renders (online and `--offline`), and verifies shared JSON DSL v1 recipes (`schemas/video-recipe.v1.json`, `dslVersion: 1`, `kind: "recipe"`). Paid media steps (`generated_scene`, `speech`, `lip_sync`) are declared as `ai` steps with `"executor": "bot"`, and the `bot.ffmpeg_assemble` `tool` step references them via `{ "refStep": "<step_id>" }` in its `tracks`. See `examples/promo-video-recipe.json`.
 
 ## Templates
 
 A template is a video with named inputs. It is data that its owner keeps and changes: the same template makes a video for any business once the inputs are filled in. `expand` fills a template and returns an ordinary video script, so everything after it (`validate`, `plan`, `estimate`, `render`, `verify`) works as for a script written by hand.
 
 ```sh
-ambitious-video expand --template welcome --in inputs.yaml --out script.yaml
-ambitious-video validate --in script.yaml
-ambitious-video estimate --in script.yaml     # show the price before rendering
-ambitious-video render --in script.yaml
+ambitious-video expand --template welcome --in inputs.json --out script.json
+ambitious-video validate --in script.json
+ambitious-video estimate --in script.json     # show the price before rendering
+ambitious-video render --in script.json
 ```
 
 `--template` takes a template file, or the id of one of the three starter templates that ship with the binary. `guide` lists them in `data.templates.starters`, each with its inputs and its full text to save and change:
@@ -60,38 +64,48 @@ The starters name no business. Their words, pictures, colors and logo all come f
 
 An inputs file holds the values, and may replace the template's output:
 
-```yaml
-template: welcome                      # optional: expand refuses another template
-inputs:
-  business_name: "Example Plumbing Co."
-  picture_1: assets/still-1.png        # a file in the folder of the inputs file
-  # ... one value for each required input
-output: { path: out/plumbing.mp4, width: 1280, height: 720 }   # optional
+```json
+{
+  "template": "welcome",
+  "inputs": {
+    "business_name": "Example Plumbing Co.",
+    "picture_1": "assets/still-1.png"
+  },
+  "output": { "path": "out/plumbing.mp4", "width": 1280, "height": 720 }
+}
 ```
 
 A template looks like this (`schemas/video-template.v1.json` is its JSON Schema, and [schemas/README.md](schemas/README.md) explains every field):
 
-```yaml
-templateVersion: 1
-id: welcome
-title: Welcome video
-inputs:
-  business_name: { type: text, required: true, maxLength: 60 }
-  picture_1: { type: image, required: true }
-  voice: { type: voice }
-brand: { file: brand.yaml }             # the owner's brand file, next to the inputs
-output: { path: out/welcome.mp4, width: 1920, height: 1080, fps: 30 }
-budget: { maxUsd: 5 }
-speech: { provider: xai-speech, model: tts, voice: "{{voice}}" }
-fallbacks: { speech: captions }
-scenes:
-  - id: opening
-    show: { type: title_card, duration: 3.0, text: "{{business_name}}" }
-    say: [{ at: 0.5, duration: 2.0, text: "Welcome to {{business_name}}." }]
-    cut: { transition: crossfade, duration: 0.4 }
-  - id: picture-1
-    show: { type: image, path: "{{picture_1}}", duration: 4.0 }
-endCard: { duration: 3.0, text: "{{business_name}}" }
+```json
+{
+  "templateVersion": 1,
+  "id": "welcome",
+  "title": "Welcome video",
+  "inputs": {
+    "business_name": { "type": "text", "required": true, "maxLength": 60 },
+    "picture_1": { "type": "image", "required": true },
+    "voice": { "type": "voice" }
+  },
+  "brand": { "file": "brand.json" },
+  "output": { "path": "out/welcome.mp4", "width": 1920, "height": 1080, "fps": 30 },
+  "budget": { "maxUsd": 5 },
+  "speech": { "provider": "xai-speech", "model": "tts", "voice": "{{voice}}" },
+  "fallbacks": { "speech": "captions" },
+  "scenes": [
+    {
+      "id": "opening",
+      "show": { "type": "title_card", "duration": 3.0, "text": "{{business_name}}" },
+      "say": [{ "at": 0.5, "duration": 2.0, "text": "Welcome to {{business_name}}." }],
+      "cut": { "transition": "crossfade", "duration": 0.4 }
+    },
+    {
+      "id": "picture-1",
+      "show": { "type": "image", "path": "{{picture_1}}", "duration": 4.0 }
+    }
+  ],
+  "endCard": { "duration": 3.0, "text": "{{business_name}}" }
+}
 ```
 
 - **Inputs** have a type: `text`, `image`, `video`, `audio`, `color`, `voice` or `choice`. An input is `required`, or has a `default`, or may be left out.
@@ -101,7 +115,7 @@ endCard: { duration: 3.0, text: "{{business_name}}" }
 - **Provider and model are written in the template.** Nothing chooses one at render time. The starters speak the lines with `xai-speech` only when the `voice` input is given; without it the lines are captions and the video costs nothing.
 - **`budget.maxUsd`** is the most one video may cost, in US dollars. The starters set 5. `expand` copies it into the script, and `estimate` and `render` refuse to go above it: see [Spending caps](#spending-caps).
 
-`expand` is pure: it opens no database and calls no provider, and the same template, inputs and brand file give the same script byte for byte, whatever `--now` and `--seed` are. It prints the script in `data.script` with `data.scriptSha256`, and `--out` also writes it to a file, as JSON when the name ends in `.json` and as YAML otherwise. Write the script into the folder of the inputs file, because paths in a script are relative to the script. The script names its template in `template: { id, templateVersion }`, and `plan` repeats that.
+`expand` is pure: it opens no database and calls no provider, and the same template, inputs and brand file give the same script byte for byte, whatever `--now` and `--seed` are. It prints the script in `data.script` with `data.scriptSha256`, and `--out` also writes it to a file as JSON. Write the script into the folder of the inputs file, because paths in a script are relative to the script. The script names its template in `template: { id, templateVersion }`, and `plan` repeats that.
 
 An input the template does not have, a missing required input, a value of the wrong type, a slot that names no input and a template that does not match the schema are all refused with `E_INPUT_SCHEMA`. `data.problems` has one entry for each, with the document it is in (`template`, `inputs`, `brand` or `script`), the place (`at`) and a message:
 
@@ -135,8 +149,8 @@ The short version of what the sections below explain in full.
 
 A paid step is a clip that names a provider and one of its models. There are three: `speech`, a line spoken by a text-to-speech provider, `generated_scene`, a scene a provider makes from a prompt ([Generated scenes](#generated-scenes)), and `lip_sync`, a presenter whose lips a provider moves to the sound of a track ([Lip-sync](#lip-sync)).
 
-```yaml
-- { type: speech, at: 0.5, text: "Narration line", provider: xai-speech, model: tts, voice: eve }
+```json
+{ "type": "speech", "at": 0.5, "text": "Narration line", "provider": "xai-speech", "model": "tts", "voice": "eve" }
 ```
 
 The provider, the model and the voice are always written in the script. Nothing picks one for you at render time and no voice is built in. A `voiceover` clip is the free form of the same line: it gives captions their words and timing, nothing is spoken and no key is needed.
@@ -167,8 +181,8 @@ A step whose result is already in the step cache has `"cached": true` and `"usd"
 
 `elevenlabs-speech` speaks a line with a voice from your own ElevenLabs account:
 
-```yaml
-- { type: speech, at: 0.5, text: "Narration line", provider: elevenlabs-speech, model: eleven-v4, voice: "<voice id>" }
+```json
+{ "type": "speech", "at": 0.5, "text": "Narration line", "provider": "elevenlabs-speech", "model": "eleven-v4", "voice": "<voice id>" }
 ```
 
 - **`voice` is a voice id**, the identifier ElevenLabs shows for a voice, not its display name. It can be one of the stock voices or a voice you cloned from your own recordings; the adapter sends whatever id the script names and has no voice of its own. In a template, leave it as the `voice` input so each owner supplies their own.
@@ -182,20 +196,28 @@ The adapter follows the provider's public API documentation, and the tests run i
 
 A `generated_scene` clip asks a provider for a scene and shows it for `duration` seconds:
 
-```yaml
-disclosure: "AI-generated scenes"
-tracks:
-  - id: main
-    clips:
-      - type: generated_scene
-        provider: xai-video
-        model: grok-imagine-video        # or grok-imagine-video-1.5, grok-imagine-video-1.5-lite
-        prompt: "A slow aerial shot of a small town at sunrise, no people, no text"
-        duration: 8
-        resolution: 720p                 # optional
-        aspect_ratio: "16:9"             # optional
-        image: assets/reference.png      # optional: a picture the scene starts from
-        fallback: { type: image, path: assets/town.png, kenburns: { from: 1.0, to: 1.08 } }
+```json
+{
+  "disclosure": "AI-generated scenes",
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "generated_scene",
+          "provider": "xai-video",
+          "model": "grok-imagine-video",
+          "prompt": "A slow aerial shot of a small town at sunrise, no people, no text",
+          "duration": 8,
+          "resolution": "720p",
+          "aspect_ratio": "16:9",
+          "image": "assets/reference.png",
+          "fallback": { "type": "image", "path": "assets/town.png", "kenburns": { "from": 1.0, "to": 1.08 } }
+        }
+      ]
+    }
+  ]
+}
 ```
 
 - **Provider and model** are written in the clip, as for speech. `xai-video` returns a moving scene, priced per second of `duration` (whole seconds from 1 to 15). `xai-image` returns one still picture, priced per picture, which is shown for `duration` with the clip's optional `kenburns: { from, to }` zoom. `validate` refuses a length, a size, a shape or a reference picture the named provider does not offer, and a `seed` for a provider that takes none.
@@ -213,21 +235,32 @@ The two adapters follow the provider's public API documentation, and the tests r
 
 A `lip_sync` clip shows a presenter whose lips a provider moves to the sound of another track. It is never added for you: a video has lip-sync only when its script, or the template it came from, has such a clip.
 
-```yaml
-disclosure: "AI-generated lip movement"
-tracks:
-  - id: main
-    clips:
-      - type: lip_sync
-        provider: sync-lipsync
-        model: lipsync-2
-        video: assets/presenter.mp4
-        voice: voice
-        duration: 6
-        fallback: { type: mouth, sprite: assets/presenter.png, x: 0.5, y: 0.62, width: 0.12, height: 0.08 }
-  - id: voice
-    clips:
-      - { type: speech, at: 0.2, text: "Hello, and welcome.", provider: xai-speech, model: tts, voice: eve }
+```json
+{
+  "disclosure": "AI-generated lip movement",
+  "tracks": [
+    {
+      "id": "main",
+      "clips": [
+        {
+          "type": "lip_sync",
+          "provider": "sync-lipsync",
+          "model": "lipsync-2",
+          "video": "assets/presenter.mp4",
+          "voice": "voice",
+          "duration": 6,
+          "fallback": { "type": "mouth", "sprite": "assets/presenter.png", "x": 0.5, "y": 0.62, "width": 0.12, "height": 0.08 }
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "clips": [
+        { "type": "speech", "at": 0.2, "text": "Hello, and welcome.", "provider": "xai-speech", "model": "tts", "voice": "eve" }
+      ]
+    }
+  ]
+}
 ```
 
 - **The presenter is your own file.** `video` is a video of the presenter at least as long as the clip. `image` is a picture instead, which only `sync-3` takes. Give exactly one of the two.
@@ -267,13 +300,13 @@ A program that renders for someone else, such as an assistant, should work in th
 
 A script can say the most one run may cost, and so can the command line:
 
-```yaml
-budget: { maxUsd: 5 }
+```json
+{ "budget": { "maxUsd": 5 } }
 ```
 
 ```sh
-ambitious-video estimate --in script.yaml --max-usd 2.50
-ambitious-video render --in script.yaml --max-usd 2.50
+ambitious-video estimate --in script.json --max-usd 2.50
+ambitious-video render --in script.json --max-usd 2.50
 ```
 
 The lower of `budget.maxUsd` and `--max-usd` applies, so the flag can tighten the cap of a script for one run and cannot raise it. Without either there is no cap. `--max-usd` takes a plain amount in US dollars from 0 to 1000000 with at most six decimal places.
@@ -392,22 +425,24 @@ Shared codes (`E_USAGE`, `E_INPUT_SCHEMA`, `E_FORBIDDEN_PATH`, `E_NO_KEY`, `E_DB
 | Where | What |
 |---|---|
 | `schemas/video-script.v2.json` | The video script format. [schemas/README.md](schemas/README.md) explains it. |
+| `schemas/video-recipe.v1.json` | The shared JSON DSL v1 recipe format (`dslVersion: 1`, `kind: "recipe"`). The same README explains it. |
 | `schemas/video-template.v1.json` | The template format that `expand` reads. The same README explains it. |
-| `templates/` | The three starter templates: `welcome.yaml`, `short-explainer.yaml` and `announcement.yaml`. A copy of each is inside the package, in `src/ambitious_video/templates/`, so the binary has them; a test keeps the copies the same. |
-| `examples/` | Five scripts as data: `minimal.yaml` and `titles-and-captions.yaml` need no key, `all-clip-types.yaml` uses every free clip type and paid `speech`, `generated-scenes.yaml` has two `generated_scene` clips with their fallbacks, and `lip-sync.yaml` has a `lip_sync` clip that speaks a `speech` line. `examples/invalid/` holds scripts that must be rejected. |
-| `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has an `inputs.yaml` for one starter template, a `brand.yaml`, the `script.yaml` that `expand` writes from them, and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
+| `templates/` | The three starter templates: `welcome.json`, `short-explainer.json` and `announcement.json`. A copy of each is inside the package, in `src/ambitious_video/templates/`, so the binary has them; a test keeps the copies the same. |
+| `examples/` | Five JSON scripts and one shared JSON DSL v1 recipe (`promo-video-recipe.json`): `minimal.json` and `titles-and-captions.json` need no key, `all-clip-types.json` uses every free clip type and paid `speech`, `generated-scenes.json` has two `generated_scene` clips with their fallbacks, and `lip-sync.json` has a `lip_sync` clip that speaks a `speech` line. `examples/invalid/` holds scripts that must be rejected. |
+| `examples/samples/` | Four sample projects for made-up businesses (a plumber, an accounting office, a fitness studio, a bookshop), all SAMPLE DATA. Each has an `inputs.json` for one starter template, a `brand.json`, the `script.json` that `expand` writes from them, and placeholder pictures drawn by `scripts/make_sample_assets.py`, and needs no key. |
 | `src/ambitious_video/steps/` | One module per clip type. Each `compile` is pure. Register a new type in `steps/__init__.py`. |
 | `src/ambitious_video/providers/` | The `Provider` protocol, the registry, the price table reader, and one module per provider adapter. |
 | `spec/` | A TLA+ model of a render job: a retry never charges twice, the ledger holds one line per provider call, a step key is called again only if its result was removed, a verified video was rendered, one render per job. [spec/README.md](spec/README.md) explains it. |
 | `src/ambitious_video/domain/plan.py` | Canonical JSON, `step_key` and `planSha256`. |
+| `src/ambitious_video/domain/recipe.py` | Shared DSL v1 JSON recipe validation and compilation into the validated script model. |
 | `src/ambitious_video/domain/template.py` | Reading a template and filling it: pure, with no file or network access. |
 | `src/ambitious_video/db/step_cache.py` | The step cache: the folders and the `step_cache` table. |
 | `src/ambitious_video/domain/types.py` | The types the commands share: the script, jobs and their states, the cost ledger and assets. |
 | `verify/formal/SKILL.md` | For coding agents: when and how to rerun the checks, and how to read a failure. |
 | `pricing.json` | The price table, inside the package: one entry per provider and model, with its source and the day it was checked. |
-| `guide.yaml`, `help.json` | What `guide` and `help` print, inside the package. `guide.yaml` is a copy of `examples/titles-and-captions.yaml`, and a test keeps the two the same. |
+| `guide.json`, `help.json` | What `guide` and `help` print, inside the package. `guide.json` is a copy of `examples/titles-and-captions.json`, and a test keeps the two the same. |
 
-Build `dist/ambitious-video-0.1.1.pyz` with `python scripts/build.py`. It runs on Python 3.13 with Pillow and ffmpeg installed. PyYAML is bundled. The check from a fresh tree:
+Build `dist/ambitious-video-0.1.1.pyz` with `python scripts/build.py`. It runs on Python 3.13 with Pillow and ffmpeg installed (pure JSON, no YAML dependency). The check from a fresh tree:
 
 ```sh
 bash verify/run

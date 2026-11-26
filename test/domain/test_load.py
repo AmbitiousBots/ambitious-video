@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import yaml
-
 from ambitious_video.domain.load import load_script
 from ambitious_video.domain.timeline import timeline_for
 
@@ -13,8 +11,8 @@ EXAMPLES = ROOT / "examples"
 
 
 def test_valid_examples_load() -> None:
-    for path in sorted(EXAMPLES.glob("*.yaml")):
-        script, problems = load_script(yaml.safe_load(path.read_text(encoding="utf-8")))
+    for path in sorted(EXAMPLES.glob("*.json")):
+        script, problems = load_script(json.loads(path.read_text(encoding="utf-8")))
         assert problems == (), path.name
         assert script is not None
 
@@ -22,13 +20,13 @@ def test_valid_examples_load() -> None:
 def test_invalid_examples_are_rejected() -> None:
     expected = json.loads((EXAMPLES / "invalid" / "EXPECTED.json").read_text(encoding="utf-8"))
     for name in expected:
-        script, problems = load_script(yaml.safe_load((EXAMPLES / "invalid" / name).read_text(encoding="utf-8")))
+        script, problems = load_script(json.loads((EXAMPLES / "invalid" / name).read_text(encoding="utf-8")))
         assert script is None, name
         assert problems, name
 
 
 def test_all_clip_types_timeline_without_files() -> None:
-    raw = yaml.safe_load((EXAMPLES / "all-clip-types.yaml").read_text(encoding="utf-8"))
+    raw = json.loads((EXAMPLES / "all-clip-types.json").read_text(encoding="utf-8"))
     script, problems = load_script(raw)
     assert script is not None and problems == ()
     timeline = timeline_for(script, None, require_files=False)
@@ -37,7 +35,7 @@ def test_all_clip_types_timeline_without_files() -> None:
 
 
 def test_minimal_timeline_without_files() -> None:
-    raw = yaml.safe_load((EXAMPLES / "minimal.yaml").read_text(encoding="utf-8"))
+    raw = json.loads((EXAMPLES / "minimal.json").read_text(encoding="utf-8"))
     script, _problems = load_script(raw)
     assert script is not None
     timeline = timeline_for(script, None, require_files=False)

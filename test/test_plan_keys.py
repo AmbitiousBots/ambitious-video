@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 from ambitious_video.cli import engine
 from ambitious_video.domain.plan import StepSpec, canonical, plan_sha, provider_seed, step_key
@@ -17,18 +16,18 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 ENV_PATH = os.pathsep.join([str(ROOT / "src"), str(ROOT / "vendor")])
 PROJECTS = {
-    "minimal": EXAMPLES / "minimal.yaml",
-    "example-plumbing": EXAMPLES / "samples" / "example-plumbing" / "script.yaml",
-    "example-accounting": EXAMPLES / "samples" / "example-accounting" / "script.yaml",
-    "example-fitness": EXAMPLES / "samples" / "example-fitness" / "script.yaml",
-    "example-bookshop": EXAMPLES / "samples" / "example-bookshop" / "script.yaml",
+    "minimal": EXAMPLES / "minimal.json",
+    "example-plumbing": EXAMPLES / "samples" / "example-plumbing" / "script.json",
+    "example-accounting": EXAMPLES / "samples" / "example-accounting" / "script.json",
+    "example-fitness": EXAMPLES / "samples" / "example-fitness" / "script.json",
+    "example-bookshop": EXAMPLES / "samples" / "example-bookshop" / "script.json",
 }
 NAMES = sorted(PROJECTS)
 SPOKEN = {"type": "speech", "provider": "xai-speech", "model": "tts", "voice": "eve"}
 
 
 def _script(path: Path) -> dict[str, object]:
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return loaded
 

@@ -1,4 +1,0 @@
-# SAMPLE DATA. Example Bookshop is a fictional business.
-# An optional `font` may be added here; it is left unset in this sample.
-colors: { bg: "#2D2A26", fg: "#FBF6EC", accent: "#7A9E7E" }
-logo: assets/logo.png

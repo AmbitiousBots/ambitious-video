@@ -17,7 +17,6 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
 
-import yaml
 from ambitious_kit.cli.command import Context, DbContext, no_input, pure_command, read_command, write_command
 from ambitious_kit.cli.runner import Io, ModuleSpec, cli_envelope
 from ambitious_kit.db.sqlite import load_migrations
@@ -57,17 +56,8 @@ PLAIN_FLAGS = {"--offline": ("plan", "estimate", "render"), "--resend": ("render
 STDIN_WAIT_SECONDS = 2.0
 
 
-_json_loads = json.loads
-
-
 def _loads(text: str) -> object:
-    try:
-        return _json_loads(text)
-    except ValueError:
-        try:
-            return yaml.safe_load(text)
-        except yaml.YAMLError as error:
-            raise ValueError(str(error)) from error
+    return json.loads(text)
 
 
 def _directory(argv: tuple[str, ...] | list[str]) -> Path:
@@ -398,7 +388,6 @@ def main() -> int:
     import ambitious_kit.cli.runner as runner
 
     original_selfcheck = runner.selfcheck  # type: ignore[attr-defined] # the kit binds its report here
-    original_loads = json.loads
     kept, own = _own_flags(guide.builtin_command(sys.argv[1:]))
     kept, source = _input_source(kept)
     token = SCRIPT_DIR.set(_directory(kept))
@@ -411,7 +400,6 @@ def main() -> int:
     out_token = OUT.set(own.get("--out"))
     cap_token = MAX_USD.set(own.get("--max-usd"))
     try:
-        runner.json.loads = _loads  # type: ignore[attr-defined] # YAML scripts use the JSON loader
         runner.selfcheck = _patched_selfcheck(original_selfcheck)  # type: ignore[attr-defined,arg-type] # tools sit beside the kit report
         return _run_cli(
             ModuleSpec(
@@ -440,7 +428,6 @@ def main() -> int:
         )
     finally:
         runner.selfcheck = original_selfcheck  # type: ignore[attr-defined] # restore the kit report for other callers
-        json.loads = original_loads
         MAX_USD.reset(cap_token)
         OUT.reset(out_token)
         TEMPLATE.reset(template_token)

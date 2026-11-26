@@ -10,45 +10,46 @@ from test_render import run, subprocess_verify
 
 from ambitious_video.media.film import MEAN_LIMIT, distance
 
-SCRIPT = "\n".join(
-    [
-        "schemaVersion: 2",
-        "output: { path: NAME.mp4, width: 320, height: 180, fps: 10ENCODE }",
-        "tracks:",
-        "  - id: main",
-        "    clips:",
-        '      - { type: title_card, duration: 1.0, text: "TITLE" }',
-        '      - { type: title_card, duration: 1.0, text: "Two" }',
-        "  - id: voice",
-        "    clips:",
-        '      - { type: voiceover, at: 0.2, duration: 0.6, text: "A caption." }',
-        "  - id: captions",
-        "    from: voice",
-        "cuts:",
-        "  - { at: 1.0, transition: crossfade, duration: 0.2 }",
-        "",
-    ]
-)
-
-GRAIN = "\n".join(
-    [
-        "schemaVersion: 2",
-        "output: { path: grain.mp4, width: 320, height: 180, fps: 10 }",
-        "tracks:",
-        "  - id: main",
-        "    clips:",
-        "      - { type: image, path: grain.png, duration: 1.0, kenburns: { from: 1.0, to: 1.1 } }",
-        '      - { type: title_card, duration: 1.0, text: "Two" }',
-        "cuts:",
-        "  - { at: 1.0, transition: crossfade, duration: 0.4 }",
-        "",
-    ]
+GRAIN = json.dumps(
+    {
+        "schemaVersion": 2,
+        "output": {"path": "grain.mp4", "width": 320, "height": 180, "fps": 10},
+        "tracks": [
+            {
+                "id": "main",
+                "clips": [
+                    {"type": "image", "path": "grain.png", "duration": 1.0, "kenburns": {"from": 1.0, "to": 1.1}},
+                    {"type": "title_card", "duration": 1.0, "text": "Two"},
+                ],
+            }
+        ],
+        "cuts": [{"at": 1.0, "transition": "crossfade", "duration": 0.4}],
+    }
 )
 
 
 def script(name: str, encode: str | None = None, title: str = "One") -> str:
-    chosen = "" if encode is None else ", encode: " + encode
-    return SCRIPT.replace("NAME", name).replace("ENCODE", chosen).replace("TITLE", title)
+    output: dict[str, object] = {"path": name + ".mp4", "width": 320, "height": 180, "fps": 10}
+    if encode is not None:
+        output["encode"] = encode
+    return json.dumps(
+        {
+            "schemaVersion": 2,
+            "output": output,
+            "tracks": [
+                {
+                    "id": "main",
+                    "clips": [
+                        {"type": "title_card", "duration": 1.0, "text": title},
+                        {"type": "title_card", "duration": 1.0, "text": "Two"},
+                    ],
+                },
+                {"id": "voice", "clips": [{"type": "voiceover", "at": 0.2, "duration": 0.6, "text": "A caption."}]},
+                {"id": "captions", "from": "voice"},
+            ],
+            "cuts": [{"at": 1.0, "transition": "crossfade", "duration": 0.2}],
+        }
+    )
 
 
 def video_stream(path: Path) -> dict[str, object]:
