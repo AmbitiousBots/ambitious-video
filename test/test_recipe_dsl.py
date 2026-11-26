@@ -55,6 +55,7 @@ def test_recipe_supports_lip_sync_ai_steps() -> None:
         "id": "presenter-recipe",
         "version": 1,
         "title": "Presenter recipe",
+        "summary": "Combines generated speech with lip sync.",
         "triggers": [{"kind": "manual"}],
         "steps": [
             {
@@ -89,6 +90,13 @@ def test_recipe_supports_lip_sync_ai_steps() -> None:
                     ],
                 },
             },
+            {
+                "id": "done",
+                "kind": "return",
+                "needs": ["assemble"],
+                "status": "completed",
+                "output": {"videoPath": "out/presenter.mp4"},
+            },
         ],
     }
     _recipe_validator().validate(raw)
@@ -98,24 +106,76 @@ def test_recipe_supports_lip_sync_ai_steps() -> None:
     assert any(isinstance(clip, LipSync) and clip.provider == "sync-lipsync" for clip in clips)
 
 
+def _dup_ref_step(doc: dict[str, object]) -> None:
+    tracks = doc["steps"][2]["input"]["tracks"]
+    tracks[0]["clips"].append({"refStep": "scene"})
+
+
+def _unreferenced_ai_step(doc: dict[str, object]) -> None:
+    doc["steps"].insert(
+        2,
+        {
+            "id": "unused_scene",
+            "kind": "ai",
+            "executor": "bot",
+            "provider": "xai-video",
+            "model": "grok-imagine-video",
+            "params": {"prompt": "Unused shot", "duration": 2.0},
+            "next": "done",
+        },
+    )
+
+
+def _drop_return(doc: dict[str, object]) -> None:
+    doc["steps"] = [step for step in doc["steps"] if step["kind"] != "return"]
+
+
 @pytest.mark.parametrize(
     ("mutator", "expected_at"),
     [
         (lambda doc: doc.update({"dslVersion": 2}), "/dslVersion"),
+        (lambda doc: doc.update({"dslVersion": 1.0}), "/dslVersion"),
         (lambda doc: doc.update({"kind": "view"}), "/kind"),
+        (lambda doc: doc.update({"id": "promo_video"}), "/id"),
+        (lambda doc: doc.update({"budget": {"maxUsd": 20000}}), "/budget/maxUsd"),
+        (lambda doc: doc.update({"budget": {"maxUsd": 0}}), "/budget/maxUsd"),
+        (lambda doc: doc.update({"triggers": [{"kind": "manual", "extra": 1}]}), "/triggers/0/extra"),
+        (lambda doc: doc.update({"triggers": [{"kind": "event"}]}), "/triggers/0/type"),
+        (lambda doc: doc["steps"][0].update({"id": "bad-step-id"}), "/steps/0/id"),
+        (lambda doc: doc["steps"][0].update({"id": "constructor"}), "/steps/0/id"),
         (lambda doc: doc["steps"][0].update({"executor": "server"}), "/steps/0/executor"),
+        (lambda doc: doc["steps"][0].update({"cache": "none"}), "/steps/0/cache"),
+        (lambda doc: doc["steps"][0].update({"title": ""}), "/steps/0/title"),
+        (lambda doc: doc["steps"][0]["params"].update({"api_key": "secret"}), "/steps/0/params/api_key"),
+        (lambda doc: doc["steps"][0]["params"].update({"text": "both"}), "/steps/0/params"),
+        (lambda doc: doc["steps"][1].update({"seed": 7}), "/steps/1/seed"),
+        (lambda doc: doc["steps"][1]["fallback"].update({"extra": "no"}), "/steps/1/fallback/extra"),
+        (lambda doc: doc["steps"][0].update({"next": "missing"}), "/steps/0/next"),
+        (lambda doc: doc["steps"][0].update({"next": "scene"}), "/steps/0/next"),
+        (
+            lambda doc: doc["steps"][0].update({"next": "assemble"})
+            or doc["steps"][2].update({"next": "scene"}),
+            "/steps",
+        ),
         (lambda doc: doc["steps"][2].update({"needs": ["scene"]}), "/steps/2/input/tracks/1/clips/0/refStep"),
+        (lambda doc: doc["steps"][2].update({"needs": ["scene", "scene", "speech"]}), "/steps/2/needs/1"),
+        (lambda doc: doc["steps"][0].update({"needs": ["done"]}), "/steps/0/needs"),
         (
             lambda doc: doc["steps"][2]["input"]["tracks"][1]["clips"][0].update({"refStep": "missing"}),
             "/steps/2/input/tracks/1/clips/0/refStep",
         ),
+        (_dup_ref_step, "/steps/2/input/tracks/0/clips/2/refStep"),
+        (_unreferenced_ai_step, "/steps/2"),
+        (_drop_return, "/steps"),
         (
             lambda doc: doc["steps"][0].update({"needs": ["speech"]})
             or doc["steps"][1].update({"needs": ["scene"]}),
             "/steps",
         ),
         (lambda doc: doc["steps"][1].update({"disclosure": "Other label"}), "/steps"),
+        (lambda doc: doc["steps"][2]["input"].update({"disclosure": 42}), "/steps/2/input/disclosure"),
         (lambda doc: doc["steps"][2].update({"action": "bot.other_tool"}), "/steps/2/action"),
+        (lambda doc: doc["steps"][3].update({"output": "bad"}), "/steps/3/output"),
     ],
 )
 def test_invalid_recipes_are_refused(mutator: object, expected_at: str) -> None:

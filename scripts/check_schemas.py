@@ -248,6 +248,40 @@ def template_schema_matches_types(schema: Document, script_schema: Document, typ
     return problems
 
 
+def recipe_schema_matches_module(schema: Document, recipe: ModuleType, types: ModuleType) -> list[str]:
+    problems = []
+
+    def same(what: str, in_schema: object, in_code: object) -> None:
+        if in_schema != in_code:
+            problems.append(
+                f"{what}: schemas/video-recipe.v1.json says {json.dumps(in_schema)} and "
+                f"src/ambitious_video/domain/recipe.py says {json.dumps(in_code)}. Change both together"
+            )
+
+    defs = schema["$defs"]
+    props = schema["properties"]
+    same("dslVersion", props["dslVersion"]["const"], recipe.DSL_VERSION)
+    same("activation kinds", props["activation"]["enum"], list(recipe.ACTIVATION_KINDS))
+    same("max budget USD", props["budget"]["properties"]["maxUsd"]["maximum"], recipe.MAX_RECIPE_BUDGET_USD)
+    same("max triggers", props["triggers"]["maxItems"], recipe.MAX_RECIPE_TRIGGERS)
+    same("max steps", props["steps"]["maxItems"], recipe.MAX_RECIPE_STEPS)
+    same("pattern of a recipe id", defs["kebabId"]["pattern"], recipe.RECIPE_ID_PATTERN)
+    same("pattern of a step id", defs["stepId"]["pattern"], recipe.STEP_ID_PATTERN)
+    same("reserved step ids", sorted(defs["stepId"]["not"]["enum"]), sorted(recipe.RESERVED_STEP_IDS))
+    same("pattern of an event name", defs["eventName"]["pattern"], recipe.EVENT_NAME_PATTERN)
+    same("pattern of a timeout", defs["durationText"]["pattern"], recipe.DURATION_TEXT_PATTERN)
+    same("pattern of a provider id", defs["providerId"]["pattern"], types.PROVIDER_ID_PATTERN)
+    same("pattern of a model id", defs["modelId"]["pattern"], types.MODEL_ID_PATTERN)
+    same("max needs", defs["needs"]["maxItems"], recipe.MAX_RECIPE_NEEDS)
+    same("trigger kinds", defs["trigger"]["properties"]["kind"]["enum"], list(recipe.TRIGGER_KINDS))
+    same("ai cache modes", defs["aiStep"]["properties"]["cache"]["enum"], list(recipe.CACHE_KINDS))
+    same("max disclosure", defs["aiStep"]["properties"]["disclosure"]["maxLength"], recipe.MAX_RECIPE_DISCLOSURE)
+    same("max seed", defs["aiStep"]["properties"]["seed"]["maximum"], recipe.MAX_RECIPE_SEED)
+    same("assemble action", defs["toolStep"]["properties"]["action"]["const"], recipe.ASSEMBLE_ACTION)
+    same("return statuses", defs["returnStep"]["properties"]["status"]["enum"], list(recipe.RETURN_STATUSES))
+    return problems
+
+
 def check_templates(
     validator: Draft202012Validator, script_validator: Draft202012Validator, load: Callable[[Path], Document]
 ) -> tuple[list[str], int]:
@@ -443,7 +477,7 @@ def main() -> None:
     import jsonschema
 
     sys.path.insert(0, str(REPO / "src"))
-    from ambitious_video.domain import types
+    from ambitious_video.domain import recipe, types
 
     def load(path: Path) -> Document:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -472,6 +506,7 @@ def main() -> None:
     template_problems, templates = check_templates(template_validator, validator, load)
     agreement = schema_matches_types(schema, types) + model_matches_types(types)
     agreement += template_schema_matches_types(template_schema, schema, types)
+    agreement += recipe_schema_matches_module(recipe_schema, recipe, types)
     problems = agreement + valid_problems + sample_problems + template_problems + invalid_problems
     for problem in problems:
         sys.stderr.write(f"FAIL: {problem}\n")

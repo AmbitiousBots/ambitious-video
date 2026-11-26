@@ -81,7 +81,7 @@ def _brand(template: Template, root: Path, loads: Loads) -> object | None:
         raise unreadable from None
 
 
-def script_text(script: object, _suffix: str = STARTER_SUFFIX) -> str:
+def script_text(script: object) -> str:
     return json.dumps(script, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -89,7 +89,7 @@ def _written(script: object, out: Path) -> None:
     target = Path(refuse_agent_data(str(out)))
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(script_text(script, target.suffix), encoding="utf-8")
+        target.write_text(script_text(script), encoding="utf-8")
     except OSError:
         raise failure("E_USAGE", f"The file {out} could not be written.", "Pass --out a writable path.") from None
 

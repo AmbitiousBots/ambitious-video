@@ -311,7 +311,7 @@ def test_sample_goes_from_its_template_and_brand_to_a_verified_video(slug: str, 
 def test_sample_script_is_what_expand_writes(slug: str, no_network: None) -> None:
     script = _sample_script(slug)
     kept = SAMPLES / slug / "script.json"
-    assert expander.script_text(script, ".json") == kept.read_text(encoding="utf-8")
+    assert expander.script_text(script) == kept.read_text(encoding="utf-8")
     assert _json(SAMPLES / slug / "inputs.json")["template"] == USES[slug]
     assert script["template"] == {"id": USES[slug], "templateVersion": 1} and script["budget"] == {"maxUsd": 5}
     _schema("video-script.v2.json").validate(script)
