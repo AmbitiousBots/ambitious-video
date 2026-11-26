@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Mapping
@@ -20,10 +21,14 @@ MAX_RECIPE_NEEDS = 16
 MAX_RECIPE_DISCLOSURE = 160
 MAX_RECIPE_SEED = 2_147_483_647
 MAX_RECIPE_BUDGET_USD = 10_000
+MAX_RECIPE_BYTES = 65_536
+MAX_SAFE_RECORD_KEYS = 40
+MAX_SAFE_DEPTH = 16
 RECIPE_ID_PATTERN = r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
 STEP_ID_PATTERN = r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
-EVENT_NAME_PATTERN = r"^[a-z][a-z0-9._-]{0,95}$"
-DURATION_TEXT_PATTERN = r"^[1-9][0-9]{0,4}[smhd]$"
+_EVENT_SEG = r"[a-z][a-z0-9_]{0,31}"
+EVENT_NAME_PATTERN = f"^{_EVENT_SEG}\\.{_EVENT_SEG}$"
+DURATION_TEXT_PATTERN = r"^[1-9][0-9]{0,3}[smhd]$"
 RECIPE_ID = re.compile(RECIPE_ID_PATTERN)
 STEP_ID = re.compile(STEP_ID_PATTERN)
 EVENT_RE = re.compile(EVENT_NAME_PATTERN)
@@ -31,6 +36,7 @@ DURATION_RE = re.compile(DURATION_TEXT_PATTERN)
 PROVIDER_RE = re.compile(PROVIDER_ID_PATTERN)
 MODEL_RE = re.compile(MODEL_ID_PATTERN)
 RESERVED_STEP_IDS = frozenset({"__proto__", "constructor", "prototype"})
+PAID_CLIP_TYPES = frozenset({"speech", "generated_scene", "lip_sync"})
 ASSEMBLE_ACTION = "bot.ffmpeg_assemble"
 TOP_KEYS = {
     "dslVersion",
@@ -110,7 +116,13 @@ def _is_int(value: object) -> bool:
 
 
 def _is_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return False
 
 
 def _valid_step_id(value: object) -> bool:
@@ -132,6 +144,36 @@ def _check_keys(bag: _Problems, obj: Mapping[str, object], allowed: set[str], at
             bag.schema(_join(at, "/", str(key)), "This field is not allowed.")
 
 
+def _check_safe_value(bag: _Problems, value: object, at: str, depth: int = 0) -> None:
+    if depth > MAX_SAFE_DEPTH:
+        bag.schema(at, "Value is nested too deeply.")
+        return
+    if isinstance(value, str):
+        if "\x00" in value:
+            bag.schema(at, "Null bytes are not allowed.")
+        return
+    if isinstance(value, list):
+        for idx, item in enumerate(value):
+            _check_safe_value(bag, item, _join(at, "/", str(idx)), depth + 1)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or not (1 <= len(key) <= 64) or key in RESERVED_STEP_IDS or "\x00" in key:
+                bag.schema(_join(at, "/", str(key)), "Unsafe object key.")
+                continue
+            _check_safe_value(bag, item, _join(at, "/", key), depth + 1)
+
+
+def _check_safe_record(bag: _Problems, value: object, at: str) -> None:
+    if not isinstance(value, dict):
+        bag.schema(at, "Value must be an object.")
+        return
+    if len(value) > MAX_SAFE_RECORD_KEYS:
+        bag.schema(at, "Too many entries in object.")
+        return
+    _check_safe_value(bag, value, at, 0)
+
+
 def _check_title(bag: _Problems, obj: Mapping[str, object], at: str, *, required: bool = False) -> None:
     if "title" not in obj:
         if required:
@@ -151,8 +193,33 @@ def _check_budget(bag: _Problems, raw: Mapping[str, object]) -> None:
         return
     _check_keys(bag, budget, {"maxUsd"}, "/budget")
     cap = budget.get("maxUsd")
-    if not _is_number(cap) or not (0 < float(str(cap)) <= MAX_RECIPE_BUDGET_USD):
+    if not _is_number(cap) or not isinstance(cap, (int, float)) or not (0 < cap <= MAX_RECIPE_BUDGET_USD):
         bag.schema("/budget/maxUsd", "Invalid budget maxUsd.")
+
+
+def _check_schedule_trigger(bag: _Problems, trigger: Mapping[str, object], at: str) -> None:
+    _check_keys(bag, trigger, SCHEDULE_TRIGGER_KEYS, at)
+    rule = trigger.get("rule")
+    if rule not in SCHEDULE_RULES:
+        bag.schema(_join(at, "/rule"), "Invalid schedule rule.")
+    if not _valid_kebab_id(trigger.get("subjectKind")):
+        bag.schema(_join(at, "/subjectKind"), "Invalid subjectKind.")
+    if "businessDays" in trigger and not isinstance(trigger["businessDays"], bool):
+        bag.schema(_join(at, "/businessDays"), "businessDays must be boolean.")
+    if "every" in trigger and trigger["every"] not in SCHEDULE_EVERY:
+        bag.schema(_join(at, "/every"), "Invalid schedule every.")
+    if rule == "recurring":
+        if "every" not in trigger or "start" not in trigger:
+            bag.schema(at, "Recurring schedule needs every, start.")
+        if "date" in trigger:
+            bag.schema(_join(at, "/date"), "Recurring schedule forbids date.")
+    elif rule in ("on_date", "before_date"):
+        if "date" not in trigger:
+            bag.schema(at, "Date schedule requires date.")
+        if "every" in trigger or "start" in trigger:
+            bag.schema(at, "Date schedule forbids every or start.")
+        if rule == "before_date" and "days" not in trigger and "leadDays" not in trigger:
+            bag.schema(at, "before_date needs days or leadDays.")
 
 
 def _check_trigger(bag: _Problems, trigger: object, at: str) -> None:
@@ -162,23 +229,21 @@ def _check_trigger(bag: _Problems, trigger: object, at: str) -> None:
     kind = trigger.get("kind")
     if kind == "manual":
         _check_keys(bag, trigger, MANUAL_TRIGGER_KEYS, at)
-        if "input" in trigger and not isinstance(trigger["input"], dict):
-            bag.schema(_join(at, "/input"), "Manual input must be an object.")
+        if "input" in trigger:
+            raw_in = trigger["input"]
+            if not isinstance(raw_in, dict) or len(raw_in) > MAX_SAFE_RECORD_KEYS:
+                bag.schema(_join(at, "/input"), "Manual input must be an object.")
+            else:
+                for key, val in raw_in.items():
+                    if not _valid_step_id(key) or not isinstance(val, dict):
+                        bag.schema(_join(at, "/input/", str(key)), "Invalid manual input field.")
     elif kind == "event":
         _check_keys(bag, trigger, EVENT_TRIGGER_KEYS, at)
         ev = trigger.get("type")
         if not isinstance(ev, str) or EVENT_RE.fullmatch(ev) is None:
             bag.schema(_join(at, "/type"), "Invalid event type.")
     elif kind == "schedule":
-        _check_keys(bag, trigger, SCHEDULE_TRIGGER_KEYS, at)
-        if trigger.get("rule") not in SCHEDULE_RULES:
-            bag.schema(_join(at, "/rule"), "Invalid schedule rule.")
-        if not _valid_kebab_id(trigger.get("subjectKind")):
-            bag.schema(_join(at, "/subjectKind"), "Invalid subjectKind.")
-        if "businessDays" in trigger and not isinstance(trigger["businessDays"], bool):
-            bag.schema(_join(at, "/businessDays"), "businessDays must be boolean.")
-        if "every" in trigger and trigger["every"] not in SCHEDULE_EVERY:
-            bag.schema(_join(at, "/every"), "Invalid schedule every.")
+        _check_schedule_trigger(bag, trigger, at)
     elif kind == "signal":
         _check_keys(bag, trigger, SIGNAL_TRIGGER_KEYS, at)
         name = trigger.get("name")
@@ -191,6 +256,12 @@ def _check_trigger(bag: _Problems, trigger: object, at: str) -> None:
 
 
 def _check_header(bag: _Problems, raw: Mapping[str, object]) -> None:
+    try:
+        size = len(json.dumps(raw, allow_nan=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        size = 0
+    if size > MAX_RECIPE_BYTES:
+        bag.schema("", "Recipe exceeds 64 KiB limit.")
     _check_keys(bag, raw, TOP_KEYS, "")
     version_tag = raw.get("dslVersion")
     if not _is_int(version_tag) or version_tag != DSL_VERSION:
@@ -200,7 +271,7 @@ def _check_header(bag: _Problems, raw: Mapping[str, object]) -> None:
     if not _valid_kebab_id(raw.get("id")):
         bag.schema("/id", "id must be a kebab-case slug.")
     ver = raw.get("version")
-    if not _is_int(ver) or not (1 <= int(str(ver)) <= 1000000):
+    if not _is_int(ver) or not isinstance(ver, int) or not (1 <= ver <= 1_000_000):
         bag.schema("/version", "version must be a positive integer.")
     _check_title(bag, raw, "", required=True)
     if "summary" in raw:
@@ -322,7 +393,7 @@ def _ai_step_to_clip(
     _check_title(bag, step, at)
     if "adapterVersion" in step:
         av = step["adapterVersion"]
-        if not _is_int(av) or not (1 <= int(str(av)) <= 1000):
+        if not _is_int(av) or not isinstance(av, int) or not (1 <= av <= 1000):
             bag.schema(_join(at, "/adapterVersion"), "Invalid adapterVersion.")
     if step.get("executor") != "bot":
         bag.schema(_join(at, "/executor"), "Video AI steps require executor bot.")
@@ -346,7 +417,7 @@ def _ai_step_to_clip(
             return None, None
         disclosure = raw_disc
     seed = step.get("seed")
-    if "seed" in step and (not _is_int(seed) or not (0 <= int(str(seed)) <= MAX_RECIPE_SEED)):
+    if "seed" in step and (not _is_int(seed) or not isinstance(seed, int) or not (0 <= seed <= MAX_RECIPE_SEED)):
         bag.schema(_join(at, "/seed"), "Invalid seed.")
         return None, None
     params = step.get("params")
@@ -455,6 +526,8 @@ def _resolve_tracks(
                     continue
                 referenced.add(ref)
                 resolved_clips.append(dict(ai_clips[ref]))
+            elif isinstance(raw_clip, dict) and raw_clip.get("type") in PAID_CLIP_TYPES:
+                bag.schema(c_at, "Paid clips must use an ai step.")
             else:
                 resolved_clips.append(raw_clip)
         copied = dict(raw_track)
@@ -551,8 +624,8 @@ def compile_recipe(
             nexts[sid] = None
             if "status" in entry and entry["status"] not in RETURN_STATUSES:
                 bag.schema(_join(at, "/status"), "Invalid return status.")
-            if "output" in entry and not isinstance(entry["output"], dict):
-                bag.schema(_join(at, "/output"), "Return output must be an object.")
+            if "output" in entry:
+                _check_safe_record(bag, entry["output"], _join(at, "/output"))
 
     _check_graph(bag, kinds, step_at, deps, nexts)
     if not has_return:

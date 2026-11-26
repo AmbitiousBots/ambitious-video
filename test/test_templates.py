@@ -577,7 +577,7 @@ def test_expand_needs_a_template_and_its_flags_belong_to_it_alone(tmp_path: Path
     assert not (tmp_path / "home").exists()
 
 
-def test_expand_writes_json_when_the_file_name_ends_in_json(tmp_path: Path) -> None:
+def test_expand_writes_canonical_json_file(tmp_path: Path) -> None:
     source = ["--template", "welcome", "--in", str(SAMPLES / "example-bookshop" / "inputs.json")]
     shown, line = _cli(tmp_path / "home", ["expand", *source])
     assert shown["exit"] == 0 and "written" not in _data(shown)

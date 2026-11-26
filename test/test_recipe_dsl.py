@@ -130,6 +130,12 @@ def _drop_return(doc: dict[str, object]) -> None:
     doc["steps"] = [step for step in doc["steps"] if step["kind"] != "return"]
 
 
+def _inline_paid_clip(doc: dict[str, object]) -> None:
+    doc["steps"][2]["input"]["tracks"][1]["clips"].append(
+        {"type": "speech", "provider": "xai-speech", "model": "tts", "text": "Sneaky", "voice": "eve"}
+    )
+
+
 @pytest.mark.parametrize(
     ("mutator", "expected_at"),
     [
@@ -138,9 +144,34 @@ def _drop_return(doc: dict[str, object]) -> None:
         (lambda doc: doc.update({"kind": "view"}), "/kind"),
         (lambda doc: doc.update({"id": "promo_video"}), "/id"),
         (lambda doc: doc.update({"budget": {"maxUsd": 20000}}), "/budget/maxUsd"),
+        (lambda doc: doc.update({"budget": {"maxUsd": 10**400}}), "/budget/maxUsd"),
         (lambda doc: doc.update({"budget": {"maxUsd": 0}}), "/budget/maxUsd"),
         (lambda doc: doc.update({"triggers": [{"kind": "manual", "extra": 1}]}), "/triggers/0/extra"),
+        (lambda doc: doc.update({"triggers": [{"kind": "manual", "input": {"foo": 123}}]}), "/triggers/0/input/foo"),
         (lambda doc: doc.update({"triggers": [{"kind": "event"}]}), "/triggers/0/type"),
+        (lambda doc: doc.update({"triggers": [{"kind": "event", "type": "video-ready"}]}), "/triggers/0/type"),
+        (
+            lambda doc: doc.update(
+                {"triggers": [{"kind": "schedule", "rule": "recurring", "subjectKind": "campaign"}]}
+            ),
+            "/triggers/0",
+        ),
+        (
+            lambda doc: doc.update(
+                {"triggers": [{"kind": "schedule", "rule": "on_date", "subjectKind": "campaign", "every": "month"}]}
+            ),
+            "/triggers/0",
+        ),
+        (
+            lambda doc: doc.update(
+                {
+                    "triggers": [
+                        {"kind": "schedule", "rule": "before_date", "subjectKind": "campaign", "date": "2026-01-01"}
+                    ]
+                }
+            ),
+            "/triggers/0",
+        ),
         (lambda doc: doc["steps"][0].update({"id": "bad-step-id"}), "/steps/0/id"),
         (lambda doc: doc["steps"][0].update({"id": "constructor"}), "/steps/0/id"),
         (lambda doc: doc["steps"][0].update({"executor": "server"}), "/steps/0/executor"),
@@ -157,6 +188,7 @@ def _drop_return(doc: dict[str, object]) -> None:
             or doc["steps"][2].update({"next": "scene"}),
             "/steps",
         ),
+        (lambda doc: doc["steps"][2].update({"timeout": "10000s"}), "/steps/2/timeout"),
         (lambda doc: doc["steps"][2].update({"needs": ["scene"]}), "/steps/2/input/tracks/1/clips/0/refStep"),
         (lambda doc: doc["steps"][2].update({"needs": ["scene", "scene", "speech"]}), "/steps/2/needs/1"),
         (lambda doc: doc["steps"][0].update({"needs": ["done"]}), "/steps/0/needs"),
@@ -165,6 +197,7 @@ def _drop_return(doc: dict[str, object]) -> None:
             "/steps/2/input/tracks/1/clips/0/refStep",
         ),
         (_dup_ref_step, "/steps/2/input/tracks/0/clips/2/refStep"),
+        (_inline_paid_clip, "/steps/2/input/tracks/1/clips/1"),
         (_unreferenced_ai_step, "/steps/2"),
         (_drop_return, "/steps"),
         (
@@ -176,6 +209,7 @@ def _drop_return(doc: dict[str, object]) -> None:
         (lambda doc: doc["steps"][2]["input"].update({"disclosure": 42}), "/steps/2/input/disclosure"),
         (lambda doc: doc["steps"][2].update({"action": "bot.other_tool"}), "/steps/2/action"),
         (lambda doc: doc["steps"][3].update({"output": "bad"}), "/steps/3/output"),
+        (lambda doc: doc["steps"][3].update({"output": {"constructor": 1}}), "/steps/3/output/constructor"),
     ],
 )
 def test_invalid_recipes_are_refused(mutator: object, expected_at: str) -> None:

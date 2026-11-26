@@ -44,8 +44,24 @@
       "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
       "not": { "enum": ["__proto__", "constructor", "prototype"] }
     },
-    "eventName": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9._-]{0,95}$" },
-    "durationText": { "type": "string", "minLength": 2, "maxLength": 16, "pattern": "^[1-9][0-9]{0,4}[smhd]$" },
+    "safeKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "not": { "enum": ["__proto__", "constructor", "prototype"] }
+    },
+    "safeRecord": {
+      "type": "object",
+      "maxProperties": 40,
+      "propertyNames": { "$ref": "#/$defs/safeKey" }
+    },
+    "eventName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 65,
+      "pattern": "^[a-z][a-z0-9_]{0,31}\\.[a-z][a-z0-9_]{0,31}$"
+    },
+    "durationText": { "type": "string", "minLength": 2, "maxLength": 5, "pattern": "^[1-9][0-9]{0,3}[smhd]$" },
     "providerId": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9-]{0,31}$" },
     "modelId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
     "needs": {
@@ -62,18 +78,23 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "kind": { "const": "manual" } } },
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "manual" } } },
           "then": {
             "additionalProperties": false,
             "required": ["kind"],
             "properties": {
               "kind": { "const": "manual" },
-              "input": { "type": "object" }
+              "input": {
+                "type": "object",
+                "maxProperties": 40,
+                "propertyNames": { "$ref": "#/$defs/stepId" },
+                "additionalProperties": { "type": "object" }
+              }
             }
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "event" } } },
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "event" } } },
           "then": {
             "additionalProperties": false,
             "required": ["kind", "type"],
@@ -85,7 +106,7 @@
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "schedule" } } },
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "schedule" } } },
           "then": {
             "additionalProperties": false,
             "required": ["kind", "rule", "subjectKind"],
@@ -101,11 +122,35 @@
               "days": {},
               "dueDays": {},
               "leadDays": {}
-            }
+            },
+            "allOf": [
+              {
+                "if": { "required": ["rule"], "properties": { "rule": { "const": "recurring" } } },
+                "then": {
+                  "required": ["every", "start"],
+                  "not": { "required": ["date"] }
+                }
+              },
+              {
+                "if": { "required": ["rule"], "properties": { "rule": { "const": "on_date" } } },
+                "then": {
+                  "required": ["date"],
+                  "not": { "anyOf": [{ "required": ["every"] }, { "required": ["start"] }] }
+                }
+              },
+              {
+                "if": { "required": ["rule"], "properties": { "rule": { "const": "before_date" } } },
+                "then": {
+                  "required": ["date"],
+                  "anyOf": [{ "required": ["days"] }, { "required": ["leadDays"] }],
+                  "not": { "anyOf": [{ "required": ["every"] }, { "required": ["start"] }] }
+                }
+              }
+            ]
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "signal" } } },
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "signal" } } },
           "then": {
             "additionalProperties": false,
             "required": ["kind", "name"],
@@ -127,9 +172,18 @@
         "kind": { "enum": ["ai", "tool", "return"] }
       },
       "allOf": [
-        { "if": { "properties": { "kind": { "const": "ai" } } }, "then": { "$ref": "#/$defs/aiStep" } },
-        { "if": { "properties": { "kind": { "const": "tool" } } }, "then": { "$ref": "#/$defs/toolStep" } },
-        { "if": { "properties": { "kind": { "const": "return" } } }, "then": { "$ref": "#/$defs/returnStep" } }
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "ai" } } },
+          "then": { "$ref": "#/$defs/aiStep" }
+        },
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "tool" } } },
+          "then": { "$ref": "#/$defs/toolStep" }
+        },
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "return" } } },
+          "then": { "$ref": "#/$defs/returnStep" }
+        }
       ]
     },
     "aiStep": {
@@ -191,7 +245,7 @@
         "title": { "type": "string", "minLength": 1, "maxLength": 160 },
         "needs": { "$ref": "#/$defs/needs" },
         "status": { "enum": ["completed", "blocked"] },
-        "output": { "type": "object" }
+        "output": { "$ref": "#/$defs/safeRecord" }
       }
     }
   }

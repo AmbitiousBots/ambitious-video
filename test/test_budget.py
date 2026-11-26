@@ -100,7 +100,6 @@ class _Shell:
 
 @pytest.fixture
 def shell(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> _Shell:
-    monkeypatch.setattr(json, "loads", json.loads)
     monkeypatch.setattr(runner, "selfcheck", runner.selfcheck)
     monkeypatch.setattr(runner, "_read_stdin", runner._read_stdin)
     return _Shell(monkeypatch, capsys)
