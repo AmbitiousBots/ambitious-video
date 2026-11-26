@@ -248,36 +248,58 @@ def template_schema_matches_types(schema: Document, script_schema: Document, typ
     return problems
 
 
-def recipe_schema_matches_module(schema: Document, recipe: ModuleType, types: ModuleType) -> list[str]:
+def recipe_schema_matches_module(schema: Document, recipe: ModuleType) -> list[str]:
     problems = []
 
     def same(what: str, in_schema: object, in_code: object) -> None:
         if in_schema != in_code:
             problems.append(
                 f"{what}: schemas/video-recipe.v1.json says {json.dumps(in_schema)} and "
-                f"src/ambitious_video/domain/recipe.py says {json.dumps(in_code)}. Change both together"
+                f"src/ambitious_video/domain/recipe_shape.py says {json.dumps(in_code)}. Change both together"
             )
 
     defs = schema["$defs"]
     props = schema["properties"]
+    ai = defs["aiStep"]["properties"]
+    triggers = {
+        branch["if"]["properties"]["kind"]["const"]: branch["then"]["properties"] for branch in defs["trigger"]["allOf"]
+    }
     same("dslVersion", props["dslVersion"]["const"], recipe.DSL_VERSION)
     same("activation kinds", props["activation"]["enum"], list(recipe.ACTIVATION_KINDS))
-    same("max budget USD", props["budget"]["properties"]["maxUsd"]["maximum"], recipe.MAX_RECIPE_BUDGET_USD)
+    same("max budget USD", defs["budget"]["properties"]["maxUsd"]["maximum"], recipe.MAX_RECIPE_BUDGET_USD)
     same("max triggers", props["triggers"]["maxItems"], recipe.MAX_RECIPE_TRIGGERS)
     same("max steps", props["steps"]["maxItems"], recipe.MAX_RECIPE_STEPS)
+    same("top-level fields", sorted(props), sorted(recipe.TOP_KEYS))
+    same("pattern of a subject", props["subject"]["pattern"], recipe.SUBJECT_KIND_PATTERN)
+    same("pattern of a source", props["source"]["pattern"], recipe.SOURCE_PATTERN)
     same("pattern of a recipe id", defs["kebabId"]["pattern"], recipe.RECIPE_ID_PATTERN)
     same("pattern of a step id", defs["stepId"]["pattern"], recipe.STEP_ID_PATTERN)
     same("reserved step ids", sorted(defs["stepId"]["not"]["enum"]), sorted(recipe.RESERVED_STEP_IDS))
     same("pattern of an event name", defs["eventName"]["pattern"], recipe.EVENT_NAME_PATTERN)
     same("pattern of a timeout", defs["durationText"]["pattern"], recipe.DURATION_TEXT_PATTERN)
-    same("pattern of a provider id", defs["providerId"]["pattern"], types.PROVIDER_ID_PATTERN)
-    same("pattern of a model id", defs["modelId"]["pattern"], types.MODEL_ID_PATTERN)
     same("max needs", defs["needs"]["maxItems"], recipe.MAX_RECIPE_NEEDS)
+    same("max from", defs["from"]["maxItems"], recipe.MAX_RECIPE_FROM)
+    same("field types", defs["fieldType"]["enum"], list(recipe.FIELD_TYPES))
+    same("field description fields", sorted(defs["fieldSpec"]["properties"]), sorted(recipe.FIELD_SPEC_KEYS))
+    same("expression operators", sorted(defs["expr"]["anyOf"][2]["properties"]), sorted(recipe.EXPR_OPS))
     same("trigger kinds", defs["trigger"]["properties"]["kind"]["enum"], list(recipe.TRIGGER_KINDS))
-    same("ai cache modes", defs["aiStep"]["properties"]["cache"]["enum"], list(recipe.CACHE_KINDS))
-    same("max disclosure", defs["aiStep"]["properties"]["disclosure"]["maxLength"], recipe.MAX_RECIPE_DISCLOSURE)
-    same("max seed", defs["aiStep"]["properties"]["seed"]["maximum"], recipe.MAX_RECIPE_SEED)
-    same("assemble action", defs["toolStep"]["properties"]["action"]["const"], recipe.ASSEMBLE_ACTION)
+    same("event types", triggers["event"]["type"]["enum"], list(recipe.EVENT_TYPES))
+    same("manual trigger fields", sorted(triggers["manual"]), sorted(recipe.MANUAL_TRIGGER_KEYS))
+    same("event trigger fields", sorted(triggers["event"]), sorted(recipe.EVENT_TRIGGER_KEYS))
+    same("schedule trigger fields", sorted(triggers["schedule"]), sorted(recipe.SCHEDULE_TRIGGER_KEYS))
+    same("signal trigger fields", sorted(triggers["signal"]), sorted(recipe.SIGNAL_TRIGGER_KEYS))
+    same("pattern of a repeating schedule", triggers["schedule"]["every"]["anyOf"][0]["pattern"], recipe.RECURRENCE_PATTERN)
+    same("pattern of a schedule moment", defs["moment"]["anyOf"][0]["pattern"], recipe.INSTANT_PATTERN)
+    same("step kinds", defs["step"]["properties"]["kind"]["enum"], list(recipe.STEP_KINDS))
+    same("ai step fields", sorted(ai), sorted(recipe.AI_KEYS))
+    same("tool step fields", sorted(defs["toolStep"]["properties"]), sorted(recipe.TOOL_KEYS))
+    same("return step fields", sorted(defs["returnStep"]["properties"]), sorted(recipe.RETURN_KEYS))
+    same("ai executors", ai["executor"]["enum"], list(recipe.EXECUTORS))
+    same("ai cache modes", ai["cache"]["enum"], list(recipe.SHARED_CACHE_KINDS))
+    same("ai output types", ai["output"]["additionalProperties"]["anyOf"][0]["enum"], list(recipe.AI_OUTPUT_TYPES))
+    same("max disclosure", ai["disclosure"]["maxLength"], recipe.MAX_RECIPE_DISCLOSURE)
+    same("max seed", ai["seed"]["maximum"], recipe.MAX_RECIPE_SEED)
+    same("pattern of a tool action", defs["toolStep"]["properties"]["action"]["pattern"], recipe.ACTION_PATTERN)
     same("return statuses", defs["returnStep"]["properties"]["status"]["enum"], list(recipe.RETURN_STATUSES))
     return problems
 
@@ -477,7 +499,7 @@ def main() -> None:
     import jsonschema
 
     sys.path.insert(0, str(REPO / "src"))
-    from ambitious_video.domain import recipe, types
+    from ambitious_video.domain import recipe_shape, types
 
     def load(path: Path) -> Document:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -506,7 +528,7 @@ def main() -> None:
     template_problems, templates = check_templates(template_validator, validator, load)
     agreement = schema_matches_types(schema, types) + model_matches_types(types)
     agreement += template_schema_matches_types(template_schema, schema, types)
-    agreement += recipe_schema_matches_module(recipe_schema, recipe, types)
+    agreement += recipe_schema_matches_module(recipe_schema, recipe_shape)
     problems = agreement + valid_problems + sample_problems + template_problems + invalid_problems
     for problem in problems:
         sys.stderr.write(f"FAIL: {problem}\n")

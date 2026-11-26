@@ -1,0 +1,49 @@
+{
+  "dslVersion": 1,
+  "kind": "recipe",
+  "id": "promo-render",
+  "version": 1,
+  "activation": "auto",
+  "triggers": [{ "kind": "manual" }],
+  "steps": [
+    {
+      "id": "script",
+      "kind": "ai",
+      "model": "google/gemini-2.5-flash",
+      "prompt": "Write a 20-second promo: {{input.brief}}",
+      "output": { "shots": "text", "narration": "text" }
+    },
+    {
+      "id": "scenes",
+      "kind": "ai",
+      "needs": ["script"],
+      "model": "google/gemini-2.5-flash",
+      "prompt": "{{steps.script.shots}}",
+      "output": { "video": "file" }
+    },
+    {
+      "id": "voice",
+      "kind": "ai",
+      "needs": ["script"],
+      "model": "google/gemini-2.5-flash",
+      "prompt": "{{steps.script.narration}}",
+      "params": { "voice": { "$": "input.voice" } },
+      "output": { "audio": "file" }
+    },
+    {
+      "id": "assemble",
+      "kind": "tool",
+      "needs": ["scenes", "voice"],
+      "action": "bot.assemble_timeline",
+      "input": {
+        "video": { "$": "steps.scenes.video" },
+        "audio": { "$": "steps.voice.audio" }
+      }
+    },
+    {
+      "id": "done",
+      "kind": "return",
+      "output": { "file": { "$": "steps.assemble.file" } }
+    }
+  ]
+}

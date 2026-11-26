@@ -39,7 +39,11 @@ A `voiceover` clip is a caption only. Use a `speech` clip, described below, only
 
 ## Shared JSON Recipe (`dslVersion: 1`)
 
-`ambitious-video` directly validates, plans, estimates, renders (online and `--offline`), and verifies shared JSON DSL v1 recipes (`schemas/video-recipe.v1.json`, `dslVersion: 1`, `kind: "recipe"`). Paid media steps (`generated_scene`, `speech`, `lip_sync`) are declared as `ai` steps with `"executor": "bot"`, and the `bot.ffmpeg_assemble` `tool` step references them via `{ "refStep": "<step_id>" }` in its `tracks`. See `examples/promo-video-recipe.json`.
+`ambitious-video` directly validates, plans, estimates, renders (online and `--offline`), and verifies shared JSON DSL v1 recipes (`schemas/video-recipe.v1.json`, `dslVersion: 1`, `kind: "recipe"`). Paid media steps (`generated_scene`, `speech`, `lip_sync`) are declared as `ai` steps with `"executor": "bot"` and a `provider`, and the `bot.ffmpeg_assemble` `tool` step references them via `{ "refStep": "<step_id>" }` in its `tracks`. See `examples/promo-video-recipe.json`.
+
+The recipe format is shared with other tools, so one recipe file has the same shape everywhere. A recipe may name its `subject` (the kind of thing a run is about), its `source` (the document it was written from, `doc:sha256:<64 hex>`), and on each step `from` (the facts the step was written from). An `ai` step may declare its `output` (each field a type name, `file`, or the list of values it may take). `title` is optional. A `schedule` trigger has exactly one of `every` or `at`, and `start` only with `every`. This tool reads all of these and they change nothing about the video or about any step key.
+
+This tool renders on the machine it runs on. It keeps no facts, asks no person and sets no timers, so it refuses `eval`, `human`, `wait` and `recipe` steps by name. A recipe whose `ai` steps run on a server, or whose `tool` step is not `bot.ffmpeg_assemble`, has the shared shape but is not a video this tool can render; `validate` says which step and why. `schemas/README.md` lists the rules.
 
 ## Templates
 

@@ -26,7 +26,8 @@
         "type": "image",
         "path": "assets/still.png",
         "kenburns": { "from": 1.0, "to": 1.06 }
-      }
+      },
+      "output": { "video": "file" }
     },
     {
       "id": "speech",
@@ -41,7 +42,8 @@
         "text": "Welcome to a short video rendered from a shared JSON recipe.",
         "voice": "eve"
       },
-      "fallback": { "type": "captions_only" }
+      "fallback": { "type": "captions_only" },
+      "output": { "audio": "file" }
     },
     {
       "id": "assemble",
