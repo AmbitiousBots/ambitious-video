@@ -1,6 +1,6 @@
 # Schemas
 
-`video-script.v2.json` is the JSON Schema (draft 2020-12) for a video script: the JSON document that describes a video as data. `video-recipe.v1.json` is the JSON Schema (draft 2020-12) for a shared JSON DSL v1 recipe (`dslVersion: 1`, `kind: "recipe"`, see `examples/promo-video-recipe.json`) that compiles into a validated video script. `examples/minimal.json`, `examples/titles-and-captions.json`, `examples/all-clip-types.json`, `examples/generated-scenes.json` and `examples/lip-sync.json` are video scripts, and each folder under `examples/samples/` holds one more. `titles-and-captions.json` is the one to copy first: it needs no media files and no key, and the `guide` command prints it.
+`video-script.v2.json` is the JSON Schema (draft 2020-12) for a video script: the JSON document that describes a video as data. `video-recipe.v1.json` is the JSON Schema (draft 2020-12) for a shared JSON DSL v1 recipe (`dslVersion: 1`, `kind: "recipe"`, see `examples/promo-video-recipe.json`); a recipe this tool can render compiles into a validated video script. The section "The shared recipe" below explains it. `examples/minimal.json`, `examples/titles-and-captions.json`, `examples/all-clip-types.json`, `examples/generated-scenes.json` and `examples/lip-sync.json` are video scripts, and each folder under `examples/samples/` holds one more. `titles-and-captions.json` is the one to copy first: it needs no media files and no key, and the `guide` command prints it.
 
 ```json
 {
@@ -150,7 +150,7 @@ What the template schema cannot say is checked by `expand`: a slot names an inpu
 
 ## Examples
 
-- `examples/*.json` must be accepted and break no rule. Together they must use every clip type. `all-clip-types.json` uses every free type and `speech`, `generated-scenes.json` adds `generated_scene`, `lip-sync.json` adds `lip_sync`, and `promo-video-recipe.json` validates against `schemas/video-recipe.v1.json` and compiles into a validated script; their paid clips name a provider, so they show a price in `estimate`.
+- `examples/*.json` must be accepted and break no rule. Together they must use every clip type. `all-clip-types.json` uses every free type and `speech`, `generated-scenes.json` adds `generated_scene`, `lip-sync.json` adds `lip_sync`, and `promo-video-recipe.json` validates against `schemas/video-recipe.v1.json` and compiles into a validated script (`test/fixtures/promo-render.json`, a recipe another tool runs, must validate against the same schema and be refused only for what cannot be rendered here); their paid clips name a provider, so they show a price in `estimate`.
 - `examples/samples/<name>/` holds four sample projects for four made-up businesses (a plumber, an accounting office, a fitness studio and a bookshop). Everything in them is SAMPLE DATA. Each has an `inputs.json` with the values for one starter template, a `brand.json`, the `script.json` that `expand` writes from the two (it must be accepted, break no rule, and be exactly what `expand` writes), a `README.md`, and placeholder pictures in `assets/`. They need no key and no network. `python3 scripts/make_sample_assets.py` draws the pictures again; it uses only the Python standard library.
 - `templates/*.json` are the three starter templates. Each must be accepted by the template schema and by `expand`, have its file name as its `id`, and be the same as its copy in `src/ambitious_video/templates/`.
 - `examples/invalid/*.json` must each be rejected for the reason listed for it in `examples/invalid/EXPECTED.json`: `{ "keyword", "at" }` names the schema keyword that rejects it and where, and `{ "rule" }` names the one rule above that it breaks while passing the schema.
@@ -161,6 +161,48 @@ What the template schema cannot say is checked by `expand`: a slot names an inpu
 python3 scripts/check_schemas.py
 ```
 
-The script itself uses only the Python standard library. On first run it creates `.venv/` and installs the pinned dev packages (including `jsonschema`, with no YAML dependency) from `scripts/dev-requirements.txt`, where every file is pinned by SHA-256 (`scripts/dev-requirements.in` lists the versions; `uv pip compile --generate-hashes --universal` writes the pinned file). It needs Python 3.13 or newer and starts itself again with the Python pinned in `.mise.toml` when it is run by an older one. It also checks that the schema, the model in `spec/` and `src/ambitious_video/domain/types.py` name the same clip types, actions, transitions, output encodings, patterns, rules, job states and moves, that `schemas/video-recipe.v1.json` is valid, and that the template schema and `types.py` name the same input types, scene clips, patterns and template version. It ends with `check_schemas: ok`.
+The script itself uses only the Python standard library. On first run it creates `.venv/` and installs the pinned dev packages (including `jsonschema`, with no YAML dependency) from `scripts/dev-requirements.txt`, where every file is pinned by SHA-256 (`scripts/dev-requirements.in` lists the versions; `uv pip compile --generate-hashes --universal` writes the pinned file). It needs Python 3.13 or newer and starts itself again with the Python pinned in `.mise.toml` when it is run by an older one. It also checks that the schema, the model in `spec/` and `src/ambitious_video/domain/types.py` name the same clip types, actions, transitions, output encodings, patterns, rules, job states and moves, that `schemas/video-recipe.v1.json` is valid and names the same fields, kinds, patterns and limits as `src/ambitious_video/domain/recipe_shape.py`, and that the template schema and `types.py` name the same input types, scene clips, patterns and template version. It ends with `check_schemas: ok`.
 
 A change that makes a valid script invalid belongs in a new schema file with a new version number. Version 2 replaced the script-wide `voice` block of version 1 with the `speech` clip; a version 1 script is rejected.
+
+## The shared recipe
+
+`video-recipe.v1.json` describes the recipe format that this tool shares with other tools that read recipes. A recipe built from `ai`, `tool` and `return` steps that one of them accepts is accepted by the schema here, and the other way round. `src/ambitious_video/domain/recipe_shape.py` checks the same shape when the program runs, and `scripts/check_schemas.py` fails when the two name different fields, kinds, patterns or limits.
+
+| Part | What it holds |
+|---|---|
+| Top level | `dslVersion` (1), `kind` (`recipe`), `id`, `version`, `triggers`, `steps`. Optional: `title`, `summary`, `activation` (`auto` or `person`), `budget.maxUsd`, `subject`, `source`. |
+| `subject` | The kind of thing each run is about, such as `lead`: lowercase letters, digits and `_`, at most 32 characters. |
+| `source` | The document version the recipe was written from: `doc:sha256:` and 64 lowercase hex characters. |
+| A `manual` trigger | Optional `input`: each field has a `type`, and `currency` (for `money`), `values` (for `enum`) or `refKind` (for `ref`) only where the type calls for it. |
+| An `event` trigger | `type` is one of `document.ingested`, `fact.written`, `fact.verified`, `subject.created`, `entity.upserted`, `entity.confirmed`. Optional `where` expression. |
+| A `schedule` trigger | Exactly one of `every` (`day`, `week`, `month`, `quarter`, `year`, a count of hours or days such as `12h` or `10d`, or an expression) or `at` (a date, a date and time with a zone, or an expression). `start` is allowed only with `every`. |
+| A `signal` trigger | `name`, two lowercase words joined by a dot. |
+| Every step | `id`, `kind`, optional `title`, `needs` and `from`. `from` lists the facts the step was written from, such as `payment.net_days`. |
+| An `ai` step | `model`. Optional: `executor` (`server` or `bot`), `provider`, `prompt`, `params`, `output`, `fallback`, `cache` (`step_key` or `none`), `seed`, `disclosure`, `budget`, `adapterVersion`, `next`. `output` names each returned field with a type, `file`, or the list of values it may take. |
+| A `tool` step | `action`: `documents.ingest`, `facts.upsert`, `views.query`, `signals.emit`, or `bot.` or `sor.` and a task name. Optional: `input`, `outputSchema`, `timeout`, `next`. |
+| A `return` step | Optional `status` (`completed` or `blocked`) and `output`. |
+| An expression | Text, a number, `true`, `false`, `null`, or an object with one operator: `$` (a path), `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `contains`, `exists`, `and`, `or`, `not`, `addDays`, `addBusinessDays`, `diffDays`, `coalesce`. |
+| A path | At most 6 lowercase segments joined by dots, such as `steps.scene.video`, or `facts.` and a fact name. A fact path may end in `verified`, `verified_by` or `verified_at` to read whether a person checked the fact, who, and when; a fact name itself may not end in one of those three words. |
+
+A step with no `next` runs into the step written after it, unless another step lists it in `needs`. Every step that is not a `return` must lead to one, and the steps must not form a loop.
+
+Shapes from earlier drafts are refused: a `schedule` trigger with `rule`, `subjectKind`, `days`, `dueDays`, `leadDays`, `date`, `end` or `businessDays`; a `signal` trigger with `delayDays` or `subjectKind`; `outputSchema` on an `ai` step (it is now `output`); the actions `facts.write` and `facts.verify`; the event `fact.confirmed`.
+
+### Rules only the program checks
+
+A JSON Schema cannot say these, so `validate` checks them:
+
+- No text or field name holds something that looks like an API key or a private key, a null character, or broken Unicode.
+- A recipe that lists `from` on a step, or reads a fact anywhere in its steps or triggers (`{ "$": "facts.<name>" }` or `{{facts.<name>}}` in text), names its `subject`. The schema checks only the `from` half.
+- `needs` and `next` name steps that exist, step ids are used once, there is a `return` step, and the steps form no loop.
+- The recipe is at most 64 KiB, values nest at most 16 deep, and no field named `__proto__`, `constructor` or `prototype` appears at any depth.
+
+### What this tool renders
+
+This tool renders on the machine it runs on. It keeps no facts, asks no person and sets no timers. So:
+
+- The step kinds `eval`, `human`, `wait` and `recipe`, and a top-level `entity`, are refused by the schema and by the program, each with a message that names it.
+- A recipe with the shared shape renders only when each `ai` step has `"executor": "bot"`, a `provider` and `model` this tool knows, `params` for one scene, one spoken line or one lip-sync clip, and `cache` left at `step_key`; when exactly one `tool` step has the action `bot.ffmpeg_assemble`; and when that step lists each `ai` step in `needs` and places it once in `tracks` with `{ "refStep": "<step id>" }`. Otherwise `validate` names the step and the reason, for example `/steps/0/executor: Video AI steps require executor bot.`
+- An `ai` step here takes its prompt in `params.prompt`, not `prompt`, and has no `budget` of its own: set `budget.maxUsd` on the recipe, above 0.
+- `subject`, `source`, `from`, `title`, `output` and `outputSchema` are read and checked, and change nothing: the compiled script, every step key and `planSha256` are the same with or without them.

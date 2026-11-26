@@ -1,59 +1,152 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ambitious-video:video-recipe:v1",
-  "title": "Video Recipe (Shared DSL v1)",
-  "description": "Shared JSON DSL v1 recipe for deterministic video assembly and bot-executed AI steps.",
+  "title": "Recipe (Shared DSL v1)",
+  "description": "Shared JSON DSL v1 recipe. This is the shape every tool that reads recipes agrees on, for recipes built from ai, tool and return steps. What this tool can render from such a recipe is narrower and is described in schemas/README.md.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["dslVersion", "kind", "id", "version", "title", "triggers", "steps"],
+  "required": [
+    "dslVersion",
+    "kind",
+    "id",
+    "version",
+    "triggers",
+    "steps"
+  ],
   "properties": {
-    "dslVersion": { "const": 1 },
-    "kind": { "const": "recipe" },
-    "id": { "$ref": "#/$defs/kebabId" },
-    "version": { "type": "integer", "minimum": 1, "maximum": 1000000 },
-    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-    "summary": { "type": "string", "minLength": 1, "maxLength": 400 },
-    "activation": { "enum": ["auto", "person"] },
+    "dslVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "recipe"
+    },
+    "id": {
+      "$ref": "#/$defs/kebabId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "activation": {
+      "enum": [
+        "auto",
+        "person"
+      ]
+    },
     "budget": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["maxUsd"],
-      "properties": {
-        "maxUsd": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000 }
-      }
+      "$ref": "#/$defs/budget"
+    },
+    "subject": {
+      "description": "The kind of thing each run is about, such as lead. A recipe that reads facts or lists from on a step must name it.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$"
+    },
+    "source": {
+      "description": "The document version this recipe was written from, named by its hash.",
+      "type": "string",
+      "pattern": "^doc:sha256:[0-9a-f]{64}$"
     },
     "triggers": {
       "type": "array",
       "minItems": 1,
       "maxItems": 8,
-      "items": { "$ref": "#/$defs/trigger" }
+      "items": {
+        "$ref": "#/$defs/trigger"
+      }
     },
     "steps": {
       "type": "array",
       "minItems": 1,
       "maxItems": 32,
-      "items": { "$ref": "#/$defs/step" }
+      "items": {
+        "$ref": "#/$defs/step"
+      }
     }
   },
+  "if": {
+    "required": [
+      "steps"
+    ],
+    "properties": {
+      "steps": {
+        "type": "array",
+        "contains": {
+          "type": "object",
+          "required": [
+            "from"
+          ]
+        }
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "subject"
+    ]
+  },
   "$defs": {
-    "kebabId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" },
+    "kebabId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
     "stepId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
       "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
-      "not": { "enum": ["__proto__", "constructor", "prototype"] }
+      "not": {
+        "enum": [
+          "__proto__",
+          "constructor",
+          "prototype"
+        ]
+      }
     },
     "safeKey": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "not": { "enum": ["__proto__", "constructor", "prototype"] }
+      "not": {
+        "enum": [
+          "__proto__",
+          "constructor",
+          "prototype"
+        ]
+      }
     },
     "safeRecord": {
       "type": "object",
       "maxProperties": 40,
-      "propertyNames": { "$ref": "#/$defs/safeKey" }
+      "propertyNames": {
+        "$ref": "#/$defs/safeKey"
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxUsd"
+      ],
+      "properties": {
+        "maxUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      }
     },
     "eventName": {
       "type": "string",
@@ -61,176 +154,733 @@
       "maxLength": 65,
       "pattern": "^[a-z][a-z0-9_]{0,31}\\.[a-z][a-z0-9_]{0,31}$"
     },
-    "durationText": { "type": "string", "minLength": 2, "maxLength": 5, "pattern": "^[1-9][0-9]{0,3}[smhd]$" },
-    "providerId": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9-]{0,31}$" },
-    "modelId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
-    "needs": {
-      "type": "array",
-      "maxItems": 16,
-      "uniqueItems": true,
-      "items": { "$ref": "#/$defs/stepId" }
+    "durationText": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 5,
+      "pattern": "^[1-9][0-9]{0,3}[smhd]$"
     },
-    "trigger": {
-      "type": "object",
-      "required": ["kind"],
-      "properties": {
-        "kind": { "enum": ["manual", "event", "schedule", "signal"] }
-      },
-      "allOf": [
+    "factKey": {
+      "description": "The dotted name of one fact, such as payment.net_days. It may not end in verified, verified_by or verified_at.",
+      "type": "string",
+      "pattern": "^(?:[a-z][a-z0-9_]{0,31}\\.){0,7}(?!verified(?:_by|_at)?$)[a-z][a-z0-9_]{0,31}$"
+    },
+    "dottedPath": {
+      "description": "A path of at most 6 segments, or facts.<key>, optionally ending in verified, verified_by or verified_at to read who checked the fact and when.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 320,
+      "anyOf": [
         {
-          "if": { "required": ["kind"], "properties": { "kind": { "const": "manual" } } },
-          "then": {
-            "additionalProperties": false,
-            "required": ["kind"],
-            "properties": {
-              "kind": { "const": "manual" },
-              "input": {
-                "type": "object",
-                "maxProperties": 40,
-                "propertyNames": { "$ref": "#/$defs/stepId" },
-                "additionalProperties": { "type": "object" }
-              }
-            }
-          }
+          "pattern": "^(?!facts(?:\\.|$))[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*){0,5}$"
         },
         {
-          "if": { "required": ["kind"], "properties": { "kind": { "const": "event" } } },
-          "then": {
-            "additionalProperties": false,
-            "required": ["kind", "type"],
-            "properties": {
-              "kind": { "const": "event" },
-              "type": { "$ref": "#/$defs/eventName" },
-              "where": {}
-            }
-          }
+          "pattern": "^facts\\.(?:[a-z][a-z0-9_]{0,31}\\.){0,7}(?!verified(?:_by|_at)?(?:\\.|$))[a-z][a-z0-9_]{0,31}(?:\\.verified(?:_by|_at)?)?$"
+        }
+      ],
+      "not": {
+        "pattern": "(?:^|\\.)(?:constructor|prototype)(?:\\.|$)"
+      }
+    },
+    "expr": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 2048
         },
         {
-          "if": { "required": ["kind"], "properties": { "kind": { "const": "schedule" } } },
-          "then": {
-            "additionalProperties": false,
-            "required": ["kind", "rule", "subjectKind"],
-            "properties": {
-              "kind": { "const": "schedule" },
-              "rule": { "enum": ["recurring", "before_date", "on_date"] },
-              "subjectKind": { "$ref": "#/$defs/kebabId" },
-              "businessDays": { "type": "boolean" },
-              "every": { "enum": ["month", "quarter", "year"] },
-              "start": {},
-              "end": {},
-              "date": {},
-              "days": {},
-              "dueDays": {},
-              "leadDays": {}
+          "type": [
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "$": {
+              "$ref": "#/$defs/dottedPath"
             },
-            "allOf": [
-              {
-                "if": { "required": ["rule"], "properties": { "rule": { "const": "recurring" } } },
-                "then": {
-                  "required": ["every", "start"],
-                  "not": { "required": ["date"] }
+            "eq": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "ne": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "gt": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "gte": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "lt": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "lte": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "contains": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "addDays": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "addBusinessDays": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "diffDays": {
+              "$ref": "#/$defs/exprPair"
+            },
+            "in": {
+              "type": "array",
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/expr"
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": {
+                    "$ref": "#/$defs/expr"
+                  }
                 }
-              },
-              {
-                "if": { "required": ["rule"], "properties": { "rule": { "const": "on_date" } } },
-                "then": {
-                  "required": ["date"],
-                  "not": { "anyOf": [{ "required": ["every"] }, { "required": ["start"] }] }
-                }
-              },
-              {
-                "if": { "required": ["rule"], "properties": { "rule": { "const": "before_date" } } },
-                "then": {
-                  "required": ["date"],
-                  "anyOf": [{ "required": ["days"] }, { "required": ["leadDays"] }],
-                  "not": { "anyOf": [{ "required": ["every"] }, { "required": ["start"] }] }
-                }
+              ],
+              "items": false
+            },
+            "exists": {
+              "$ref": "#/$defs/expr"
+            },
+            "not": {
+              "$ref": "#/$defs/expr"
+            },
+            "and": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/expr"
               }
-            ]
-          }
-        },
-        {
-          "if": { "required": ["kind"], "properties": { "kind": { "const": "signal" } } },
-          "then": {
-            "additionalProperties": false,
-            "required": ["kind", "name"],
-            "properties": {
-              "kind": { "const": "signal" },
-              "name": { "$ref": "#/$defs/eventName" },
-              "subjectKind": { "$ref": "#/$defs/kebabId" },
-              "delayDays": {}
+            },
+            "or": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/expr"
+              }
+            },
+            "coalesce": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "$ref": "#/$defs/expr"
+              }
             }
           }
         }
       ]
     },
-    "step": {
+    "exprPair": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/expr"
+      }
+    },
+    "exprObject": {
+      "allOf": [
+        {
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/expr"
+        }
+      ]
+    },
+    "fieldType": {
+      "enum": [
+        "string",
+        "text",
+        "int",
+        "decimal",
+        "money",
+        "date",
+        "datetime",
+        "bool",
+        "enum",
+        "ref",
+        "list",
+        "object"
+      ]
+    },
+    "allowedValues": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "fieldSpec": {
       "type": "object",
-      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/stepId" },
-        "kind": { "enum": ["ai", "tool", "return"] }
+        "type": {
+          "$ref": "#/$defs/fieldType"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "unique": {
+          "type": "boolean"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "refKind": {
+          "$ref": "#/$defs/kebabId"
+        },
+        "values": {
+          "$ref": "#/$defs/allowedValues"
+        }
       },
       "allOf": [
         {
-          "if": { "required": ["kind"], "properties": { "kind": { "const": "ai" } } },
-          "then": { "$ref": "#/$defs/aiStep" }
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "money"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "currency"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "currency"
+              ]
+            }
+          }
         },
         {
-          "if": { "required": ["kind"], "properties": { "kind": { "const": "tool" } } },
-          "then": { "$ref": "#/$defs/toolStep" }
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "enum"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "values"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "values"
+              ]
+            }
+          }
         },
         {
-          "if": { "required": ["kind"], "properties": { "kind": { "const": "return" } } },
-          "then": { "$ref": "#/$defs/returnStep" }
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "ref"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "refKind"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "refKind"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "unique"
+            ],
+            "properties": {
+              "unique": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "date",
+                  "datetime",
+                  "int",
+                  "ref",
+                  "string"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "needs": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/stepId"
+      }
+    },
+    "from": {
+      "description": "The facts this step was written from. It is a record for the reader and changes nothing about how the step runs.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/factKey"
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "manual",
+            "event",
+            "schedule",
+            "signal"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "manual"
+              }
+            }
+          },
+          "then": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "manual"
+              },
+              "input": {
+                "type": "object",
+                "maxProperties": 40,
+                "propertyNames": {
+                  "$ref": "#/$defs/stepId"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/fieldSpec"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "event"
+              }
+            }
+          },
+          "then": {
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "type"
+            ],
+            "properties": {
+              "kind": {
+                "const": "event"
+              },
+              "type": {
+                "enum": [
+                  "document.ingested",
+                  "fact.written",
+                  "fact.verified",
+                  "subject.created",
+                  "entity.upserted",
+                  "entity.confirmed"
+                ]
+              },
+              "where": {
+                "$ref": "#/$defs/expr"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "schedule"
+              }
+            }
+          },
+          "then": {
+            "description": "Exactly one of every (a repeating schedule) or at (one moment). start says when a repeating schedule begins.",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "schedule"
+              },
+              "every": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^(?:day|week|month|quarter|year|[1-9][0-9]{0,3}[hd])$"
+                  },
+                  {
+                    "$ref": "#/$defs/exprObject"
+                  }
+                ]
+              },
+              "at": {
+                "$ref": "#/$defs/moment"
+              },
+              "start": {
+                "$ref": "#/$defs/moment"
+              }
+            },
+            "oneOf": [
+              {
+                "required": [
+                  "every"
+                ]
+              },
+              {
+                "required": [
+                  "at"
+                ]
+              }
+            ],
+            "dependentRequired": {
+              "start": [
+                "every"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "signal"
+              }
+            }
+          },
+          "then": {
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "name"
+            ],
+            "properties": {
+              "kind": {
+                "const": "signal"
+              },
+              "name": {
+                "$ref": "#/$defs/eventName"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "moment": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2}))?$"
+        },
+        {
+          "$ref": "#/$defs/exprObject"
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stepId"
+        },
+        "kind": {
+          "enum": [
+            "ai",
+            "tool",
+            "return"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "ai"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/aiStep"
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "tool"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/toolStep"
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "return"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/returnStep"
+          }
         }
       ]
     },
     "aiStep": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "executor", "provider", "model", "params"],
+      "required": [
+        "id",
+        "kind",
+        "model"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/stepId" },
-        "kind": { "const": "ai" },
-        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "needs": { "$ref": "#/$defs/needs" },
-        "next": { "$ref": "#/$defs/stepId" },
-        "adapterVersion": { "type": "integer", "minimum": 1, "maximum": 1000 },
-        "executor": { "const": "bot" },
-        "provider": { "$ref": "#/$defs/providerId" },
-        "model": { "$ref": "#/$defs/modelId" },
-        "cache": { "enum": ["step_key"] },
-        "disclosure": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
-        "params": { "type": "object" },
-        "fallback": { "type": "object" }
+        "id": {
+          "$ref": "#/$defs/stepId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "needs": {
+          "$ref": "#/$defs/needs"
+        },
+        "from": {
+          "$ref": "#/$defs/from"
+        },
+        "kind": {
+          "const": "ai"
+        },
+        "next": {
+          "$ref": "#/$defs/stepId"
+        },
+        "adapterVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "executor": {
+          "enum": [
+            "server",
+            "bot"
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "cache": {
+          "enum": [
+            "step_key",
+            "none"
+          ]
+        },
+        "disclosure": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "output": {
+          "description": "What the step returns: each field is a type name, file, or the list of values it may take.",
+          "type": "object",
+          "maxProperties": 40,
+          "propertyNames": {
+            "$ref": "#/$defs/stepId"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "enum": [
+                  "string",
+                  "text",
+                  "int",
+                  "decimal",
+                  "money",
+                  "date",
+                  "datetime",
+                  "bool",
+                  "enum",
+                  "ref",
+                  "list",
+                  "object",
+                  "file"
+                ]
+              },
+              {
+                "$ref": "#/$defs/allowedValues"
+              }
+            ]
+          }
+        },
+        "params": {
+          "$ref": "#/$defs/safeRecord"
+        },
+        "fallback": {}
       }
     },
     "toolStep": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "action", "input"],
+      "required": [
+        "id",
+        "kind",
+        "action"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/stepId" },
-        "kind": { "const": "tool" },
-        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "needs": { "$ref": "#/$defs/needs" },
-        "next": { "$ref": "#/$defs/stepId" },
-        "timeout": { "$ref": "#/$defs/durationText" },
-        "action": { "const": "bot.ffmpeg_assemble" },
+        "id": {
+          "$ref": "#/$defs/stepId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "needs": {
+          "$ref": "#/$defs/needs"
+        },
+        "from": {
+          "$ref": "#/$defs/from"
+        },
+        "kind": {
+          "const": "tool"
+        },
+        "next": {
+          "$ref": "#/$defs/stepId"
+        },
+        "timeout": {
+          "$ref": "#/$defs/durationText"
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^(?:documents\\.ingest|facts\\.upsert|views\\.query|signals\\.emit|(?:sor|bot)\\.[a-z][a-z0-9_]{0,63})$"
+        },
         "input": {
+          "$ref": "#/$defs/safeRecord"
+        },
+        "outputSchema": {
           "type": "object",
-          "additionalProperties": false,
-          "required": ["output", "tracks"],
-          "properties": {
-            "output": { "type": "object" },
-            "brand": { "type": "object" },
-            "cache": { "type": "object" },
-            "disclosure": { "type": "string", "minLength": 1, "maxLength": 160 },
-            "template": { "type": "object" },
-            "tracks": { "type": "array", "minItems": 1, "maxItems": 16 },
-            "cuts": { "type": "array", "maxItems": 256 }
+          "maxProperties": 40,
+          "propertyNames": {
+            "$ref": "#/$defs/stepId"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/fieldType"
           }
         }
       }
@@ -238,14 +888,37 @@
     "returnStep": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind"],
+      "required": [
+        "id",
+        "kind"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/stepId" },
-        "kind": { "const": "return" },
-        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "needs": { "$ref": "#/$defs/needs" },
-        "status": { "enum": ["completed", "blocked"] },
-        "output": { "$ref": "#/$defs/safeRecord" }
+        "id": {
+          "$ref": "#/$defs/stepId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "needs": {
+          "$ref": "#/$defs/needs"
+        },
+        "from": {
+          "$ref": "#/$defs/from"
+        },
+        "kind": {
+          "const": "return"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "blocked"
+          ]
+        },
+        "output": {
+          "$ref": "#/$defs/safeRecord"
+        }
       }
     }
   }
